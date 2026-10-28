@@ -1,0 +1,32 @@
+"""Runtime settings (TRD §2.3). All values come from environment variables set in docker-compose.yml."""
+import os
+
+
+def _int(name, default):
+    return int(os.getenv(name, default))
+
+
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://headhunter:headhunter@localhost:5432/headhunter")
+DEV_MODE = os.getenv("DEV_MODE", "1") == "1"
+
+# LLM provider (TRD §5.1) — dev: Ollama qwen3:4b, prod: Qwen3-8B (same OpenAI-less Ollama/vLLM endpoint)
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://host.docker.internal:11434")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen3:4b")
+LLM_TIMEOUT = _int("LLM_TIMEOUT", 120)
+FOLLOWUP_TIMEOUT = float(os.getenv("FOLLOWUP_TIMEOUT", "5"))  # INT-06: 5초 안에 판단 못 하면 생략
+
+OCR_LANG = os.getenv("OCR_LANG", "kor+eng")
+UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/data/uploads")
+SANDBOX_DIR = os.getenv("SANDBOX_DIR", "/sandbox")
+
+MAX_CONCURRENT_INTERVIEWS = _int("MAX_CONCURRENT_INTERVIEWS", 5)  # INT-08: GPU 1대당 5건
+SESSION_HOURS = 2
+HEARTBEAT_LOST_SEC = 15          # 5초 주기 × 3회 누락
+CODING_MINUTES = 60
+QUESTION_SECONDS = 90
+FOLLOWUP_SECONDS = 60
+MAX_FOLLOWUPS = 4
+CONSENT_VERSION = "2026-10-28.v1"
+
+VERSIONS = {"prompt": "p-2026.10.28", "rubric": "r-1.0", "ocr": "tesseract-5 " + OCR_LANG}

@@ -1,0 +1,61 @@
+# headhunterAI 개발·시연 환경 (TRD v0.1 §2)
+#   docker compose up -d --build   →  http://localhost:8000/applicant/ , http://localhost:8000/admin/
+# LLM은 호스트 Windows의 Ollama(qwen3:4b)를 host.docker.internal:11434로 사용한다.
+name: ai-interview-project
+
+services:
+  db:
+    image: postgres:16
+    container_name: AI-Interview-project          # PostgreSQL 컨테이너
+    environment:
+      POSTGRES_DB: headhunter
+      POSTGRES_USER: headhunter
+      POSTGRES_PASSWORD: headhunter
+      TZ: Asia/Seoul
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U headhunter -d headhunter"]
+      interval: 5s
+      retries: 20
+
+  api:
+    build: ./backend
+    container_name: AI-Interview-project-api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://headhunter:headhunter@db:5432/headhunter
+      DEV_MODE: "1"
+      LLM_PROVIDER: ollama
+      LLM_BASE_URL: http://host.docker.internal:11434
+      LLM_MODEL: qwen3:4b
+      FOLLOWUP_TIMEOUT: "12"          # 운영 기준 5초(INT-06). 6GB GPU 개발 환경에서만 완화
+      MAX_CONCURRENT_INTERVIEWS: "2"  # 운영 기준 GPU당 5건(INT-08)
+      UPLOAD_DIR: /data/uploads
+      SANDBOX_DIR: /sandbox
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/data/uploads
+      - sandbox:/sandbox
+      - ./admin:/web/admin:ro
+      - ./applicant:/web/applicant:ro
+      - ./shared:/web/shared:ro
+      - ./images:/web/images:ro
+
+  runner:
+    build: ./backend/runner
+    container_name: AI-Interview-project-runner
+    network_mode: none                # COD-05: 네트워크 차단
+    volumes:
+      - sandbox:/sandbox
+
+volumes:
+  pgdata:
+  uploads:
+  sandbox:
