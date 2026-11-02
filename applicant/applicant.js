@@ -9,6 +9,7 @@ const media = { stream: null, micId: '', camId: '', spkId: '' };
 /* 마이크·카메라를 따로 요청한다. 한쪽이 실패해도 다른 쪽은 쓸 수 있고, 실패 원인을 장치별로 알려 준다. */
 const MEDIA_ERR = {
   NotAllowedError: ['권한 거부', '주소창 왼쪽 아이콘 → 사이트 설정에서 허용한 뒤 ‘다시 시도’를 누르세요. Windows 설정 → 개인 정보 → 마이크·카메라의 데스크톱 앱 접근도 켜져 있어야 합니다.'],
+  InsecureContext: ['HTTPS 필요', `브라우저는 localhost나 HTTPS 주소에서만 마이크·카메라를 허용합니다. 같은 네트워크의 다른 PC로 접속했다면 Chrome 주소창에 chrome://flags/#unsafely-treat-insecure-origin-as-secure 를 열어 ${location.origin} 을 추가하고 Enabled → 다시 실행하세요.`],
   NotFoundError: ['장치 없음', '연결된 장치를 찾지 못했습니다. 장치를 연결한 뒤 ‘다시 시도’를 누르세요.'],
   NotReadableError: ['사용 중', '다른 프로그램(Zoom·Teams·Discord 등)이 장치를 쓰고 있거나 드라이버 오류입니다. 해당 프로그램을 닫고 ‘다시 시도’를 누르세요.'],
   OverconstrainedError: ['장치 없음', '선택한 장치를 찾지 못했습니다. 목록에서 다른 장치를 고르세요.'],
@@ -18,6 +19,7 @@ async function openTrack(kind, deviceId) {
   const c = kind === 'audio'
     ? { audio: deviceId ? { deviceId: { exact: deviceId } } : true }
     : { video: Object.assign({ width: 640, height: 480 }, deviceId ? { deviceId: { exact: deviceId } } : {}) };
+  if (!navigator.mediaDevices) throw Object.assign(new Error('insecure context'), { name: 'InsecureContext' });
   const s = await navigator.mediaDevices.getUserMedia(c);
   return kind === 'audio' ? s.getAudioTracks()[0] : s.getVideoTracks()[0];
 }
@@ -37,6 +39,8 @@ function onLeave(fn) { cleanup.push(fn); }
 function go(hash) { location.hash = hash; }
 function setNav(key) { $$('#top nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === key)); }
 
+// 지원자 테스트 계정(시드 이지원): 접수 취소 버튼이 보인다. 서버도 이 계정만 허용(config.TEST_APPLICANT_EMAIL)
+const isTestApplicant = () => !!(me && me.email === 'applicant@headhunter.ai');
 async function loadMe() {
   me = await get('/api/auth/me');
   if (me && me.role !== 'applicant') me = null;
@@ -44,6 +48,8 @@ async function loadMe() {
   area.innerHTML = me
     ? `<span class="who">${esc(me.name)} 님</span> <button class="btn sm ghost" id="logout">로그아웃</button>`
     : `<a class="btn sm ghost" href="#/login">로그인</a> <a class="btn sm primary" href="#/signup">회원가입</a>`;
+  const reset = document.getElementById('dev-reset');
+  if (reset) reset.hidden = !isTestApplicant();
   const lo = $('#logout');
   if (lo) lo.onclick = async () => { await post('/api/auth/logout'); me = null; await loadMe(); go('#/'); };
 }
@@ -270,7 +276,7 @@ async function mypage() {
         ${apps.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>공고</th><th>진행 상태</th><th>응시 상태</th><th></th></tr></thead><tbody>
         ${apps.map((a) => `<tr><td><b>${esc(a.title)}</b><div class="small">${esc(a.company)} · 지원일 ${fmtYMD(a.created_at)}${a.coding_enabled ? ' · 코딩테스트 포함' : ''}</div></td>
           <td>${a.attempt_id ? '<span class="pill dim">응시함</span>' : `<span class="pill neon">${STEP_KO[a.step]}</span>`}</td>
-          <td>${a.attempt_status ? esc(ATTEMPT_KO[a.attempt_status]) : '-'}</td><td class="num">${appAction(a)}</td></tr>`).join('')}
+          <td>${a.attempt_status ? esc(ATTEMPT_KO[a.attempt_status]) : '-'}</td><td class="num">${appAction(a)}${isTestApplicant() ? ` <button class="btn sm ghost" data-devcancel="${a.id}" title="테스트 계정 전용">접수 취소</button>` : ''}</td></tr>`).join('')}
         </tbody></table></div>` : '<div class="empty">아직 지원한 공고가 없습니다.</div>'}
       </div>
       <div class="card"><h2>알림</h2>${notes.length ? notes.map((n) => `<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>${esc(n.title)}</b><div class="small">${esc(n.body)}</div></div>`).join('') : '<p class="small">새 알림이 없습니다.</p>'}</div>
@@ -278,6 +284,12 @@ async function mypage() {
         ${resumes.length ? resumes.map((r) => `<div class="between" style="padding:8px 0;border-bottom:1px solid var(--line)"><span>${esc(r.title)} <span class="small">${fmtYMD(r.updated_at)}</span></span><button class="btn sm ghost" data-delres="${r.id}">삭제</button></div>`).join('') : '<p class="small">등록한 이력서가 없습니다. 지원 과정에서 저장할 수 있습니다.</p>'}</div>
     </div></div>`;
   $$('[data-cont]').forEach((b) => (b.onclick = async () => continueApplication(await get(`/api/applications/${b.dataset.cont}`))));
+  $$('[data-devcancel]').forEach((b) => (b.onclick = async () => {
+    const yes = await modal({ title: '접수 취소(테스트용)', body: '이 지원 건의 응시·답변·평가 기록을 모두 지웁니다. 같은 공고에 다시 지원할 수 있게 됩니다.',
+      buttons: [{ label: '닫기', value: false }, { label: '접수 취소', value: true, primary: true }] });
+    if (!yes) return;
+    try { await post(`/api/dev/reset-my-applications?app_id=${b.dataset.devcancel}`); toast('접수를 취소했습니다.'); mypage(); } catch (e) { toast(e.message, true); }
+  }));
   $$('[data-delres]').forEach((b) => (b.onclick = async () => { await del(`/api/me/resumes/${b.dataset.delres}`); mypage(); }));
   if (notes.some((n) => !n.read_at)) post('/api/me/notifications/read');
 }
@@ -451,7 +463,10 @@ function pollExtraction(id, state) {
     if (x.status === 'processing') {
       $('#progress').innerHTML = `<div class="card"><div class="between"><b><span class="spinner"></span> ${STAGE_KO[x.stage] || '처리 중'}</b><span class="small">${x.progress}%</span></div>
         <div class="bar" style="margin-top:10px"><i style="width:${x.progress}%"></i></div>
-        <p class="small" style="margin-top:8px">텍스트 추출 → 문자 인식 → 항목 정리 순서로 진행됩니다. 모든 처리는 사내 서버에서만 이뤄집니다.</p></div>`;
+        <p class="small" style="margin-top:8px">텍스트 추출 → 문자 인식 → 항목 정리 순서로 진행됩니다. 모든 처리는 사내 서버에서만 이뤄집니다.</p>
+        <div class="row" style="margin-top:10px"><button class="btn sm" id="skip-wait">기다리지 않고 다음 단계로</button>
+          <span class="small">저장해 둔 이력서가 있으면 그 내용으로 바로 환경 점검으로 넘어가고, 없으면 직접 작성 화면을 엽니다.</span></div></div>`;
+      $('#skip-wait').onclick = () => { stopped = true; skipWait(state); };
       setTimeout(tick, 1000);
       return;
     }
@@ -461,6 +476,30 @@ function pollExtraction(id, state) {
     renderEditor(state);
   };
   tick();
+}
+
+/* 인식(특히 AI 항목 정리)이 오래 걸릴 때 기다리지 않고 진행. 인식 결과는 쓰지 않는다.
+   ① 이 지원 건에 확인한 이력서가 있으면 그대로 ② 마이페이지에 저장한 이력서가 있으면 가장 최근 것으로 확인 처리
+   ③ 둘 다 없으면 직접 작성 화면(필수: 성명 + 학력 또는 경력 1건) */
+async function skipWait(state) {
+  $('#progress').innerHTML = '';
+  const app = await get(`/api/applications/${state.appId}`);
+  if (app.resume_snapshot) return go(`#/apply/${state.appId}/env`);
+  const saved = await get('/api/me/resumes');
+  if (saved.length) {
+    const r = saved[0];
+    try {
+      await post(`/api/applications/${state.appId}/resume`, { data: r.data, extraction_id: null, save_title: null });
+      toast(`저장된 이력서 '${r.title}'로 진행합니다.`);
+      return go(`#/apply/${state.appId}/env`);
+    } catch (e) { toast(e.message, true); state.data = r.data; }
+  } else {
+    state.data = blank();
+    if (me) Object.assign(state.data.basic, { name: me.name || '', email: me.email || '', phone: me.phone || '' });
+    toast('성명과 학력 또는 경력 1건 이상을 입력하고 ‘내용 확인 완료’를 누르면 다음 단계로 넘어갑니다.');
+  }
+  state.extraction = null; // 처리 중인 인식 작업은 확인 대상으로 묶지 않는다(끝난 뒤 결과가 덮어쓸 수 있음)
+  renderEditor(state);
 }
 
 /* ───────── 환경 점검 (APP-06, APP-07) ───────── */
@@ -477,7 +516,7 @@ async function envView(appId) {
       <div class="col">
         <div class="card"><div class="between"><h3>① 마이크</h3><span class="pill dim" id="s-mic">대기</span></div>
           <div class="row" style="margin:8px 0"><select id="mic-sel" style="flex:1;min-width:0"><option value="">기본 마이크</option></select><button class="btn sm" id="dev-retry">다시 시도</button></div>
-          <p class="small" id="mic-msg">말을 해서 막대가 움직이는지 확인하세요. 블루투스 헤드셋은 목록에서 ‘헤드셋’·‘Hands-Free’ 항목을 고르세요.</p><div class="meter"><i id="mic-level"></i></div></div>
+          <p class="small" id="mic-msg">말을 해서 막대가 움직이는지 확인하세요. 내장·유선(3.5mm)·USB·블루투스 마이크 모두 쓸 수 있으니 목록에서 면접에 쓸 장치를 고르세요.</p><div class="meter"><i id="mic-level"></i></div></div>
         <div class="card"><div class="between"><h3>② 카메라</h3><span class="pill dim" id="s-cam">대기</span></div>
           <div class="row" style="margin:8px 0"><select id="cam-sel" style="flex:1;min-width:0"><option value="">기본 카메라</option></select></div>
           <p class="small" id="cam-msg" style="display:none"></p>
@@ -501,6 +540,7 @@ async function envView(appId) {
           <p class="small" id="pregen">맞춤 질문은 점검을 통과하면 준비를 시작합니다.</p>
           <div class="note">개발 환경 안내: 음성 인식(STT) 엔진이 연결되지 않아 답변은 입력창에 작성합니다. 질문 음성은 브라우저 내장 한국어 음성으로 재생됩니다.</div>
           <button class="btn primary lg" id="start" disabled style="width:100%;margin-top:12px">전체 화면으로 면접 시작</button>
+          <p class="small" id="start-why" style="margin-top:8px"></p>
         </div>
       </div>
     </div></div>`;
@@ -510,18 +550,50 @@ async function envView(appId) {
     const all = Object.values(ok).every(Boolean);
     if (all && !envPosted) {
       envPosted = true;
-      try { await post(`/api/applications/${appId}/env`, ok); watchPregen(); } catch (e) { envPosted = false; toast(e.message, true); }
+      try { await post(`/api/applications/${appId}/env`, { ...ok, cam: camReal }); watchPregen(); } catch (e) { envPosted = false; toast(e.message, true); }
     }
     $('#start').disabled = !(all && envPosted && $('#rules').checked);
+    // 버튼이 왜 안 눌리는지 바로 보이게: 남은 항목을 적어 준다
+    const names = { mic: '① 마이크', cam: '② 카메라', speaker: '③ 스피커', network: '④ 네트워크', ai: '⑤ AI 서버' };
+    const left = Object.keys(names).filter((k) => !ok[k]).map((k) => names[k]);
+    if (!$('#rules').checked) left.push('응시 규칙 확인');
+    const why = $('#start-why');
+    if (why) { why.textContent = left.length ? `아직 남은 항목: ${left.join(', ')}` : ''; why.style.display = left.length ? '' : 'none'; }
   }
   $('#rules').onchange = refresh;
 
   let meter = null;
+  let camReal = false; // 카메라가 실제로 연결됐는지(서버에 그대로 기록)
+  let spkPicked = false; // 사용자가 출력 장치를 직접 고르기 전까지는 마이크와 같은 장치의 출력을 자동 선택
+  let devList = [];
+  const micLabel = () => { const tr = media.stream && media.stream.getAudioTracks()[0]; return tr ? tr.label : ''; };
+  const micDev = () => devList.find((d) => d.kind === 'audioinput' && d.label === micLabel());
+  const isHfp = (label) => /hands-free|hands free|핸즈프리|수화기/i.test(label || '');
+  // 블루투스 헤드셋만의 예외: 마이크가 켜지면 통화(Hands-Free) 모드로 바뀌어 같은 헤드셋의 Stereo 출력은 무음이 된다.
+  // 내장·유선·USB 장치는 해당 없음
+  const hfpMismatch = () => {
+    const mic = micDev(), out = devList.find((d) => d.kind === 'audiooutput' && d.deviceId === media.spkId);
+    return !!(mic && out && isHfp(mic.label) && !isHfp(out.label) && mic.groupId === out.groupId);
+  };
   async function fillDevices() {
-    const list = await navigator.mediaDevices.enumerateDevices();
+    devList = navigator.mediaDevices ? await navigator.mediaDevices.enumerateDevices() : [];
+    const list = devList;
+    // 출력 자동 선택: 마이크와 같은 장치(헤드셋·USB 등)의 출력이 있으면 그것, 없으면 기본 출력 장치
+    if (!spkPicked && micLabel()) {
+      const outs = list.filter((d) => d.kind === 'audiooutput' && d.deviceId !== 'default' && d.deviceId !== 'communications');
+      const mic = micDev();
+      const hfp = mic && isHfp(mic.label);
+      const same = outs.find((d) => d.label === micLabel())
+        || (mic && outs.find((d) => d.groupId === mic.groupId && (!hfp || isHfp(d.label))));
+      media.spkId = same ? same.deviceId : '';
+    }
+    // 시스템이 알려 주는 장치를 거르지 않고 그대로 모두 보여 준다(Windows '기본값 -'·'커뮤니케이션 -' 항목 포함)
     const put = (sel, kind, cur, base) => {
-      const opts = list.filter((d) => d.kind === kind && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications');
-      $(sel).innerHTML = `<option value="">${base}</option>` + opts.map((d, i) => `<option value="${esc(d.deviceId)}"${d.deviceId === cur ? ' selected' : ''}>${esc(d.label || `${base.slice(3)} ${i + 1}`)}</option>`).join('');
+      const opts = list.filter((d) => d.kind === kind && d.deviceId);
+      const hasDefault = opts.some((d) => d.deviceId === 'default');
+      const want = cur || (hasDefault ? 'default' : '');
+      $(sel).innerHTML = (hasDefault ? '' : `<option value="">${base}</option>`)
+        + opts.map((d, i) => `<option value="${esc(d.deviceId)}"${d.deviceId === want ? ' selected' : ''}>${esc(d.label || `${base.slice(3)} ${i + 1}`)}</option>`).join('');
     };
     if (!$('#mic-sel')) return;
     put('#mic-sel', 'audioinput', media.micId, '기본 마이크');
@@ -542,7 +614,7 @@ async function envView(appId) {
       return !err;
     };
     if (show('mic', r.mic)) {
-      $('#mic-msg').textContent = '말을 해서 막대가 움직이는지 확인하세요. 블루투스 헤드셋은 목록에서 ‘헤드셋’·‘Hands-Free’ 항목을 고르세요.';
+      $('#mic-msg').textContent = '말을 해서 막대가 움직이는지 확인하세요. 내장·유선(3.5mm)·USB·블루투스 마이크 모두 쓸 수 있으니 목록에서 면접에 쓸 장치를 고르세요.';
       mark('mic', false, '말해 보세요');
       const ctx = new AudioContext(); const src = ctx.createMediaStreamSource(new MediaStream(r.stream.getAudioTracks())); const an = ctx.createAnalyser(); an.fftSize = 512; src.connect(an);
       const buf = new Uint8Array(an.fftSize); let raf;
@@ -551,51 +623,71 @@ async function envView(appId) {
         let s = 0; for (const x of buf) s += ((x - 128) / 128) ** 2;
         const lvl = Math.min(100, Math.sqrt(s / buf.length) * 400);
         const el = $('#mic-level'); if (el) el.style.width = lvl + '%';
-        if (lvl > 12 && !ok.mic) mark('mic', true);
+        if (lvl > 8 && !ok.mic) mark('mic', true);
         raf = requestAnimationFrame(loop);
       };
       loop();
       meter = () => { cancelAnimationFrame(raf); ctx.close(); };
     } else { $('#mic-level').style.width = '0%'; }
     if (show('cam', r.cam)) {
-      $('#cam-msg').style.display = 'none';
+      camReal = true; $('#cam-msg').style.display = 'none';
       const v = document.createElement('video'); v.autoplay = true; v.muted = true; v.playsInline = true; v.srcObject = new MediaStream(r.stream.getVideoTracks());
       $('#cam').innerHTML = ''; $('#cam').appendChild(v);
       v.onloadeddata = () => mark('cam', true);
-    } else { $('#cam').textContent = '카메라를 사용할 수 없습니다'; }
+    } else { // 임시(2026-10-29, 사용자 결정): 카메라가 없어도 통과. 원래 APP-06은 카메라 필수
+      camReal = false; mark('cam', true, '없음 · 생략');
+      $('#cam').textContent = '카메라 없이 진행합니다';
+    }
     await fillDevices();
   }
   $('#mic-sel').onchange = (e) => { media.micId = e.target.value; connectDevices(); };
   $('#cam-sel').onchange = (e) => { media.camId = e.target.value; connectDevices(); };
   $('#dev-retry').onclick = () => connectDevices();
   const onDevChange = () => fillDevices();
-  navigator.mediaDevices.addEventListener('devicechange', onDevChange);
-  onLeave(() => { if (meter) meter(); navigator.mediaDevices.removeEventListener('devicechange', onDevChange); });
+  if (navigator.mediaDevices) navigator.mediaDevices.addEventListener('devicechange', onDevChange);
+  onLeave(() => { if (meter) meter(); if (navigator.mediaDevices) navigator.mediaDevices.removeEventListener('devicechange', onDevChange); });
   connectDevices();
   // 스피커: 들렸는지는 브라우저가 알 수 없어 본인 확인(APP-06 ③). 출력 장치를 고르고, 테스트음이 끝난 뒤에만 확인 가능
-  const canPickOut = typeof AudioContext !== 'undefined' && 'setSinkId' in AudioContext.prototype;
-  if (!canPickOut) $('#spk-row').style.display = 'none';
-  $('#spk-sel').onchange = (e) => { media.spkId = e.target.value; mark('speaker', false, '대기'); $('#heard').disabled = true; $('#not-heard').disabled = true; };
+  const canPickOut = 'setSinkId' in HTMLMediaElement.prototype;
+  const spkMsg = (text) => { $('#spk-msg').textContent = text; $('#spk-msg').style.display = text ? '' : 'none'; };
+  if (!canPickOut) { $('#spk-row').style.display = 'none'; spkMsg('이 브라우저는 출력 장치를 고를 수 없어 Windows 기본 출력 장치로 재생합니다. 다른 장치로 들으려면 Windows 소리 설정에서 기본 장치를 바꾸세요.'); }
+  const HFP_HELP = '지금 마이크가 블루투스 헤드셋의 통화(Hands-Free) 마이크라, 같은 헤드셋의 ‘Stereo’ 출력은 소리가 나지 않습니다. 같은 이름의 Hands-Free 출력을 고르거나, 마이크를 PC 내장·유선·USB 마이크로 바꾸면 Stereo로 들을 수 있습니다. 면접 질문 음성도 들리려면 Windows 기본 출력 장치를 같은 항목으로 맞춰 두세요.';
+  $('#spk-sel').onchange = (e) => {
+    media.spkId = e.target.value; spkPicked = true;
+    mark('speaker', false, '대기'); $('#heard').disabled = true; $('#not-heard').disabled = true;
+    spkMsg(hfpMismatch() ? HFP_HELP : '');
+  };
+  function toneUrl() { // 도-미-솔 3음 WAV(약 2초). AudioContext보다 <audio>의 출력 장치 지정이 안정적이라 파일로 만들어 재생
+    const sr = 44100, notes = [523, 659, 784], n = Math.round(sr * 1.95), d = new DataView(new ArrayBuffer(44 + n * 2));
+    const w = (o, s) => [...s].forEach((c, i) => d.setUint8(o + i, c.charCodeAt(0)));
+    w(0, 'RIFF'); d.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, 1, true);
+    d.setUint32(24, sr, true); d.setUint32(28, sr * 2, true); d.setUint16(32, 2, true); d.setUint16(34, 16, true); w(36, 'data'); d.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) {
+      const t = i / sr, k = Math.floor(t / 0.65), u = t - k * 0.65;
+      const v = k < 3 && u < 0.5 ? Math.sin(2 * Math.PI * notes[k] * t) * 0.35 * Math.min(1, u / 0.01, (0.5 - u) / 0.01) : 0;
+      d.setInt16(44 + i * 2, v * 32767, true);
+    }
+    return URL.createObjectURL(new Blob([d], { type: 'audio/wav' }));
+  }
   $('#tone').onclick = async () => {
     mark('speaker', false, '재생 중');
-    $('#tone').disabled = true; $('#heard').disabled = true; $('#not-heard').disabled = true; $('#spk-msg').style.display = 'none';
-    const ctx = new AudioContext();
-    try { if (canPickOut && media.spkId) await ctx.setSinkId(media.spkId); } catch (_) { toast('선택한 출력 장치를 열지 못해 기본 장치로 재생합니다.', true); }
-    await ctx.resume();
-    const g = ctx.createGain(); g.connect(ctx.destination);
-    const t = ctx.currentTime;
-    [523, 659, 784].forEach((f, i) => { // 도-미-솔 3음, 총 약 2초
-      const o = ctx.createOscillator(); o.frequency.value = f; o.connect(g);
-      o.start(t + i * 0.65); o.stop(t + i * 0.65 + 0.5);
-    });
-    g.gain.setValueAtTime(0.35, t);
-    setTimeout(() => { ctx.close(); $('#tone').disabled = false; $('#heard').disabled = false; $('#not-heard').disabled = false; mark('speaker', false, '확인 필요'); }, 2100);
+    $('#tone').disabled = true; $('#heard').disabled = true; $('#not-heard').disabled = true;
+    spkMsg(hfpMismatch() ? HFP_HELP : '');
+    const a = new Audio(toneUrl());
+    const done = (err) => {
+      URL.revokeObjectURL(a.src);
+      $('#tone').disabled = false; $('#heard').disabled = !!err; $('#not-heard').disabled = false;
+      mark('speaker', false, err ? '재생 실패' : '확인 필요');
+      if (err) spkMsg('테스트음을 재생하지 못했습니다(' + err + '). 다른 출력 장치를 고르거나 페이지를 새로고침한 뒤 다시 시도하세요.');
+    };
+    try { if (canPickOut && media.spkId) await a.setSinkId(media.spkId); } catch (_) { toast('선택한 출력 장치를 열지 못해 기본 장치로 재생합니다.', true); }
+    a.onended = () => done();
+    try { await a.play(); } catch (e) { done(e.name || '알 수 없는 오류'); }
   };
   $('#heard').onclick = () => mark('speaker', true);
   $('#not-heard').onclick = () => {
     mark('speaker', false, '안 들림');
-    $('#spk-msg').textContent = '① 볼륨·음소거를 확인하세요. ② 위 목록에서 헤드폰을 직접 고르세요. ③ 블루투스 헤드셋은 마이크를 켜면 ‘헤드셋(Hands-Free)’ 모드로 바뀌니, 출력도 같은 이름의 장치를 고르세요. ④ Windows 작업 표시줄 스피커 아이콘에서 출력 장치를 바꿀 수도 있습니다. 확인 후 다시 재생하세요.';
-    $('#spk-msg').style.display = '';
+    spkMsg('① 볼륨·음소거를 확인하세요. ② 위 목록에서 실제로 쓰는 스피커·이어폰·헤드폰을 직접 고르세요(유선 이어폰은 꽂은 뒤 목록이 바뀝니다). ③ 블루투스 헤드셋을 마이크로도 쓰면 출력은 ‘Stereo’가 아니라 같은 이름의 Hands-Free 장치를 고르세요. ④ Windows 작업 표시줄 스피커 아이콘에서 출력 장치를 바꿀 수도 있습니다. 확인 후 다시 재생하세요.');
   };
   const t0 = performance.now();
   try {
@@ -646,6 +738,7 @@ async function interviewView(attemptId) {
   let remaining = 0;
   let current = null;           // current question
   let codingCtx = null;
+  let wave = null;              // 음성 파형 { stop, listen(on) }
 
   // heartbeat (5초)
   const hb = setInterval(async () => {
@@ -697,19 +790,78 @@ async function interviewView(attemptId) {
     document.removeEventListener('fullscreenchange', onFs); window.removeEventListener('offline', onOffline); window.removeEventListener('online', onOnline);
     clearInterval(qTimer); clearTimeout(blurTimer); speechSynthesis.cancel();
     if (codingCtx) codingCtx.stop();
+    if (wave) { wave.stop(); wave = null; }
   });
 
   async function ensureCamera() {
     if (media.stream && media.stream.active) return media.stream;
     const r = await openMedia();
     media.stream = r.stream;
-    return r.mic || r.cam ? null : media.stream;
+    return r.mic ? null : media.stream; // 카메라는 임시로 선택(env 점검 참고)
   }
   function attachCam() {
     const box = $('#cam');
     if (!box || !media.stream) return;
+    if (!media.stream.getVideoTracks().length) { box.textContent = '카메라 없음'; return; }
     const v = document.createElement('video'); v.autoplay = true; v.muted = true; v.playsInline = true; v.srcObject = media.stream;
     box.innerHTML = ''; box.appendChild(v);
+  }
+
+  /* 답변 중 마이크 소리 크기에 맞춰 움직이는 파형. 인식된 글자 대신 '목소리가 들어가고 있다'만 보여 준다(3색 규칙: neon·white) */
+  function startWave(canvas, label) {
+    const stream = media.stream && media.stream.getAudioTracks().length ? new MediaStream(media.stream.getAudioTracks()) : null;
+    let ctx = null, an = null, buf = null;
+    if (stream) {
+      ctx = new AudioContext(); an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = 0.6;
+      ctx.createMediaStreamSource(stream).connect(an); buf = new Uint8Array(an.fftSize);
+    }
+    const g = canvas.getContext('2d');
+    // 색은 디자인 토큰(--neon)에서 읽는다: '#39ff14' → '57,255,20'
+    const hex = getComputedStyle(document.documentElement).getPropertyValue('--neon').trim().replace('#', '') || '39ff14';
+    const NEON = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(',');
+    let listening = false, level = 0, t = 0, raf = 0, quiet = 0;
+    const curves = [ // [진폭 비율, 파수, 속도, 위상, 투명도]
+      [1.0, 2.2, 1.6, 0.0, 0.55], [0.75, 3.1, -2.1, 1.3, 0.4], [0.55, 1.6, 2.7, 2.6, 0.35], [0.35, 4.0, -1.2, 4.1, 0.3],
+    ];
+    function draw() {
+      const w = canvas.clientWidth, h = canvas.clientHeight, dpr = devicePixelRatio || 1;
+      if (canvas.width !== w * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; }
+      g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, w, h);
+      let raw = 0;
+      if (an && listening) { an.getByteTimeDomainData(buf); let s = 0; for (const x of buf) s += ((x - 128) / 128) ** 2; raw = Math.min(1, Math.sqrt(s / buf.length) * 5); }
+      level += (raw - level) * (raw > level ? 0.35 : 0.08);           // 빠르게 커지고 천천히 줄어듦
+      t += 0.016;
+      const mid = h / 2, amp = (listening ? 0.06 + level * 0.88 : 0.03) * (h / 2 - 6);
+      g.globalCompositeOperation = 'lighter';
+      for (const [a, k, sp, ph, al] of curves) {
+        g.beginPath();
+        for (let x = 0; x <= w; x += 3) {
+          const u = x / w, env = Math.sin(Math.PI * u) ** 2.2;            // 양 끝이 가늘어지는 모양
+          const y = mid + Math.sin(u * Math.PI * 2 * k + t * sp + ph) * amp * a * env;
+          x ? g.lineTo(x, y) : g.moveTo(x, y);
+        }
+        for (let x = w; x >= 0; x -= 3) {                                // 아래쪽 대칭 곡선으로 면을 채움
+          const u = x / w, env = Math.sin(Math.PI * u) ** 2.2;
+          g.lineTo(x, mid - Math.sin(u * Math.PI * 2 * k - t * sp + ph) * amp * a * env * 0.35);
+        }
+        g.closePath();
+        g.fillStyle = `rgba(${NEON},${al * 0.35})`; g.fill();
+        g.strokeStyle = `rgba(${NEON},${al})`; g.lineWidth = 1.4; g.shadowColor = `rgba(${NEON},.8)`; g.shadowBlur = 12; g.stroke();
+      }
+      g.shadowBlur = 0; g.globalCompositeOperation = 'source-over';
+      g.fillStyle = 'rgba(255,255,255,.55)'; g.fillRect(0, mid - 0.5, w, 1);  // 가운데 빛줄기
+      if (label && listening) {
+        quiet = raw > 0.12 ? 0 : quiet + 1;
+        label.textContent = !stream ? '마이크가 연결되지 않았습니다' : quiet < 40 ? '음성 인식 중' : '말씀해 주세요';
+        label.classList.toggle('on', !!stream && quiet < 40);
+      }
+      raf = requestAnimationFrame(draw);
+    }
+    draw();
+    return {
+      listen(on) { listening = on; if (label && !on) { label.textContent = '대기'; label.classList.remove('on'); } },
+      stop() { cancelAnimationFrame(raf); if (ctx) ctx.close(); },
+    };
   }
 
   function showDisconnected() {
@@ -721,6 +873,7 @@ async function interviewView(attemptId) {
   function render() {
     clearInterval(qTimer);
     if (codingCtx) { codingCtx.stop(); codingCtx = null; }
+    if (wave) { wave.stop(); wave = null; }
     if (st.status === 'interrupted') return renderInterrupted();
     if (['completed', 'terminated', 'cancelled'].includes(st.status)) return renderEnded();
     if (st.status === 'interview') return renderInterview();
@@ -752,7 +905,7 @@ async function interviewView(attemptId) {
       <button class="btn primary lg" id="resume" disabled>전체 화면으로 이어가기</button></div></div>`;
     ensureCamera().then((s) => {
       const okDev = !!s;
-      $('#re-dev').textContent = okDev ? '마이크·카메라 정상' : '마이크·카메라 권한이 필요합니다';
+      $('#re-dev').textContent = okDev ? '마이크 정상' : '마이크 권한이 필요합니다';
       $('#re-dev').className = 'pill ' + (okDev ? 'on' : 'dim');
       $('#resume').disabled = !okDev;
     });
@@ -777,10 +930,14 @@ async function interviewView(attemptId) {
           <div class="col" style="justify-items:center"><div class="cam" id="cam">카메라</div><div class="timer idle" id="timer">${q.time_limit}</div></div>
         </div>
         <div id="phase" class="small">질문을 읽어 드리고 있습니다…</div>
-        <textarea class="input" id="ans" rows="6" placeholder="답변을 입력하세요 (개발 환경: 음성 인식 대신 입력)" disabled></textarea>
+        <div class="voice"><canvas id="wave"></canvas><span class="voice-label" id="voice-label">대기</span></div>
         <div class="between"><span class="small">시간 안에 '답변 완료'를 누르면 바로 다음으로 넘어갑니다.</span><button class="btn primary" id="done" disabled>답변 완료</button></div>
+        <div class="emergency"><label for="ans">음성이 인식되지 않을 때만 쓰는 비상 입력란</label>
+          <textarea class="input" id="ans" rows="1" placeholder="마이크 장애 시에만 입력" disabled></textarea></div>
       </div></div>`;
-    ensureCamera().then(attachCam);
+    if (wave) wave.stop();
+    wave = null;
+    ensureCamera().then(() => { attachCam(); if ($('#wave')) { wave = startWave($('#wave'), $('#voice-label')); if (!$('#done').disabled) wave.listen(true); } });
     $('#done').onclick = () => submitAnswer();
     $('#ans').addEventListener('paste', (e) => e.preventDefault());
     active = true;
@@ -818,8 +975,9 @@ async function interviewView(attemptId) {
     remaining = limit;
     const ans = $('#ans'); const timer = $('#timer');
     if (!ans) return;
-    $('#phase').textContent = '답변해 주세요.';
-    ans.disabled = false; ans.focus(); $('#done').disabled = false;
+    $('#phase').textContent = '답변해 주세요. 말씀하시는 동안 아래 파형이 움직입니다.';
+    ans.disabled = false; $('#done').disabled = false;
+    if (wave) wave.listen(true);
     timer.classList.remove('idle'); timer.textContent = remaining;
     qTimer = setInterval(() => {
       remaining -= 1;
@@ -833,6 +991,7 @@ async function interviewView(attemptId) {
     const ans = $('#ans');
     if (!ans || $('#done').disabled) return;
     $('#done').disabled = true; ans.disabled = true;
+    if (wave) wave.listen(false);
     $('#phase').innerHTML = '<span class="spinner"></span> 답변을 저장하고 다음 질문을 준비하고 있습니다…';
     try {
       st = await post(`/api/attempts/${attemptId}/answer`, { question_id: current.id, text: ans.value });
@@ -847,6 +1006,7 @@ async function interviewView(attemptId) {
     if (st.status === 'interview' && current) {      // 같은 질문, 새 답변 시간
       active = true;
       const ans = $('#ans'); if (ans) { ans.disabled = true; }
+      if (wave) wave.listen(false);
       $('#done') && ($('#done').disabled = true);
       $('#timer') && ($('#timer').textContent = current.time_limit);
       present(current);
@@ -982,6 +1142,16 @@ window.addEventListener('hashchange', router);
       toast('결과 공개 시각을 지금으로 당겼습니다.'); router();
     };
     bar.insertBefore(b, bar.querySelector('.sp'));
+    // 지원자 테스트 계정(이지원)만: 접수 취소 → 같은 공고에 다시 지원해 점검·면접을 반복 테스트
+    const r = document.createElement('button');
+    r.textContent = '접수 취소(테스트 계정)'; r.hidden = true; r.id = 'dev-reset';
+    r.onclick = async () => {
+      const yes = await HH.modal({ title: '접수 취소(테스트용)', body: '이 계정의 지원·응시 기록을 모두 지웁니다. 이력서 파일은 남습니다. 같은 공고에 다시 지원할 수 있게 됩니다.',
+        buttons: [{ label: '닫기', value: false }, { label: '모두 취소', value: true, primary: true }] });
+      if (!yes) return;
+      try { const x = await post('/api/dev/reset-my-applications'); toast(`지원 ${x.deleted}건을 취소했습니다.`); go('#/jobs'); router(); } catch (e) { toast(e.message, true); }
+    };
+    bar.insertBefore(r, bar.querySelector('.sp'));
   });
   await loadMe();
   router();

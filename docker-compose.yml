@@ -43,6 +43,7 @@ services:
     volumes:
       - uploads:/data/uploads
       - sandbox:/sandbox
+      - ./main:/web/main:ro
       - ./admin:/web/admin:ro
       - ./applicant:/web/applicant:ro
       - ./shared:/web/shared:ro

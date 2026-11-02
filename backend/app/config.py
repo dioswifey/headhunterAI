@@ -8,6 +8,8 @@ def _int(name, default):
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://headhunter:headhunter@localhost:5432/headhunter")
 DEV_MODE = os.getenv("DEV_MODE", "1") == "1"
+# 개발 전용: 접수 취소(지원 기록 초기화) 버튼을 쓸 수 있는 지원자 테스트 계정 = 시드 이지원
+TEST_APPLICANT_EMAIL = os.getenv("TEST_APPLICANT_EMAIL", "applicant@headhunter.ai")
 
 # LLM provider (TRD §5.1) — dev: Ollama qwen3:4b, prod: Qwen3-8B (same OpenAI-less Ollama/vLLM endpoint)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")

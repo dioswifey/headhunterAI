@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config, db, routes_admin, routes_applicant, routes_auth, scheduler, security, seed
@@ -27,6 +27,15 @@ app.include_router(routes_admin.router)
 app.include_router(routes_admin.ops_router)
 
 
+@app.middleware("http")
+async def no_stale_static(request, call_next):
+    """화면 파일(HTML·JS·CSS)은 브라우저가 매번 최신인지 확인하게 한다. 수정 후 일반 새로고침만으로 반영되도록."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.post("/api/dev/publish-now/{job_id}")
 def dev_publish_now(job_id: int, user=Depends(security.current_user)):
     """개발 환경 전용: 결과 공개 시각(마감 다음 날 10:00)을 지금으로 당긴다. 운영 빌드(DEV_MODE=0)에는 없음."""
@@ -37,11 +46,28 @@ def dev_publish_now(job_id: int, user=Depends(security.current_user)):
     return {"ok": True}
 
 
+@app.post("/api/dev/reset-my-applications")
+def dev_reset_my_applications(app_id: int | None = None, user=Depends(security.current_user)):
+    """개발 환경 전용: 지원자 테스트 계정(이지원)만 자기 지원 기록을 지운다(app_id를 주면 그 건만, 없으면 전부)(응시·답변·평가 포함, 이력서 파일은 유지).
+    지원 건당 1회 응시(APP-02) 때문에 같은 공고로 장치 점검·면접을 반복 테스트하기 위한 것."""
+    if not config.DEV_MODE or user["email"] != config.TEST_APPLICANT_EMAIL:
+        raise HTTPException(404)
+    only = " AND id=%s" if app_id else ""
+    args = (user["id"], app_id) if app_id else (user["id"],)
+    n = db.one("SELECT count(*) AS n FROM applications WHERE user_id=%s" + only, *args)["n"]
+    db.run("DELETE FROM applications WHERE user_id=%s" + only, *args)
+    db.audit(user["id"], "dev_reset_applications", "user", user["id"])
+    return {"ok": True, "deleted": n}
+
+
 @app.get("/")
+@app.get("/main.html")
 def root():
-    return RedirectResponse("/applicant/")
+    """공통 메인: 지원자·기업 담당자가 함께 들어오는 첫 페이지"""
+    page = WEB_ROOT / "main" / "index.html"
+    return FileResponse(page) if page.exists() else RedirectResponse("/applicant/")
 
 
-for name in ("admin", "applicant", "shared", "images"):
+for name in ("main", "admin", "applicant", "shared", "images"):
     if (WEB_ROOT / name).exists():
         app.mount(f"/{name}", StaticFiles(directory=WEB_ROOT / name, html=True), name=name)
