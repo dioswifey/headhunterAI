@@ -36,7 +36,7 @@ select option:disabled { color: var(--muted2); }
 /* header */
 .top { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px; padding: 14px 28px; border-bottom: 1px solid var(--line); background: rgba(0, 0, 0, .92); backdrop-filter: blur(6px); }
 .logo { font-family: var(--font-logo); font-weight: 800; font-size: 20px; letter-spacing: -.01em; text-decoration: none; color: var(--white); display: inline-flex; align-items: center; gap: 8px; }
-.logo img { height: 34px; }
+.logo img { height: 54px; }
 .logo .accent { color: var(--neon); }
 .top nav { display: flex; gap: 4px; }
 .top nav a { text-decoration: none; padding: 6px 12px; border-radius: var(--radius); color: var(--muted); font-weight: 600; }

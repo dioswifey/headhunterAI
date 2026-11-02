@@ -7,6 +7,7 @@ import json
 import re
 
 import httpx
+from langsmith import traceable
 
 from . import config
 
@@ -54,6 +55,8 @@ class OllamaProvider:
 provider = OllamaProvider(config.LLM_BASE_URL, config.LLM_MODEL)
 
 
+# LANGSMITH_TRACING=false(기본·운영)이면 traceable은 아무것도 보내지 않는다 (TRD v0.2 §13.4)
+@traceable(name="llm.chat_json", run_type="llm", metadata={"model": config.LLM_MODEL})
 def chat_json(system, user, schema, timeout=None, temperature=0.2):
     return provider.chat_json(system, user, schema, timeout=timeout, temperature=temperature)
 

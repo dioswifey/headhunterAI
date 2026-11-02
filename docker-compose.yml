@@ -38,6 +38,11 @@ services:
       MAX_CONCURRENT_INTERVIEWS: "2"  # 운영 기준 GPU당 5건(INT-08)
       UPLOAD_DIR: /data/uploads
       SANDBOX_DIR: /sandbox
+      # LangSmith 추적(개발 전용, TRD v0.2 §13.4). 값은 저장소 루트 .env(커밋 안 됨)에서 읽는다. 키가 없거나 DEV_MODE=0이면 꺼진다
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-headhunter-dev}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
     ports:
       - "8000:8000"
     volumes:

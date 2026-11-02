@@ -10,25 +10,27 @@
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
 <link rel="stylesheet" href="/shared/styles.css">
+<link rel="stylesheet" href="/main/main.css">
 </head>
 <body>
-<header class="top">
-  <a class="logo" href="/"><img src="/images/headhuntgerAI_log.png.png" alt="headhunterAI"></a>
-</header>
-<div class="wrap">
-  <section class="hero">
-    <div>
-      <h1>인재를 발견하는 새로운 기준,<br><span class="neon">headhunterAI</span></h1>
-      <p class="lead">이력서를 올리면 AI가 내용을 읽고 나에게 맞춘 질문으로 1차 면접을 진행합니다. 기업은 같은 기준과 근거로 1차 결과를 받아 봅니다.</p>
-      <div class="row">
-        <a class="btn primary lg" href="/applicant/#/jobs">지원자로 시작하기 →</a>
-        <a class="btn lg" href="/admin/">기업 담당자 로그인</a>
-      </div>
+<header class="top main-top">
+  <a class="logo" href="#/"><img src="/images/headhuntgerAI_log.png.png" alt="headhunterAI"></a>
+  <nav class="main-nav">
+    <div class="dd">
+      <a href="#/features" data-nav="features">Features</a>
+      <div class="dd-panel"><div class="dd-box" id="dd-features"></div></div>
     </div>
-    <img class="hero-img" src="/images/mainpage_image.png.png" alt="">
-  </section>
-</div>
+    <a href="#/about" data-nav="about">About Us</a>
+    <a href="#/pricing" data-nav="pricing">Pricing</a>
+  </nav>
+  <div class="lang" role="group" aria-label="언어 / Language">
+    <button type="button" data-lang="ko">KO</button>
+    <button type="button" data-lang="en">EN</button>
+  </div>
+</header>
+<main id="view"></main>
 <script src="/shared/api.js"></script>
+<script src="/main/main.js"></script>
 <script>HH.devbar();</script>
 </body>
 </html>

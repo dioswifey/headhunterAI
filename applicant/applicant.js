@@ -111,11 +111,6 @@ async function landing() {
           <a class="btn primary lg" href="#/jobs">지원자로 시작하기 →</a>
           <a class="btn lg" href="/admin/">기업 담당자 로그인</a>
         </div>
-        <div class="chips">
-          <a class="chip" href="#/jobs"><b>AI 1차 면접</b><span>이력서 맞춤 질문 10개</span></a>
-          <a class="chip" href="#/signup"><b>이력서 자동 인식</b><span>스캔 PDF·사진도 OCR로</span></a>
-          <a class="chip" href="/admin/"><b>기업 공고 관리</b><span>기준 설정부터 결과 확인까지</span></a>
-        </div>
       </div>
       <img class="hero-img" src="/images/mainpage_image.png.png" alt="">
     </section>
