@@ -17,6 +17,15 @@ def assign_problems(attempt_id):
 
 
 def sandbox_run(code, func, tests, wait=20):
+    if config.RUNNER_URL:  # Railway: 실행기 서비스를 HTTP로 부른다(네트워크 격리 없음 — CLAUDE.md 배포 절)
+        import httpx
+        try:
+            r = httpx.post(config.RUNNER_URL + "/run", headers={"x-runner-token": config.RUNNER_TOKEN}, timeout=wait,
+                           json={"code": code, "func": func, "tests": [{"args": t["args"], "expected": t["expected"]} for t in tests]})
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return {"status": "error", "results": [], "stderr": "실행 환경 응답 없음"}
     job_id = uuid.uuid4().hex
     jobs, results = os.path.join(config.SANDBOX_DIR, "jobs"), os.path.join(config.SANDBOX_DIR, "results")
     os.makedirs(jobs, exist_ok=True)

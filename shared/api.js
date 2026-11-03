@@ -62,7 +62,7 @@ const HH = (() => {
   async function devbar(where) {
     try {
       const h = await get('/api/system/health');
-      if (!h.dev_mode) return;
+      if (!(h.dev_bar ?? h.dev_mode)) return;   // 배포에서는 SHOW_DEVBAR=0이면 DEV 바를 숨김
       const bar = document.createElement('div');
       bar.className = 'devbar';
       bar.innerHTML = `<b>DEV</b><span>개발·시연 환경 · LLM ${esc(h.llm.model)} ${h.llm.ok ? '연결됨' : '연결 안 됨'} · DB ${h.db ? '정상' : '오류'}</span><span class="sp"></span>

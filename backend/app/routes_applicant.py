@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import coding, config, db, evaluation, llm, ocr, questions, scheduler, security
+from . import coding, config, db, evaluation, llm, ocr, questions, report_mail, scheduler, security
 
 router = APIRouter(prefix="/api")
 KST = ZoneInfo("Asia/Seoul")
@@ -58,7 +58,7 @@ def apply(body: Apply, user=Depends(security.applicant)):
 def my_applications(user=Depends(security.applicant)):
     rows = db.all_("""SELECT ap.id, ap.step, ap.created_at, j.id job_id, j.title, j.close_date, c.name company, ec.coding_enabled,
                       a.id attempt_id, a.status attempt_status, a.analysis_status, a.publish_at,
-                      (e.attempt_id IS NOT NULL AND a.publish_at <= now()) result_open
+                      (e.final_result IS NOT NULL) result_open, coalesce(a.criteria_snapshot->>'decision_mode', ec.decision_mode) decision_mode
                       FROM applications ap JOIN jobs j ON j.id=ap.job_id JOIN companies c ON c.id=j.company_id
                       JOIN eval_criteria ec ON ec.job_id=j.id
                       LEFT JOIN attempts a ON a.application_id=ap.id LEFT JOIN evaluations e ON e.attempt_id=a.id
@@ -299,7 +299,7 @@ def _current_question(attempt_id):
 
 
 def _state(att):
-    st = {"attempt_id": att["id"], "status": att["status"], "phase": att["phase"], "exit_count": att["exit_count"],
+    st = {"attempt_id": att["id"], "application_id": att["application_id"], "status": att["status"], "phase": att["phase"], "exit_count": att["exit_count"],
           "publish_at": att["publish_at"].isoformat() if att["publish_at"] else None}
     if att["status"] == "interview" or (att["status"] == "interrupted" and att["phase"] == "interview"):
         q = _current_question(att["id"])
@@ -492,18 +492,58 @@ def coding_submit(attempt_id: int, user=Depends(security.applicant)):
 
 
 # ---------- 결과 (RPT-03~05) ----------
+def _result_row(app_id):
+    return db.one("""SELECT a.id attempt_id, a.status, a.analysis_status, a.publish_at, e.public_feedback, e.final_result, e.decided_at,
+                     coalesce(a.criteria_snapshot->>'decision_mode', 'auto') decision_mode
+                     FROM attempts a LEFT JOIN evaluations e ON e.attempt_id=a.id WHERE a.application_id=%s""", app_id)
+
+
 @router.get("/applications/{app_id}/result")
 def result(app_id: int, user=Depends(security.applicant)):
+    """v0.6: 합불은 확정(final_result)되면 바로 공개. auto = 평가 직후, semi = 담당자 확인 후. 점수는 리포트 메일·화면 공통 정량값."""
     _own_app(app_id, user)
-    row = db.one("""SELECT a.status, a.publish_at, e.public_feedback FROM attempts a LEFT JOIN evaluations e ON e.attempt_id=a.id
-                    WHERE a.application_id=%s""", app_id)
+    row = _result_row(app_id)
     if not row:
-        raise HTTPException(404, "응시 내역이 없습니다.")
-    now = security.now()
-    if not row["public_feedback"] or row["publish_at"] > now:  # RPT-04: 공개 전에는 결과를 반환하지 않음
-        return {"published": False, "publish_at": row["publish_at"].isoformat()}
-    return {"published": True, "publish_at": row["publish_at"].isoformat(),
-            "expires_at": (row["publish_at"] + timedelta(days=7)).isoformat(), **row["public_feedback"]}
+        raise HTTPException(404, "응시 기록이 없습니다.")
+    if not row["public_feedback"] or not row["final_result"]:
+        return {"published": False, "decision_mode": row["decision_mode"], "analysis_status": row["analysis_status"]}
+    pub = {k: v for k, v in row["public_feedback"].items() if k != "result"}
+    return {"published": True, "result": row["final_result"], "decided_at": row["decided_at"].isoformat(),
+            "expires_at": (row["publish_at"] + timedelta(days=7)).isoformat() if row["publish_at"] else None, **pub}
+
+
+@router.get("/applications/{app_id}/report")
+def report_status(app_id: int, user=Depends(security.applicant)):
+    """완료 화면 폴링용: 분석 상태 · 결정 방식 · (확정됐으면) 합불 · 리포트 메일 상태."""
+    _own_app(app_id, user)
+    row = _result_row(app_id)
+    if not row:
+        raise HTTPException(404, "응시 기록이 없습니다.")
+    return {"attempt_status": row["status"], "analysis_status": row["analysis_status"], "decision_mode": row["decision_mode"],
+            "evaluated": bool(row["public_feedback"]), "result": row["final_result"],
+            "email": report_mail.status(row["attempt_id"]), "email_enabled": report_mail.mailer.enabled()}
+
+
+@router.post("/applications/{app_id}/report/email")
+def report_email(app_id: int, user=Depends(security.applicant)):
+    """'결과 리포트 이메일로 받기' — 평가가 끝난 건만, 60초 간격 · 응시당 최대 5회."""
+    _own_app(app_id, user)
+    row = _result_row(app_id)
+    if not row or not row["public_feedback"]:
+        raise HTTPException(409, "AI 분석이 끝나면 리포트를 받을 수 있습니다.")
+    if row["status"] == "cancelled":
+        raise HTTPException(409, "응시가 취소된 건은 리포트가 없습니다.")
+    if not report_mail.mailer.enabled():
+        raise HTTPException(503, "이메일 발송이 설정되지 않았습니다.")
+    last = db.one("""SELECT count(*) n, max(created_at) at FROM email_logs WHERE attempt_id=%s AND kind='applicant_report'""", row["attempt_id"])
+    if last["n"] >= report_mail.RESEND_MAX:
+        raise HTTPException(429, f"리포트 메일은 응시당 최대 {report_mail.RESEND_MAX}회까지 받을 수 있습니다.")
+    if last["at"] and (security.now() - last["at"]).total_seconds() < report_mail.RESEND_GAP_SEC:
+        raise HTTPException(429, "방금 보냈습니다. 1분 뒤에 다시 시도해 주세요.")
+    r = report_mail.send(row["attempt_id"])
+    if not r["ok"]:
+        raise HTTPException(502, "메일을 보내지 못했습니다. 잠시 후 다시 시도해 주세요.")
+    return {"ok": True, "to": user["email"]}
 
 
 @router.get("/me/notifications")

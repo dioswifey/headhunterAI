@@ -14,10 +14,21 @@ WEB_ROOT = Path("/web")
 @asynccontextmanager
 async def lifespan(_app):
     db.pool.open(wait=True)
+    _ensure_schema()
     seed.seed()
     scheduler.start()
     yield
     db.pool.close()
+
+
+def _ensure_schema():
+    """빈 DB면 schema.sql을 적용한다(Railway Postgres용. 로컬은 initdb가 이미 적용)."""
+    if db.one("SELECT to_regclass('public.companies') AS t")["t"]:
+        return
+    path = Path(config.SCHEMA_PATH)
+    if path.exists():
+        with db.tx() as conn:
+            conn.execute(path.read_text(encoding="utf-8"))
 
 
 app = FastAPI(title="headhunterAI", lifespan=lifespan)
@@ -31,7 +42,10 @@ app.include_router(routes_admin.ops_router)
 async def no_stale_static(request, call_next):
     """화면 파일(HTML·JS·CSS)은 브라우저가 매번 최신인지 확인하게 한다. 수정 후 일반 새로고침만으로 반영되도록."""
     response = await call_next(request)
-    if not request.url.path.startswith("/api/"):
+    path = request.url.path
+    if path.startswith("/images/"):   # 이미지·지구 점 데이터는 자주 안 바뀜 → 7일 캐시(첫 화면 재방문 속도)
+        response.headers["Cache-Control"] = "public, max-age=604800"
+    elif not path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-cache"
     return response
 

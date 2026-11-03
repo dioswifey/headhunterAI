@@ -5,7 +5,7 @@ category structure; replace via the import format in TRD §6.1.
 """
 from datetime import timedelta
 
-from . import db, security
+from . import db, security, config
 from .routes_applicant import KST
 
 ROLES = [("ai_ax", "AI/AX 엔지니어", "active"), ("backend", "백엔드 개발자", "preparing"), ("frontend", "프론트엔드 개발자", "preparing"),
@@ -75,16 +75,18 @@ PROBLEMS = [
 def seed():
     if db.one("SELECT 1 FROM companies LIMIT 1"):
         return
+    import secrets
+    pw = lambda v: security.hash_pw(v or secrets.token_urlsafe(24))   # 배포에서 값이 없으면 아무도 모르는 비밀번호
     for i, (code, name, status) in enumerate(ROLES):
         db.run("INSERT INTO job_roles (code, name, status, sort) VALUES (%s,%s,%s,%s)", code, name, status, i)
     c = db.run("""INSERT INTO companies (name, intro) VALUES (%s,%s) RETURNING id""", "헤드헌터랩",
                "사내 업무를 AI로 자동화하는 AX 솔루션을 만드는 데모 회사입니다. 문서 검색·요약 에이전트와 사내 LLM 플랫폼을 운영합니다.")
     db.run("""INSERT INTO users (role, company_id, email, password_hash, name, phone, email_verified, must_change_password)
-              VALUES ('recruiter',%s,'recruiter@headhunter.ai',%s,'김담당','010-1111-2222',true,true)""", c["id"], security.hash_pw("changeme123!"))
+              VALUES ('recruiter',%s,'recruiter@headhunter.ai',%s,'김담당','010-1111-2222',true,true)""", c["id"], pw(config.SEED_RECRUITER_PASSWORD))
     db.run("""INSERT INTO users (role, email, password_hash, name, email_verified)
-              VALUES ('operator','ops@headhunter.ai',%s,'운영자',true)""", security.hash_pw("operator123!"))
+              VALUES ('operator','ops@headhunter.ai',%s,'운영자',true)""", pw(config.SEED_OPERATOR_PASSWORD))
     db.run("""INSERT INTO users (role, email, password_hash, name, phone, email_verified, age14_confirmed)
-              VALUES ('applicant','applicant@headhunter.ai',%s,'이지원','010-3333-4444',true,true)""", security.hash_pw("test1234!"))
+              VALUES ('applicant','applicant@headhunter.ai',%s,'이지원','010-3333-4444',true,true)""", pw(config.SEED_APPLICANT_PASSWORD))
     from datetime import datetime
     today = datetime.now(KST).date()
     j = db.run("""INSERT INTO jobs (company_id, role_code, title, company_intro, duties, requirements, preferred, employment_type, location,

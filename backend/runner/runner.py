@@ -69,7 +69,52 @@ def run_job(job):
                 "stdout": proc.stdout[:marker][-1500:], "stderr": proc.stderr[-800:]}
 
 
+def serve_http(port):
+    """Railway용: POST /run {code, func, tests} → 결과 JSON. x-runner-token 헤더가 RUNNER_TOKEN과 같아야 한다.
+    한 번에 하나씩 실행(동시 실행 제한). 네트워크 차단은 없다(Railway 제약)."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import socket
+    token = os.getenv("RUNNER_TOKEN", "")
+    lock = threading.Lock()
+
+    class H(BaseHTTPRequestHandler):
+        def _send(self, code, obj):
+            body = json.dumps(obj).encode()
+            self.send_response(code); self.send_header("content-type", "application/json"); self.send_header("content-length", str(len(body)))
+            self.end_headers(); self.wfile.write(body)
+
+        def do_GET(self):
+            self._send(200, {"ok": True})
+
+        def do_POST(self):
+            if self.path != "/run" or not token or self.headers.get("x-runner-token") != token:
+                return self._send(403, {"status": "error", "results": [], "stderr": "forbidden"})
+            n = min(int(self.headers.get("content-length") or 0), 200_000)
+            try:
+                job = json.loads(self.rfile.read(n))
+            except json.JSONDecodeError:
+                return self._send(400, {"status": "error", "results": [], "stderr": "bad request"})
+            with lock:
+                self._send(200, run_job(job))
+
+        def log_message(self, *a):
+            pass
+
+    class S(ThreadingHTTPServer):
+        address_family = socket.AF_INET6  # Railway 내부망은 IPv6
+
+        def server_bind(self):
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+            super().server_bind()
+
+    print(f"sandbox runner http :{port}", flush=True)
+    S(("::", port), H).serve_forever()
+
+
 def main():
+    if os.getenv("RUNNER_HTTP_PORT"):
+        return serve_http(int(os.environ["RUNNER_HTTP_PORT"]))
     os.makedirs(JOBS, exist_ok=True)
     os.makedirs(RESULTS, exist_ok=True)
     print("sandbox runner ready", flush=True)

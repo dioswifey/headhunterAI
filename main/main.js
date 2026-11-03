@@ -1,4 +1,4 @@
-/* headhunterAI 공통 첫 페이지 — 해시 라우팅(#/ · #/features · #/about · #/pricing) + KO/EN 문구 전환.
+/* headhunterAI 공통 첫 페이지 — 해시 라우팅(#/ · #/features/<서비스> · #/about · #/pricing) + KO/EN 문구 전환.
    메뉴 이름(Features · About Us · Pricing)은 두 언어 모두 영어로 두고, 안의 내용만 바꾼다. */
 const { esc } = HH;
 const view = document.getElementById('view');
@@ -10,26 +10,90 @@ const T = {
     startApplicant: '지원자로 시작하기 →',
     loginCompany: '기업 담당자 로그인',
     soon: '준비 중',
-    featuresTitle: ['이력서부터 1차 면접까지,', 'AI가 한 흐름으로'],
-    featuresLead: '지원자는 내 이력서에 맞춘 면접을, 기업은 같은 기준으로 정리된 1차 결과를 받습니다.',
-    ddCta: ['headhunterAI 시작하기', '공고를 둘러보고 바로 지원할 수 있습니다 →'],
-    features: [
-      { id: 'interview', ic: 'Q', name: 'AI 1차 면접', short: '이력서와 공고에 맞춘 질문 10개와 꼬리질문',
-        body: '인성 2 · 이력서 기반 2 · 직무 4 · 기업 2, 모두 10문항으로 진행합니다. 답변에 따라 꼬리질문이 질문당 1개, 전체 4개까지 이어집니다.',
-        points: ['응시는 지원 건당 1회', '연결이 끊기면 이어서 진행', '시작 전에 마이크·스피커·카메라 점검'] },
-      { id: 'resume', ic: 'R', name: '이력서 자동 인식', short: 'PDF·스캔본도 읽고, 확인한 내용만 사용',
-        body: '텍스트 PDF는 그대로, 스캔본·사진은 OCR로 읽어 경력·프로젝트·학력을 정리합니다. 지원자가 직접 확인하고 고친 내용만 질문과 평가에 쓰입니다.',
-        points: ['원문과 대조해 없는 내용은 제외', '인식이 어려우면 직접 작성으로 전환'] },
-      { id: 'report', ic: 'E', name: 'AI 평가 리포트', short: '항목별 점수와 답변 속 근거 문장',
-        body: 'AI는 항목별 0~5점과 답변에서 그대로 인용한 근거만 냅니다. 점수 합산과 합격·불합격 판정은 정해진 규칙으로 계산합니다.',
-        points: ['답변에 없는 인용은 인정하지 않음', '지원자에게는 합불·강점·개선점 공개', '담당자도 결과를 임의로 수정할 수 없음'] },
-      { id: 'coding', ic: '{}', name: '맞춤 코딩테스트', short: '기업 섹터에 맞춰 문제 유형과 언어 선택', soon: true,
-        body: '기업은 공고마다 출제 유형(알고리즘·그리디·DP, SQL, 저지연 C 등)과 언어, 난이도를 고르고, 문제는 운영 측 문제 은행에서 나옵니다. 지금은 Python 기본 코딩테스트를 제공합니다.',
-        points: ['외부와 차단된 실행 환경에서 채점', '테스트케이스 통과율로 점수 계산'] },
-      { id: 'practice', ic: 'P', name: '모의면접 · 코딩 연습', short: 'IT 직군 모의면접과 언어별 코딩 연습', soon: true,
-        body: '공고 없이 직무를 골라 실전과 같은 방식으로 모의면접을 보고, Python·C·SQL 중 언어를 골라 코딩 문제를 연습합니다.',
-        points: ['직무: AI/AX 엔지니어 · 백엔드 엔지니어 · 데이터 분석가', '연습 결과는 나만 보고 기업에 전달되지 않음'] },
-    ],
+    // Features 드롭다운의 4개 서비스 페이지 (#/features/<id>). 드롭다운 라벨(한·영)은 언어 전환과 관계없이 SERVICE_LABELS를 쓴다
+    services: {
+      'coding-practice': {
+        title: ['무제한 코딩 연습', '원하는 만큼, 원하는 언어로'],
+        lead: '공고가 없어도 IT 직군 코딩 문제를 반복해서 풀어 볼 수 있습니다. 언어를 고르고, 바로 실행해 보고, 실제 코딩테스트와 같은 방식으로 채점받습니다.',
+        status: '준비 중입니다. 횟수 걱정 없는 연습은 Advanced 요금제로 제공할 예정이며, 내용은 출시 전 바뀔 수 있습니다.',
+        sections: [
+          { h: '할 수 있는 것', cards: [
+            { h: '언어 선택', p: 'Python · C · SQL 중에서 골라 같은 유형의 문제를 언어별로 연습합니다.' },
+            { h: '유형별 문제', p: '알고리즘(그리디·DP 등), SQL 조회·집계, 저지연 C처럼 실제 기업이 고르는 유형으로 나뉜 문제 은행에서 출제됩니다.' },
+            { h: '실전과 같은 채점', p: '공개 예제로 먼저 실행해 보고, 제출하면 숨은 테스트케이스까지 통과율로 채점합니다. 코드는 외부와 차단된 환경에서 실행됩니다.' },
+            { h: '기록은 나만', p: '연습 결과와 코드는 본인만 보고, 기업에는 전달되지 않습니다. 실전 응시 횟수에도 영향을 주지 않습니다.' },
+          ] },
+          { h: '진행 순서', cards: [
+            { h: '1. 언어와 유형 고르기', p: '연습할 언어와 문제 유형, 난이도를 고릅니다.' },
+            { h: '2. 풀고 실행하기', p: '편집기에서 코드를 쓰고 공개 예제로 바로 실행해 봅니다.' },
+            { h: '3. 제출하고 채점받기', p: '통과한 테스트 수와 실패한 경우를 확인합니다.' },
+            { h: '4. 다시 풀기', p: '같은 문제를 다른 언어로, 또는 다음 난이도로 이어 갑니다.' },
+          ] },
+        ],
+        ctas: [{ label: '요금제 보기', href: '#/pricing', primary: true }, { label: '채용 공고 둘러보기', href: '/applicant/#/jobs' }],
+      },
+      'career-consulting': {
+        title: ['headhunter 취업 컨설팅', '내 면접을 숫자로 보고, 다음을 준비'],
+        lead: '내 이력서에 맞춘 AI 면접을 보고, 항목별 점수와 잘한 점·발전할 점, 다음 면접까지 해 볼 연습 과제를 받아 봅니다.',
+        status: 'AI 면접 후 정량 리포트 이메일은 지금 받을 수 있습니다. 공고 없이 보는 직무별 모의면접(AI/AX · 백엔드 · 데이터 분석)은 준비 중입니다.',
+        sections: [
+          { h: '받을 수 있는 것', cards: [
+            { h: '내 이력서 맞춤 질문', p: '확인한 이력서의 경력·프로젝트를 근거로 질문이 나오고, 답변이 모호하면 더 구체적으로 묻는 꼬리질문이 이어집니다.' },
+            { h: '정량 리포트', p: 'AI 면접 점수와 5개 항목(직무 전문성·논리성·내용 관련성·전달력·조직 적합성)의 100점 환산 점수를 한 장으로 받습니다.' },
+            { h: 'AI 코치 코멘트', p: '가장 높은 항목과 낮은 항목을 짚고, 다음 면접 전까지 해 볼 연습 과제 2~3개를 제안합니다. 확정된 점수만 근거로 씁니다.' },
+            { h: '직무별 모의면접', p: 'AI/AX 엔지니어 · 백엔드 개발자 · 데이터 분석가 직무를 골라 실전과 같은 방식으로 연습합니다. (준비 중)' },
+          ] },
+          { h: '진행 순서', cards: [
+            { h: '1. 이력서 확인', p: '이력서를 올리면 내용을 읽어 정리하고, 직접 확인한 내용만 씁니다.' },
+            { h: '2. AI 면접', p: '질문 10개와 꼬리질문에 답합니다. 기본 질문 90초, 꼬리질문 60초.' },
+            { h: '3. 리포트 받기', p: '분석이 끝나면 버튼 한 번으로 정량 리포트를 이메일로 받습니다. 합격 여부와는 별개입니다.' },
+            { h: '4. 연습하고 다시', p: '연습 과제와 코딩 연습으로 약한 항목을 보완합니다.' },
+          ] },
+        ],
+        ctas: [{ label: '채용 공고 둘러보기', href: '/applicant/#/jobs', primary: true }, { label: '요금제 보기', href: '#/pricing' }],
+      },
+      'first-round-hiring': {
+        title: ['기업용 1차 채용 서비스', '1차 면접을 같은 기준으로, 자동으로'],
+        lead: '공고를 올리면 AI가 지원자마다 이력서에 맞춘 1차 면접을 진행하고, 정해 둔 기준으로 점수와 1차 결과를 만듭니다.',
+        status: '',
+        sections: [
+          { h: '제공하는 것', cards: [
+            { h: '공고 맞춤 AI 면접', p: '인성 2 · 이력서 기반 2 · 직무 4 · 기업 2, 10문항. 직무·기업 질문은 공고의 회사 소개와 주요 업무에 맞춰 우리 회사가 낸 질문처럼 바뀝니다.' },
+            { h: '근거 있는 평가', p: 'AI는 항목별 0~5점과 답변에서 그대로 인용한 근거만 냅니다. 합산과 합격·불합격은 공고에 설정한 가중치와 합격선으로 계산합니다.' },
+            { h: '코딩테스트', p: '공고마다 사용 여부와 반영 비중을 정합니다. 지금은 Python 기본 문제를 제공하고, 유형·언어를 고르는 맞춤 코딩테스트는 준비 중입니다.' },
+            { h: '합불 결정 방식 선택', p: '자동: AI 판정을 바로 확정. 반자동: 담당자가 \'허용\' 또는 \'판정 변경\'을 한 번 눌러 확정. 점수는 어느 쪽도 바뀌지 않습니다.' },
+          ] },
+          { h: '진행 순서', cards: [
+            { h: '1. 공고와 기준 설정', p: '공고를 쓰고 평가 항목 가중치, 합격선, 코딩테스트, 결정 방식을 정합니다.' },
+            { h: '2. 지원자 응시', p: '지원자는 이력서 확인과 장치 점검 후 AI 면접과 코딩테스트를 봅니다.' },
+            { h: '3. AI 평가', p: '응시가 끝나면 문항별 점수·근거·강점·개선점이 정리됩니다.' },
+            { h: '4. 1차 결과 확정', p: '자동 공고는 바로, 반자동 공고는 담당자 확인 후 결과가 공개됩니다.' },
+          ] },
+        ],
+        ctas: [{ label: '기업 담당자 로그인', href: '/admin/', primary: true }, { label: '요금제 보기', href: '#/pricing' }],
+      },
+      'hiring-dashboard': {
+        title: ['기업 맞춤 대시보드', '지원자 전체를 한 화면에서'],
+        lead: '공고별 지원자 현황부터 한 사람의 면접 리포트, 1차 합격자와 통계까지 기업 담당자 화면 하나에서 확인합니다.',
+        status: '',
+        sections: [
+          { h: '화면 구성', cards: [
+            { h: '지원자 목록', p: '공고·1차 결과·응시 상태로 거르고, AI 면접·코딩·종합 점수 순으로 봅니다. 반자동 공고는 \'확인 대기\'만 모아 볼 수 있습니다.' },
+            { h: '한 페이지 리포트', p: '점수와 항목별 근거, 질문별 답변과 꼬리질문, 코딩 제출 코드, 이력서, 장애·이탈 기록을 한 화면에 모았습니다.' },
+            { h: '비교와 다음 전형', p: '2~3명을 나란히 비교하고, 1차 합격자 목록과 연락처를 공고별로 확인합니다.' },
+            { h: '통계', p: '월별 응시자 수, 공고별 1차 합격률과 평균 점수, 이력서 인식 건수를 집계합니다.' },
+          ] },
+          { h: '우리 회사에 맞추기', cards: [
+            { h: '평가 기준', p: '5개 평가 항목의 가중치를 5% 단위로, 합격선을 점수로 정합니다.' },
+            { h: '코딩테스트', p: '사용 여부와 AI 면접 대비 반영 비중(10% 단위)을 정합니다.' },
+            { h: '결정 방식', p: '회사 규모와 채용 방식에 맞춰 자동 또는 반자동을 고릅니다.' },
+            { h: '내부 메모', p: '같은 회사 담당자끼리만 보는 메모를 지원자별로 남깁니다.' },
+          ] },
+        ],
+        ctas: [{ label: '기업 담당자 로그인', href: '/admin/', primary: true }, { label: '요금제 보기', href: '#/pricing' }],
+      },
+    },
+    statusH: '지금 제공 범위',
     aboutTitle: ['면접의 첫 단계를', '더 투명하게'],
     aboutLead: 'headhunterAI는 1차 면접을 AI로 진행하되, 판단 과정을 지원자와 기업이 모두 이해할 수 있게 만드는 서비스입니다.',
     aboutWhyH: '만든 이유',
@@ -38,7 +102,7 @@ const T = {
     aboutPrinciples: [
       { ic: '1', h: 'AI는 점수와 근거만', p: 'AI는 항목별 점수와 답변 인용을 내고, 합산·합불·상태 변경은 코드의 규칙이 처리합니다.' },
       { ic: '2', h: '확인한 이력서만', p: '이력서는 지원자가 직접 확인한 내용만 질문과 평가에 씁니다. 나이·가족·학벌 같은 질문은 차단합니다.' },
-      { ic: '3', h: '결과는 같은 시각에', p: '결과는 마감 다음 날 오전 10시에 함께 공개합니다. 지원자에게는 합불과 강점·개선점을 알려 드립니다.' },
+      { ic: '3', h: '결과는 확정되는 대로', p: '자동 공고는 분석 직후, 반자동 공고는 담당자가 확인한 뒤 결과를 공개합니다. 합불과 별개로 항목별 점수를 담은 리포트를 이메일로 받을 수 있습니다.' },
     ],
     aboutTechH: '기술 구성',
     aboutTech: [
@@ -73,26 +137,89 @@ const T = {
     startApplicant: 'Start as an applicant →',
     loginCompany: 'Recruiter sign-in',
     soon: 'Coming soon',
-    featuresTitle: ['From résumé to first interview,', 'in one AI flow'],
-    featuresLead: 'Applicants get an interview fitted to their résumé. Companies get first-round results organised under one standard.',
-    ddCta: ['Get started', 'Browse open roles and apply right away →'],
-    features: [
-      { id: 'interview', ic: 'Q', name: 'AI first-round interview', short: '10 questions fitted to your résumé and the role, plus follow-ups',
-        body: 'Ten questions: 2 personality · 2 résumé-based · 4 role · 2 company. Follow-up questions are added from your answers, up to 1 per question and 4 in total.',
-        points: ['One attempt per application', 'Resume where you left off after a disconnect', 'Mic, speaker and camera check before you start'] },
-      { id: 'resume', ic: 'R', name: 'Résumé recognition', short: 'Reads PDFs and scans; only what you confirm is used',
-        body: 'Text PDFs are read directly and scans or photos through OCR, then organised into experience, projects and education. Only the content you review and confirm is used for questions and evaluation.',
-        points: ['Anything not found in the original is dropped', 'Falls back to manual entry when recognition fails'] },
-      { id: 'report', ic: 'E', name: 'AI evaluation report', short: 'Per-item scores with quoted evidence from answers',
-        body: 'The AI only gives 0–5 scores per item and quotes taken verbatim from the answer. Totals and pass/fail are calculated by fixed rules.',
-        points: ['Quotes not found in the answer are rejected', 'Applicants see pass/fail, strengths and areas to improve', 'Recruiters cannot edit results'] },
-      { id: 'coding', ic: '{}', name: 'Custom coding test', short: 'Pick problem types and languages for your sector', soon: true,
-        body: 'For each job post, companies choose problem types (algorithms such as greedy and DP, SQL, low-latency C and more), language and difficulty; problems come from our curated bank. Today a basic Python coding test is available.',
-        points: ['Graded in a network-isolated sandbox', 'Score = share of test cases passed'] },
-      { id: 'practice', ic: 'P', name: 'Mock interviews & coding practice', short: 'IT mock interviews and coding practice by language', soon: true,
-        body: 'Pick a role and take a mock interview that works like the real one, or practise coding problems in Python, C or SQL — no job post needed.',
-        points: ['Roles: AI/AX engineer · Backend engineer · Data analyst', 'Practice results are private and never shared with companies'] },
-    ],
+    services: {
+      'coding-practice': {
+        title: ['Unlimited Coding Practice', 'As much as you want, in your language'],
+        lead: 'Practise IT coding problems again and again — no job post needed. Pick a language, run your code right away, and get graded the same way as a real coding test.',
+        status: 'Coming soon. Practice without usage worries is planned for the Advanced plan and may change before launch.',
+        sections: [
+          { h: 'What you can do', cards: [
+            { h: 'Choose a language', p: 'Practise the same problem types in Python, C or SQL.' },
+            { h: 'Problems by type', p: 'Problems come from a bank organised by the types companies actually pick: algorithms (greedy, DP and more), SQL queries and aggregation, low-latency C.' },
+            { h: 'Graded like the real thing', p: 'Run against public examples first, then submit to be scored on hidden test cases too. Code runs in an isolated, network-blocked environment.' },
+            { h: 'Private by default', p: 'Your results and code are only visible to you and never shared with companies. Practice does not count toward real attempts.' },
+          ] },
+          { h: 'How it works', cards: [
+            { h: '1. Pick language and type', p: 'Choose the language, problem type and difficulty.' },
+            { h: '2. Solve and run', p: 'Write code in the editor and run it against public examples.' },
+            { h: '3. Submit and get graded', p: 'See how many tests passed and where it failed.' },
+            { h: '4. Try again', p: 'Solve it in another language or move to the next level.' },
+          ] },
+        ],
+        ctas: [{ label: 'See pricing', href: '#/pricing', primary: true }, { label: 'Browse open roles', href: '/applicant/#/jobs' }],
+      },
+      'career-consulting': {
+        title: ['headhunter Career Consulting', 'See your interview in numbers, prepare the next one'],
+        lead: 'Take an AI interview fitted to your résumé, then get per-item scores, what went well, what to improve, and practice tasks for your next interview.',
+        status: 'The quantitative report email after an AI interview is available now. Role-based mock interviews without a job post (AI/AX · Backend · Data analysis) are coming soon.',
+        sections: [
+          { h: 'What you get', cards: [
+            { h: 'Questions fitted to your résumé', p: 'Questions are grounded in the experience and projects you confirmed, and vague answers get a follow-up asking for specifics.' },
+            { h: 'Quantitative report', p: 'Your AI interview score and five item scores (expertise · logic · relevance · delivery · fit) on a 100-point scale, on one page.' },
+            { h: 'AI coach comments', p: 'Highlights your strongest and weakest items and suggests 2–3 practice tasks before your next interview, based only on finalised scores.' },
+            { h: 'Role-based mock interviews', p: 'Pick AI/AX engineer, backend developer or data analyst and practise the way the real interview works. (Coming soon)' },
+          ] },
+          { h: 'How it works', cards: [
+            { h: '1. Confirm your résumé', p: 'Upload it, we organise the content, and only what you confirm is used.' },
+            { h: '2. AI interview', p: 'Answer 10 questions plus follow-ups: 90 seconds each, 60 for follow-ups.' },
+            { h: '3. Get the report', p: 'When analysis is done, one click sends the quantitative report to your email. It is separate from the pass/fail result.' },
+            { h: '4. Practise and retry', p: 'Work on weaker items with the practice tasks and coding practice.' },
+          ] },
+        ],
+        ctas: [{ label: 'Browse open roles', href: '/applicant/#/jobs', primary: true }, { label: 'See pricing', href: '#/pricing' }],
+      },
+      'first-round-hiring': {
+        title: ['AI First-Round Hiring', 'First interviews on one standard, automatically'],
+        lead: 'Post a job and the AI runs a first-round interview fitted to each résumé, then produces scores and first-round results using the criteria you set.',
+        status: '',
+        sections: [
+          { h: 'What you get', cards: [
+            { h: 'AI interviews fitted to your post', p: '10 questions: 2 personality · 2 résumé · 4 role · 2 company. Role and company questions are rewritten from your company intro and duties, as if your team wrote them.' },
+            { h: 'Evidence-based evaluation', p: 'The AI gives 0–5 scores per item with quotes taken verbatim from answers. Totals and pass/fail use the weights and pass mark set on the post.' },
+            { h: 'Coding test', p: 'Turn it on per post and set its weight. A basic Python test is available today; custom tests by type and language are coming soon.' },
+            { h: 'Choose how decisions are made', p: "Automatic: the AI decision is final right away. Semi-automatic: a recruiter finalises it with one click on 'Approve' or 'Change decision'. Scores never change." },
+          ] },
+          { h: 'How it works', cards: [
+            { h: '1. Set up the post', p: 'Write the post and set item weights, pass mark, coding test and decision mode.' },
+            { h: '2. Applicants take it', p: 'After a résumé check and device check, applicants take the AI interview and coding test.' },
+            { h: '3. AI evaluation', p: 'Scores, evidence, strengths and improvements are compiled per question.' },
+            { h: '4. Finalise results', p: 'Automatic posts publish right away; semi-automatic posts publish after recruiter review.' },
+          ] },
+        ],
+        ctas: [{ label: 'Recruiter sign-in', href: '/admin/', primary: true }, { label: 'See pricing', href: '#/pricing' }],
+      },
+      'hiring-dashboard': {
+        title: ['Custom Hiring Dashboard', 'Every applicant on one screen'],
+        lead: 'From applicants per post to one person’s full interview report, shortlists and statistics — all in the recruiter screen.',
+        status: '',
+        sections: [
+          { h: 'What’s inside', cards: [
+            { h: 'Applicant list', p: "Filter by post, first-round result and status, and sort by interview, coding and total scores. For semi-automatic posts, view only those 'awaiting review'." },
+            { h: 'One-page report', p: 'Scores with per-item evidence, answers and follow-ups per question, submitted code, résumé and disconnect/exit logs on one screen.' },
+            { h: 'Compare and next steps', p: 'Compare 2–3 people side by side and see first-round passes with contact details per post.' },
+            { h: 'Statistics', p: 'Monthly applicants, pass rate and average score per post, and résumé recognition counts.' },
+          ] },
+          { h: 'Make it yours', cards: [
+            { h: 'Evaluation criteria', p: 'Set weights for the five items in 5% steps and a pass mark.' },
+            { h: 'Coding test', p: 'Turn it on and set its weight against the interview in 10% steps.' },
+            { h: 'Decision mode', p: 'Pick automatic or semi-automatic to match your size and process.' },
+            { h: 'Internal notes', p: 'Leave notes per applicant that only your company’s recruiters can see.' },
+          ] },
+        ],
+        ctas: [{ label: 'Recruiter sign-in', href: '/admin/', primary: true }, { label: 'See pricing', href: '#/pricing' }],
+      },
+    },
+    statusH: 'Available today',
     aboutTitle: ['Making the first interview', 'more transparent'],
     aboutLead: 'headhunterAI runs first-round interviews with AI while keeping the reasoning understandable for both applicants and companies.',
     aboutWhyH: 'Why we built it',
@@ -101,7 +228,7 @@ const T = {
     aboutPrinciples: [
       { ic: '1', h: 'AI scores, rules decide', p: 'The AI provides per-item scores and quotes; totals, pass/fail and status changes are handled by rules in code.' },
       { ic: '2', h: 'Only confirmed résumés', p: 'Only résumé content the applicant has confirmed is used. Questions about age, family or school background are blocked.' },
-      { ic: '3', h: 'Results at the same time', p: 'Results are released together at 10:00 the day after the deadline, with pass/fail, strengths and areas to improve.' },
+      { ic: '3', h: 'Results as soon as they are final', p: 'Automatic posts publish right after analysis; semi-automatic posts after recruiter review. A report with per-item scores can be emailed separately from pass/fail.' },
     ],
     aboutTechH: 'Under the hood',
     aboutTech: [
@@ -132,6 +259,17 @@ const T = {
   },
 };
 
+// 드롭다운 카드: 한국어(흰색) + 영어(작게, 네온)를 항상 함께 표시 (PRD WEB-03)
+// 드롭다운 두 섹션(소제목은 영문 대문자 그대로, 클릭 없음). 섹션마다 왼쪽·오른쪽 카드 2개
+const SERVICE_SECTIONS = [
+  { title: 'JOB SEEKERS', items: [
+    { id: 'coding-practice', ko: '무제한 코딩 연습', en: 'Unlimited Coding Practice' },
+    { id: 'career-consulting', ko: 'headhunter 취업 컨설팅', en: 'headhunter Career Consulting' } ] },
+  { title: 'EMPLOYERS', items: [
+    { id: 'first-round-hiring', ko: '기업용 1차 채용 서비스', en: 'AI First-Round Hiring' },
+    { id: 'hiring-dashboard', ko: '기업 맞춤 대시보드', en: 'Custom Hiring Dashboard' } ] },
+];
+
 let lang = 'ko';
 try { if (localStorage.getItem('hh.lang') === 'en') lang = 'en'; } catch (e) { /* 저장소를 못 쓰면 한국어 기본 */ }
 let audience = 'applicant';
@@ -149,18 +287,15 @@ function setLang(l) {
 }
 
 function dropdown() {
-  const L = t();
-  document.getElementById('dd-features').innerHTML = L.features.map(f => `
-    <a class="dd-item" href="#/features/${f.id}"><span class="ic">${esc(f.ic)}</span>
-      <div><b>${esc(f.name)}${f.soon ? `<em class="soon">${esc(L.soon)}</em>` : ''}</b><span>${esc(f.short)}</span></div></a>`).join('') + `
-    <a class="dd-item" href="/applicant/#/jobs"><span class="ic">→</span>
-      <div><b>${esc(L.ddCta[0])}</b><span>${esc(L.ddCta[1])}</span></div></a>`;
+  document.getElementById('dd-features').innerHTML = SERVICE_SECTIONS.map(sec => `
+    <div class="dd-sec"><div class="dd-sec-h">${esc(sec.title)}</div><div class="dd-row">${sec.items.map(f => `
+      <a class="dd-item" href="#/features/${f.id}"><b>${esc(f.ko)}</b><span class="en">${esc(f.en)}</span></a>`).join('')}</div></div>`).join('');
 }
 
 function home() {
   const L = t();
   return `
-  <div class="wrap">
+  <div class="wrap hero-wrap">
     <section class="hero">
       <div>
         <h1>${esc(L.heroTitle)}<br><span class="neon">headhunterAI</span></h1>
@@ -170,7 +305,7 @@ function home() {
           <a class="btn lg" href="/admin/">${esc(L.loginCompany)}</a>
         </div>
       </div>
-      <img class="hero-img" src="/images/mainpage_image.png.png" alt="">
+      <div class="hero-art" aria-hidden="true"></div>
     </section>
   </div>`;
 }
@@ -181,17 +316,18 @@ function head(title, lead) {
 
 function cards(list) {
   return `<div class="cards">${list.map(c => `
-    <div class="card2"><div class="ic">${esc(c.ic)}</div><h3>${esc(c.h)}</h3><p>${esc(c.p)}</p></div>`).join('')}</div>`;
+    <div class="card2">${c.ic ? `<div class="ic">${esc(c.ic)}</div>` : ''}<h3>${esc(c.h)}</h3><p>${esc(c.p)}</p></div>`).join('')}</div>`;
 }
 
-function features() {
+function service(id) {
   const L = t();
-  return `<div class="wrap">${head(L.featuresTitle, L.featuresLead)}
-    <div class="cards">${L.features.map(f => `
-      <div class="card2 feature" id="f-${f.id}"><div class="ic">${esc(f.ic)}</div>
-        <h3>${esc(f.name)}${f.soon ? `<em class="soon">${esc(L.soon)}</em>` : ''}</h3>
-        <p>${esc(f.body)}</p><ul>${f.points.map(p => `<li>${esc(p)}</li>`).join('')}</ul></div>`).join('')}
-    </div></div>`;
+  const S = L.services[id];
+  if (!S) return home();
+  return `<div class="wrap">${head(S.title, S.lead)}
+    ${S.status ? `<p class="note" style="margin:-16px 0 8px">${esc(S.status)}</p>` : ''}
+    ${S.sections.map(sec => `<section class="sec"><h2>${esc(sec.h)}</h2>${cards(sec.cards)}</section>`).join('')}
+    <div class="row" style="justify-content:center;margin:28px 0 8px">${S.ctas.map(c => `<a class="btn lg${c.primary ? ' primary' : ''}" href="${c.href}">${esc(c.label)}</a>`).join('')}</div>
+  </div>`;
 }
 
 function about() {
@@ -224,25 +360,29 @@ function pricing() {
   </div>`;
 }
 
-const ROUTES = { '': home, features, about, pricing };
+// Features는 드롭다운만 있고 목록 페이지는 없다. #/features/<id> = 서비스 페이지 4개
+const ROUTES = { '': home, about, pricing };
 
 function render() {
   document.documentElement.lang = lang;
   document.querySelectorAll('.lang button').forEach(b => b.classList.toggle('on', b.dataset.lang === lang));
   dropdown();
   const [page, sub] = location.hash.replace(/^#\/?/, '').split('/');
-  const fn = ROUTES[page] || home;
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === page));
-  view.innerHTML = fn();
+  document.querySelector('.dd').classList.remove('open');
+  view.innerHTML = page === 'features' ? service(sub) : (ROUTES[page] || home)();
   // 언어·대상 전환은 같은 위치를 유지하고, 메뉴 이동 때만 스크롤을 옮긴다
   if (location.hash === lastHash) return;
   lastHash = location.hash;
-  if (page === 'features' && sub) document.getElementById('f-' + sub)?.scrollIntoView({ behavior: 'smooth' });
-  else window.scrollTo(0, 0);
+  window.scrollTo(0, 0);
 }
 let lastHash = null;
 
 document.querySelector('.lang').addEventListener('click', e => { const b = e.target.closest('[data-lang]'); if (b) setLang(b.dataset.lang); });
 view.addEventListener('click', e => { const b = e.target.closest('[data-aud]'); if (b) { audience = b.dataset.aud; render(); } });
 window.addEventListener('hashchange', render);
+// Features: 마우스를 올리면(데스크톱) 또는 누르면(모바일·터치) 드롭다운이 열린다. 누르기만으로는 페이지를 바꾸지 않는다
+const dd = document.querySelector('.dd');
+dd.querySelector('[data-nav="features"]').addEventListener('click', e => { e.preventDefault(); dd.classList.toggle('open'); });
+document.addEventListener('click', e => { if (!dd.contains(e.target)) dd.classList.remove('open'); });
 render();

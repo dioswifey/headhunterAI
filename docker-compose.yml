@@ -43,6 +43,19 @@ services:
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
       LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-headhunter-dev}
       LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-https://api.smith.langchain.com}
+      # 이메일(v0.6): Gmail SMTP만 사용. SMTP_USER(Gmail 주소)·SMTP_PASSWORD(앱 비밀번호)는 .env에서 읽고, 비어 있으면 발송하지 않는다
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: "587"
+      SMTP_STARTTLS: "1"
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
+      # CrewAI(리포트 코치): 자체 텔레메트리·추적 전송 끔
+      REPORT_WRITER: crewai
+      CREWAI_DISABLE_TELEMETRY: "true"
+      CREWAI_DISABLE_TRACKING: "true"
+      CREWAI_TRACING_ENABLED: "false"
+      OTEL_SDK_DISABLED: "true"
     ports:
       - "8000:8000"
     volumes:

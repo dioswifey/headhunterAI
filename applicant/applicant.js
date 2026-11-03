@@ -102,7 +102,7 @@ async function router() {
 async function landing() {
   setNav('');
   view.innerHTML = `
-  <div class="wrap">
+  <div class="wrap hero-wrap">
     <section class="hero">
       <div>
         <h1>인재를 발견하는 새로운 기준,<br><span class="neon">headhunterAI</span></h1>
@@ -112,7 +112,7 @@ async function landing() {
           <a class="btn lg" href="/admin/">기업 담당자 로그인</a>
         </div>
       </div>
-      <img class="hero-img" src="/images/mainpage_image.png.png" alt="">
+      <div class="hero-art" aria-hidden="true"></div>
     </section>
   </div>`;
 }
@@ -257,7 +257,8 @@ function appAction(a) {
   if (a.attempt_status === 'interrupted') return `<a class="btn sm primary" href="#/interview/${a.attempt_id}">면접 이어가기</a>`;
   if (a.attempt_status === 'interview' || a.attempt_status === 'coding') return `<a class="btn sm" href="#/interview/${a.attempt_id}">응시 화면으로</a>`;
   if (a.result_open) return `<a class="btn sm primary" href="#/result/${a.id}">1차 결과 보기</a>`;
-  return `<span class="small">결과 공개 ${fmtYMD(a.result_date)} 10:00</span>`;
+  if (a.analysis_status !== 'done') return `<a class="btn sm" href="#/result/${a.id}">AI 분석 중</a>`;
+  return `<a class="btn sm" href="#/result/${a.id}">${a.decision_mode === 'semi' ? '담당자 확인 중' : '리포트 보기'}</a>`;
 }
 
 async function mypage() {
@@ -879,15 +880,14 @@ async function interviewView(attemptId) {
     active = false;
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     stopMedia();
-    const pub = st.publish_at ? new Date(st.publish_at) : null;
-    const when = pub ? `${pub.getMonth() + 1}월 ${pub.getDate()}일` : '';
     const msg = st.status === 'cancelled'
       ? ['응시가 취소되었습니다', '화면 이탈이 2회 감지되어 규칙에 따라 응시가 취소되었습니다. 이 지원 건은 다시 응시할 수 없습니다.']
       : st.status === 'terminated'
-        ? ['응시가 종료되었습니다', `면접 화면을 직접 닫거나 새로고침해 응시가 종료되었습니다. 답변한 문항까지 평가되며, 결과는 ${when} 공개됩니다.`]
-        : ['응시가 완료되었습니다', `결과는 ${when} 공개됩니다. 공개되면 알림으로 알려 드립니다.`];
+        ? ['응시가 종료되었습니다', '면접 화면을 직접 닫거나 새로고침해 응시가 종료되었습니다. 답변한 문항까지 평가됩니다.']
+        : ['응시가 완료되었습니다', 'AI가 답변을 분석하고 있습니다. 분석이 끝나면 아래 버튼으로 정량 리포트를 이메일로 받을 수 있습니다.'];
     view.innerHTML = `<div class="wrap narrow" style="padding-top:10vh">${stepsBar('done')}<div class="card ${st.status === 'completed' ? 'hl' : ''} col">
-      <h1>${msg[0]}</h1><p>${msg[1]}</p><a class="btn primary" href="#/my">마이페이지로</a></div></div>`;
+      <h1>${msg[0]}</h1><p>${msg[1]}</p>${st.status === 'cancelled' ? '' : '<div id="report-box" class="col"></div>'}<a class="btn primary" href="#/my">마이페이지로</a></div></div>`;
+    if (st.status !== 'cancelled' && st.application_id) reportBox(st.application_id, $('#report-box'));
   }
 
   function renderInterrupted() {
@@ -1102,6 +1102,36 @@ async function interviewView(attemptId) {
 }
 
 /* ───────── 완료·결과 ───────── */
+/* 완료 화면·결과 화면 공통: 분석 상태 → (자동 확정 공고) 합불 → 리포트 메일 상태 + '결과 리포트 이메일로 받기' */
+function reportBox(appId, box, opt = {}) {
+  if (!box) return;
+  let timer = null;
+  const paint = (r) => {
+    if (!document.body.contains(box)) { clearInterval(timer); return; }
+    const analyzing = !r.evaluated;
+    const res = opt.noResult ? '' : r.result ? `<div class="between"><span>1차 결과</span><b class="${r.result === 'pass' ? 'neon' : ''}">${r.result === 'pass' ? '1차 합격' : '1차 불합격'}</b></div>`
+      : (!analyzing && r.decision_mode === 'semi' ? '<p class="small">1차 결과는 기업 담당자가 확인한 뒤 공개됩니다. 공개되면 알림으로 알려 드립니다.</p>' : '');
+    const em = r.email || {};
+    const mail = analyzing ? '<p class="small">AI 분석 중입니다. 보통 몇 분 안에 끝납니다.</p>'
+      : em.status === 'sent' ? `<p class="small">정량 리포트를 ${esc(em.to)}(으)로 보냈습니다.</p>`
+        : em.status === 'failed' ? '<p class="small">리포트 메일을 보내지 못했습니다. 아래 버튼으로 다시 받아 보세요.</p>'
+          : r.email_enabled ? '<p class="small">합불과 별도로, 항목별 점수와 개선점을 담은 정량 리포트를 이메일로 받을 수 있습니다.</p>'
+            : '<p class="small">이메일 발송이 아직 설정되지 않았습니다.</p>';
+    box.innerHTML = `${res}${mail}${!analyzing && r.email_enabled ? '<div><button class="btn" id="mail-me">결과 리포트 이메일로 받기</button></div>' : ''}`;
+    const b = $('#mail-me', box);
+    if (b) b.onclick = async () => {
+      b.disabled = true;
+      try { const x = await post(`/api/applications/${appId}/report/email`); toast(`${x.to}(으)로 리포트를 보냈습니다.`); load(); }
+      catch (e) { toast(e.message, true); b.disabled = false; }
+    };
+    if (!analyzing && (r.result || r.decision_mode === 'semi')) clearInterval(timer);
+  };
+  const load = async () => { try { paint(await get(`/api/applications/${appId}/report`)); } catch (_) { clearInterval(timer); } };
+  load();
+  timer = setInterval(load, 5000);
+  onLeave(() => clearInterval(timer));
+}
+
 async function doneView(appId) { go('#/my'); }
 
 async function resultView(appId) {
@@ -1109,7 +1139,9 @@ async function resultView(appId) {
   setNav('my');
   const r = await get(`/api/applications/${appId}/result`);
   if (!r.published) {
-    view.innerHTML = `<div class="wrap narrow"><div class="card col"><h1>결과 공개 전입니다</h1><p>1차 결과는 ${fmtDate(r.publish_at)} 10:00에 공개됩니다.</p><a class="btn" href="#/my">마이페이지로</a></div></div>`;
+    const why = r.decision_mode === 'semi' && r.analysis_status === 'done' ? '기업 담당자가 AI 판정을 확인한 뒤 공개됩니다.' : 'AI 분석이 끝나면 공개됩니다.';
+    view.innerHTML = `<div class="wrap narrow"><div class="card col"><h1>결과 공개 전입니다</h1><p>${why}</p><div id="report-box" class="col"></div><a class="btn" href="#/my">마이페이지로</a></div></div>`;
+    reportBox(appId, $('#report-box'));
     return;
   }
   const pass = r.result === 'pass';
@@ -1117,11 +1149,12 @@ async function resultView(appId) {
     <a class="btn sm ghost" href="#/my">← 마이페이지</a>
     <div class="card ${pass ? 'hl' : ''}" style="margin-top:14px"><div class="small">1차 결과 · ${esc(r.status)}</div>
       <div class="big" style="margin:8px 0;${pass ? '' : 'color:var(--white)'}">${pass ? '1차 합격' : '1차 불합격'}</div>
-      ${r.reason ? `<p>${esc(r.reason)}</p>` : ''}<p class="small">열람 기한: ${fmtDate(r.expires_at)}까지</p></div>
+      ${r.reason ? `<p>${esc(r.reason)}</p>` : ''}${r.expires_at ? `<p class="small">열람 기한: ${fmtDate(r.expires_at)}까지</p>` : ''}<div id="report-box" class="col" style="margin-top:10px"></div></div>
     ${(r.strengths || []).length || (r.improvements || []).length ? `<div class="grid2" style="margin-top:16px;align-items:start">
       <div class="card"><h2>강점</h2>${(r.strengths || []).map((s, i) => `<p><b class="neon">${i + 1}.</b> ${esc(s)}</p>`).join('')}</div>
       <div class="card"><h2>개선점</h2>${(r.improvements || []).map((s, i) => `<p><b>${i + 1}.</b> ${esc(s)}</p>`).join('')}</div></div>` : ''}
     ${r.notice ? `<div class="note" style="margin-top:16px">${esc(r.notice)}</div>` : ''}</div>`;
+  if (r.status !== '응시 취소') reportBox(appId, $('#report-box'), { noResult: true });
 }
 
 /* ───────── boot ───────── */

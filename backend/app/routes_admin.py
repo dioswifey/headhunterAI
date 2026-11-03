@@ -156,6 +156,7 @@ class CriteriaIn(BaseModel):
     coding_enabled: bool
     coding_ratio: int
     pass_score: int
+    decision_mode: str = "auto"
 
 
 @router.put("/jobs/{job_id}/criteria")
@@ -171,9 +172,11 @@ def set_criteria(job_id: int, body: CriteriaIn, user=Depends(security.recruiter)
         raise HTTPException(400, "코딩테스트 반영 비중은 10% 단위(10~90%)로 설정해 주세요.")
     if not 0 <= body.pass_score <= 100:
         raise HTTPException(400, "합격 기준은 0~100점입니다.")
+    if body.decision_mode not in ("auto", "semi"):
+        raise HTTPException(400, "합불 결정 방식은 자동 또는 반자동만 선택할 수 있습니다.")
     db.run("""UPDATE eval_criteria SET w_expertise=%s, w_logic=%s, w_relevance=%s, w_delivery=%s, w_fit=%s,
-              coding_enabled=%s, coding_ratio=%s, pass_score=%s, version=version+1 WHERE job_id=%s""",
-           *ws, body.coding_enabled, body.coding_ratio, body.pass_score, job_id)
+              coding_enabled=%s, coding_ratio=%s, pass_score=%s, decision_mode=%s, version=version+1 WHERE job_id=%s""",
+           *ws, body.coding_enabled, body.coding_ratio, body.pass_score, body.decision_mode, job_id)
     db.audit(user["id"], "criteria_change", "job", job_id)
     return db.one("SELECT * FROM eval_criteria WHERE job_id=%s", job_id)
 
@@ -181,7 +184,9 @@ def set_criteria(job_id: int, body: CriteriaIn, user=Depends(security.recruiter)
 # ---------- 지원자 (ADM-01~06) ----------
 APPLICANT_SQL = """SELECT ap.id application_id, ap.step, ap.created_at applied_at, u.name, u.email, u.phone, j.id job_id, j.title job_title,
     a.id attempt_id, a.status attempt_status, a.analysis_status, a.exit_count, a.interrupt_count, a.completed_at,
-    e.interview_score, e.coding_score, e.total_score, e.result, ec.coding_enabled
+    e.interview_score, e.coding_score, e.total_score, e.result ai_result, e.final_result result, e.decided_at, ec.coding_enabled,
+    coalesce(a.criteria_snapshot->>'decision_mode', ec.decision_mode) decision_mode,
+    (e.attempt_id IS NOT NULL AND e.final_result IS NULL) needs_decision
     FROM applications ap JOIN users u ON u.id=ap.user_id JOIN jobs j ON j.id=ap.job_id JOIN eval_criteria ec ON ec.job_id=j.id
     LEFT JOIN attempts a ON a.application_id=ap.id LEFT JOIN evaluations e ON e.attempt_id=a.id
     WHERE j.company_id=%s"""
@@ -189,9 +194,9 @@ APPLICANT_SQL = """SELECT ap.id application_id, ap.step, ap.created_at applied_a
 
 @router.get("/applicants")
 def applicants(job_id: int | None = None, result: str | None = None, status: str | None = None, user=Depends(security.recruiter)):
-    rows = db.all_(APPLICANT_SQL + """ AND (%s::int IS NULL OR j.id=%s) AND (%s::text IS NULL OR e.result=%s)
+    rows = db.all_(APPLICANT_SQL + """ AND (%s::int IS NULL OR j.id=%s) AND (%s::text IS NULL OR e.final_result=%s OR (%s='pending' AND e.attempt_id IS NOT NULL AND e.final_result IS NULL))
                    AND (%s::text IS NULL OR a.status=%s) ORDER BY e.total_score DESC NULLS LAST, ap.created_at DESC""",
-                   user["company_id"], job_id, job_id, result, result, status, status)
+                   user["company_id"], job_id, job_id, result, result, result, status, status)
     return rows
 
 
@@ -231,6 +236,36 @@ def applicant_detail(app_id: int, user=Depends(security.recruiter)):
                               WHERE m.application_id=%s ORDER BY m.created_at DESC""", app_id)
     db.audit(user["id"], "result_view", "application", app_id)
     return out
+
+
+class DecisionIn(BaseModel):
+    action: str            # confirm = 허용(AI 판정 그대로 확정), override = 판정 변경 — 둘 다 원클릭
+    note: str = ""         # 선택 입력(내부 기록)
+
+
+@router.post("/applicants/{app_id}/decision")
+def decide(app_id: int, body: DecisionIn, user=Depends(security.recruiter)):
+    """반자동(semi) 공고: 담당자는 '허용'(그대로 확정) 또는 '판정 변경'만 한다(원클릭). 점수는 바꾸지 않고 AI 판정(result)은 그대로 남는다."""
+    base = _company_application(app_id, user)
+    if not base["attempt_id"]:
+        raise HTTPException(404, "응시 기록이 없습니다.")
+    e = db.one("SELECT result, final_result FROM evaluations WHERE attempt_id=%s", base["attempt_id"])
+    if not e:
+        raise HTTPException(409, "AI 분석이 끝난 뒤 확정할 수 있습니다.")
+    if base["decision_mode"] != "semi":
+        raise HTTPException(409, "자동 확정 공고는 담당자 확인 단계가 없습니다.")
+    if e["final_result"]:
+        raise HTTPException(409, "이미 확정된 결과입니다.")
+    if body.action == "confirm":
+        final, note = e["result"], None
+    elif body.action == "override":
+        final, note = ("fail" if e["result"] == "pass" else "pass"), (body.note.strip()[:1000] or "담당자 판정 변경")
+    else:
+        raise HTTPException(400, "잘못된 요청입니다.")
+    db.run("""UPDATE evaluations SET final_result=%s, decided_by=%s, decided_at=now(), decision_note=%s
+              WHERE attempt_id=%s AND final_result IS NULL""", final, user["id"], note, base["attempt_id"])
+    db.audit(user["id"], "decision_" + body.action, "application", app_id)
+    return {"ok": True, "result": final}
 
 
 @router.get("/files/{file_id}")
@@ -276,7 +311,7 @@ def shortlist(job_id: int | None = None, user=Depends(security.recruiter)):
                       a.publish_at + interval '7 days' delete_at
                       FROM applications ap JOIN users u ON u.id=ap.user_id JOIN jobs j ON j.id=ap.job_id
                       JOIN attempts a ON a.application_id=ap.id JOIN evaluations e ON e.attempt_id=a.id
-                      WHERE j.company_id=%s AND e.result='pass' AND (%s::int IS NULL OR j.id=%s)
+                      WHERE j.company_id=%s AND e.final_result='pass' AND (%s::int IS NULL OR j.id=%s)
                       ORDER BY e.total_score DESC""", user["company_id"], job_id, job_id)
 
 
@@ -287,7 +322,7 @@ def stats(user=Depends(security.recruiter)):
                          FROM attempts a JOIN applications ap ON ap.id=a.application_id JOIN jobs j ON j.id=ap.job_id
                          WHERE j.company_id=%s GROUP BY 1 ORDER BY 1""", cid)
     per_job = db.all_("""SELECT j.id, j.title, count(e.attempt_id) evaluated,
-                         count(*) FILTER (WHERE e.result='pass') passed, round(avg(e.total_score), 2) avg_total
+                         count(*) FILTER (WHERE e.final_result='pass') passed, round(avg(e.total_score), 2) avg_total
                          FROM jobs j LEFT JOIN applications ap ON ap.job_id=j.id LEFT JOIN attempts a ON a.application_id=ap.id
                          LEFT JOIN evaluations e ON e.attempt_id=a.id WHERE j.company_id=%s GROUP BY j.id ORDER BY j.id DESC""", cid)
     counts = db.one("""SELECT count(*) FILTER (WHERE a.interrupt_count>0) interrupted, count(*) FILTER (WHERE a.status='cancelled') cancelled,

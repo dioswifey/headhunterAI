@@ -70,6 +70,8 @@ CREATE TABLE eval_criteria (
   coding_enabled   BOOLEAN NOT NULL DEFAULT true,
   coding_ratio     INT NOT NULL DEFAULT 30 CHECK (coding_ratio BETWEEN 10 AND 90 AND coding_ratio % 10 = 0),
   pass_score       INT NOT NULL DEFAULT 70 CHECK (pass_score BETWEEN 0 AND 100),
+  -- 합불 결정 방식 (v0.6): auto = AI 판정을 바로 확정·공개, semi = 담당자가 AI 판정을 확인한 뒤 확정
+  decision_mode    TEXT NOT NULL DEFAULT 'auto' CHECK (decision_mode IN ('auto','semi')),
   locked_at        TIMESTAMPTZ,
   CHECK (w_expertise + w_logic + w_relevance + w_delivery + w_fit = 100),
   CHECK (LEAST(w_expertise, w_logic, w_relevance, w_delivery, w_fit) >= 5)
@@ -244,8 +246,12 @@ CREATE TABLE evaluations (
   interview_score   NUMERIC(5,2) NOT NULL,
   coding_score      NUMERIC(5,2),
   total_score       NUMERIC(5,2) NOT NULL,
-  result            TEXT NOT NULL CHECK (result IN ('pass','fail')),
+  result            TEXT NOT NULL CHECK (result IN ('pass','fail')),   -- AI(코드 산출) 판정, 바꾸지 않는다
   reason            TEXT,
+  final_result      TEXT CHECK (final_result IN ('pass','fail')),     -- 확정 판정. auto는 산출 즉시, semi는 담당자 확인 후. NULL = 확인 대기
+  decided_by        INT REFERENCES users(id),                         -- NULL + decided_at 있음 = 자동 확정
+  decided_at        TIMESTAMPTZ,
+  decision_note     TEXT,                                             -- 담당자가 판정을 바꾼 경우 메모(선택)
   criteria_snapshot JSONB NOT NULL,
   versions          JSONB NOT NULL,                -- {model, prompt, rubric, ocr}
   strengths         JSONB NOT NULL DEFAULT '[]',
@@ -285,6 +291,19 @@ CREATE TABLE notifications (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- 이메일 발송 기록 (v0.6): 지원자 정량 리포트. 본문은 저장하지 않는다
+CREATE TABLE email_logs (
+  id          SERIAL PRIMARY KEY,
+  attempt_id  INT REFERENCES attempts(id) ON DELETE CASCADE,
+  user_id     INT REFERENCES users(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,                         -- applicant_report
+  to_addr     TEXT NOT NULL,
+  status      TEXT NOT NULL CHECK (status IN ('sent','failed')),
+  writer      TEXT,                                  -- crewai | template (코칭 문단 작성 경로)
+  error       TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- 감사·삭제 로그: 원문 없이 식별자·시각·행위만 (6.1, 3년)
 CREATE TABLE audit_logs (
   id           BIGSERIAL PRIMARY KEY,
@@ -302,3 +321,4 @@ CREATE INDEX ON attempt_questions (attempt_id, seq);
 CREATE INDEX ON attempt_events (attempt_id, created_at);
 CREATE INDEX ON analysis_jobs (status, next_run_at);
 CREATE INDEX ON question_bank (category, use_count);
+CREATE INDEX ON email_logs (attempt_id, created_at);

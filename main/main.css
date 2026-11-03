@@ -1,18 +1,24 @@
 /* 공통 첫 페이지 전용 (Features · About Us · Pricing · KO/EN). 3색 규칙: 검정·흰색(투명도)·네온 */
 .top.main-top { display: grid; grid-template-columns: 1fr auto 1fr; }
 .main-top .logo { justify-self: start; }
-.main-nav { display: flex; gap: 6px; align-items: center; }
-.main-nav > a, .main-nav .dd > a { text-decoration: none; padding: 8px 14px; border-radius: var(--radius); color: var(--muted); font-weight: 600; display: inline-block; }
+.top .main-nav { display: flex; gap: 56px; align-items: center; }  /* 메뉴 사이 간격 (넓게) */
+/* 메뉴 글꼴 = 로고와 같은 Outfit(700), 색은 기존 그대로 */
+.top .main-nav > a, .top .main-nav .dd > a { text-decoration: none; padding: 10px 16px; border-radius: var(--radius); color: var(--muted); font-family: var(--font-logo); font-weight: 700; font-size: 19px; letter-spacing: .06em;  /* 자간 넓게 */ display: inline-block; }
 .main-nav > a:hover, .main-nav > a.on, .main-nav .dd > a:hover, .main-nav .dd > a.on { color: var(--white); background: var(--fill2); }
 .dd { position: relative; }
 .dd-panel { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); padding-top: 10px; display: none; z-index: 30; }
-.dd:hover .dd-panel, .dd:focus-within .dd-panel { display: block; }
-.dd-box { width: 560px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: rgba(0, 0, 0, .96); box-shadow: 0 18px 40px rgba(0, 0, 0, .6); }
-.dd-item { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 12px; text-decoration: none; }
-.dd-item:hover { background: var(--fill2); }
+.dd:hover .dd-panel, .dd:focus-within .dd-panel, .dd.open .dd-panel { display: block; }
+.dd-box { width: 620px; display: block; padding: 14px; border: 1px solid var(--line); border-radius: 16px; background: rgba(0, 0, 0, .96); box-shadow: 0 18px 40px rgba(0, 0, 0, .6); }
+/* 아이콘 없음. 평소 테두리는 연한 흰색, 마우스를 올리면 테두리만 네온 (채우기 없음) */
+.dd-item { display: block; padding: 16px 18px; border: 1px solid var(--line-strong); border-radius: 12px; text-decoration: none; transition: border-color .15s; }
+.dd-item:hover, .dd-item:focus-visible { border-color: var(--neon); background: none; outline: none; }
+/* 섹션: 소제목(작은 회색, 왼쪽 카드 시작선에 맞춤) 바로 아래 카드 2개. 첫 섹션 카드 행과 두 번째 소제목 사이에만 구분선 */
+.dd-sec-h { font-size: 11.5px; font-weight: 700; letter-spacing: .1em; color: var(--muted2); margin: 2px 0 8px; }
+.dd-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dd-sec + .dd-sec { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 12px; }
 .dd-item .ic { flex: none; width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--line); display: grid; place-items: center; color: var(--neon); font-weight: 800; font-family: var(--font-logo); }
-.dd-item b { display: block; font-weight: 600; }
-.dd-item span { display: block; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.dd-item b { display: block; font-weight: 600; color: var(--white); }
+.dd-item .en { display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--neon); letter-spacing: .01em; }
 .soon { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 600; color: var(--muted2); border: 1px solid var(--line); border-radius: 99px; padding: 1px 7px; vertical-align: 2px; }
 
 .lang { justify-self: end; display: inline-flex; border: 1px solid var(--line); border-radius: 99px; padding: 3px; gap: 2px; }
@@ -53,8 +59,12 @@
 .note { text-align: center; color: var(--muted2); font-size: 13px; margin-top: 18px; }
 
 @media (max-width: 820px) {
-  .top.main-top { grid-template-columns: auto 1fr; row-gap: 10px; }
+  .top.main-top { grid-template-columns: minmax(0, 1fr) auto; row-gap: 10px; }  /* 1줄: 로고 · KO/EN, 2줄: 메뉴 */
   .main-nav { grid-column: 1 / -1; grid-row: 2; justify-content: center; }
-  .dd-panel { display: none !important; }
+  .top .main-nav { gap: 10px; }
+  .top .main-nav > a, .top .main-nav .dd > a { padding: 8px 10px; font-size: 16px; letter-spacing: .04em; }
+  .dd-panel { position: fixed; left: 16px; right: 16px; transform: none; }
+  .dd-box { width: auto; }
+  .dd-row { grid-template-columns: 1fr; }
   .page-head { padding: 40px 0 24px; }
 }

@@ -50,10 +50,10 @@ def signup(body: Signup, response: Response):
         raise HTTPException(400, "이름을 입력해 주세요.")
     if db.one("SELECT 1 FROM users WHERE lower(email)=lower(%s)", body.email):
         raise HTTPException(409, "이미 가입된 이메일입니다.")
-    # 개발 환경: 메일 서버가 없어 이메일 인증을 자동 완료 처리 (TRD §2.4)
+    # 인증 메일이 아직 없어 AUTO_VERIFY_EMAIL이면 이메일 인증을 자동 완료 처리 (TRD §2.4)
     u = db.run("""INSERT INTO users (role, email, password_hash, name, phone, email_verified, age14_confirmed)
                   VALUES ('applicant',%s,%s,%s,%s,%s,true) RETURNING *""",
-               body.email.strip(), security.hash_pw(body.password), body.name.strip(), body.phone, config.DEV_MODE)
+               body.email.strip(), security.hash_pw(body.password), body.name.strip(), body.phone, config.AUTO_VERIFY_EMAIL)
     db.run("INSERT INTO consents (user_id, scope, version, items) VALUES (%s,'signup',%s,%s)",
            u["id"], config.CONSENT_VERSION, db.J({"terms": True, "privacy": True, "age14": True}))
     db.audit(u["id"], "signup", "user", u["id"])
@@ -148,4 +148,4 @@ def job_detail(job_id: int):
 def health():
     """APP-06 ⑤ AI 서버 상태."""
     ok_db = db.one("SELECT 1 ok") is not None
-    return {"db": ok_db, "llm": llm.provider.health(), "dev_mode": config.DEV_MODE}
+    return {"db": ok_db, "llm": llm.provider.health(), "dev_mode": config.DEV_MODE, "dev_bar": config.SHOW_DEVBAR}

@@ -5,7 +5,7 @@ Order of the 10 base questions: 인성 2 → 이력서 2 → 직무 4 → 기업
 import re
 import threading
 
-from . import config, db, llm
+from . import config, db, llm, prompts
 
 EVAL_ITEMS = {
     "personality": ["logic", "relevance", "delivery", "fit"],
@@ -67,19 +67,27 @@ def fit_scope(q, seconds, purpose):
     return first, True
 
 
-# ---------- company context (기업 관련 문항 맥락화) ----------
-CTX_SCHEMA = {"type": "object", "properties": {"question": {"type": "string"}}, "required": ["question"]}
+# ---------- 회사 맞춤 출제 (v0.6, 프롬프트 = backend/app/prompts/question_generator.md) ----------
+CTX_SCHEMA = {"type": "object", "properties": {"question": {"type": "string"},
+              "company_facts": {"type": "array", "items": {"type": "string"}}}, "required": ["question", "company_facts"]}
 
 
-def contextualize(q, job):
+def contextualize(q, job, intent=""):
+    """질문 은행 문항을 {회사}가 직접 출제한 것처럼 다시 쓴다. 회사 정보에 없는 사실·차단 목록·과도한 길이면 원문 유지."""
+    info = " ".join([job.get("company_intro") or "", job.get("duties") or "", job.get("requirements") or ""])
+    system = prompts.load("question_generator", company_name=job.get("company_name") or "우리 회사", role_name=job.get("role_name") or "",
+                          company_intro=(job.get("company_intro") or "")[:400], duties=(job.get("duties") or "")[:400],
+                          requirements=(job.get("requirements") or "")[:300], intent=intent or "원래 질문과 같음", seconds=config.QUESTION_SECONDS)
     try:
-        out = llm.chat_json(
-            "너는 면접 질문 편집자다. 원래 질문의 의도와 범위는 그대로 두고, 회사 소개·주요 업무에 맞게 표현만 다듬은 한국어 질문 한 문장을 만든다. 새로운 요구 과제를 추가하지 않는다.",
-            f"회사 소개: {job['company_intro'][:400]}\n주요 업무: {job['duties'][:400]}\n원래 질문: {q}", CTX_SCHEMA, timeout=60)
-        nq = out["question"].strip()
-        return nq if 10 <= len(nq) <= 160 else q
+        out = llm.chat_json(system, f"기본 질문: {q}", CTX_SCHEMA, timeout=60, temperature=0.4)
     except llm.LLMError:
         return q
+    nq = (out.get("question") or "").strip()
+    squash = re.sub(r"\s+", "", info)
+    facts_ok = all(re.sub(r"\s+", "", f) in squash for f in out.get("company_facts", []) if f and f.strip())
+    if not (10 <= len(nq) <= 160) or BLOCKLIST.search(nq) or not facts_ok:
+        return q
+    return nq
 
 
 # ---------- RSQ: resume-based questions ----------
@@ -178,7 +186,8 @@ def resume_questions(snapshot, use_llm=True):
 
 # ---------- full set ----------
 def build_set(application, use_llm=True):
-    job = db.one("SELECT * FROM jobs WHERE id=%s", application["job_id"])
+    job = db.one("""SELECT j.*, c.name company_name, r.name role_name FROM jobs j JOIN companies c ON c.id=j.company_id
+                    JOIN job_roles r ON r.code=j.role_code WHERE j.id=%s""", application["job_id"])
     snapshot = application["resume_snapshot"] or {}
     result, used_groups = [], set()
     rq = resume_questions(snapshot, use_llm)
@@ -197,8 +206,8 @@ def build_set(application, use_llm=True):
         for b in pick_bank(cat, n, used_groups):
             used_groups.add(b["dup_group"] or f"id{b['id']}")
             text = b["text"]
-            if use_llm and cat == "company":
-                text = contextualize(text, job)
+            if use_llm and cat in ("company", "job"):  # v0.6: 직무 문항도 회사 맞춤
+                text = contextualize(text, job, b.get("subcategory") or "")
             if use_llm:
                 text, _ = fit_scope(text, config.QUESTION_SECONDS, ", ".join(EVAL_ITEMS[cat]))
             result.append({"category": cat, "eval_items": EVAL_ITEMS[cat], "text": text, "bank_id": b["id"], "gen_method": "db"})

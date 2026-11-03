@@ -9,3 +9,4 @@ pymupdf==1.25.1
 pytesseract==0.3.13
 pillow==11.0.0
 langsmith==0.14.16
+crewai==1.15.30

@@ -164,8 +164,10 @@ def analyze(attempt_id):
     if att["status"] == "cancelled":  # EVL-05: 부정행위 취소 → 평가 없이 불합격
         pub = {"result": "fail", "status": "응시 취소", "reason": "화면 이탈 2회로 응시가 취소되었습니다.", "strengths": [], "improvements": []}
         db.run("""INSERT INTO evaluations (attempt_id, item_scores, interview_score, coding_score, total_score, result, reason,
-                  criteria_snapshot, versions, public_feedback, summary) VALUES (%s,%s,0,NULL,0,'fail','응시 취소(부정행위)',%s,%s,%s,%s)""",
-               attempt_id, db.J({it: 0 for it in ITEMS}), db.J(criteria), db.J(versions), db.J(pub), "화면 이탈 2회로 응시 취소")
+                  criteria_snapshot, versions, public_feedback, summary, final_result, decided_at)
+                  VALUES (%s,%s,0,NULL,0,'fail','응시 취소(부정행위)',%s,%s,%s,%s,%s,%s)""",
+               attempt_id, db.J({it: 0 for it in ITEMS}), db.J(criteria), db.J(versions), db.J(pub), "화면 이탈 2회로 응시 취소",
+               *_auto_decision(criteria, "fail"))
         return
     blocks = question_blocks(attempt_id)
     scores_by_q, item_points = {}, {}
@@ -191,12 +193,25 @@ def analyze(attempt_id):
                                 SET score=EXCLUDED.score, quote=EXCLUDED.quote, verified=EXCLUDED.verified, rationale=EXCLUDED.rationale""",
                              (qid, it, v["score"], v["quote"], v["verified"], v["rationale"]))
         conn.execute("""INSERT INTO evaluations (attempt_id, item_scores, interview_score, coding_score, total_score, result, reason,
-                        criteria_snapshot, versions, strengths, improvements, summary, code_feedback, public_feedback)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                        criteria_snapshot, versions, strengths, improvements, summary, code_feedback, public_feedback,
+                        final_result, decided_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                      (attempt_id, db.J(item_scores), interview, coding_score, total, result,
                       f"종합 총점 {total} {'≥' if result == 'pass' else '<'} 합격 기준 {criteria['pass_score']}",
                       db.J(criteria), db.J({**versions, "events": {e['type']: e['n'] for e in events}}),
-                      db.J(summ["strengths"][:3]), db.J(summ["improvements"][:3]), summ["summary"], cfb, db.J(pub)))
+                      db.J(summ["strengths"][:3]), db.J(summ["improvements"][:3]), summ["summary"], cfb, db.J(pub),
+                      *_auto_decision(criteria, result)))
+
+
+def decision_mode(criteria):
+    return (criteria or {}).get("decision_mode") or "auto"
+
+
+def _auto_decision(criteria, result):
+    """auto: AI(코드) 판정을 바로 확정. semi: 담당자 확인 전까지 final_result=NULL."""
+    if decision_mode(criteria) == "auto":
+        return result, datetime.now(timezone.utc)
+    return None, None
 
 
 def enqueue(attempt_id):
