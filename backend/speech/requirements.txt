@@ -1,0 +1,16 @@
+# 음성 서비스(Qwen3-ASR · Qwen3-TTS). torch·torchaudio는 Dockerfile에서 CPU/GPU 판에 맞춰 따로 설치한다.
+# qwen-asr(transformers==4.57.6 고정)와 qwen-tts(transformers==4.57.3 고정)는 함께 설치되지 않아
+# 두 패키지는 --no-deps로 넣고, 실제로 쓰는 의존성만 아래에 고정한다(데모용 gradio·flask 제외).
+transformers==4.57.3
+accelerate==1.12.0
+librosa
+soundfile
+sox
+onnxruntime
+einops
+nagisa==0.2.11
+soynlp==0.0.493
+qwen-omni-utils
+pytz
+fastapi==0.115.*
+uvicorn[standard]==0.32.*

@@ -28,6 +28,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql://headhunter:headhunter@db:5432/headhunter
       DEV_MODE: "1"
@@ -38,6 +40,12 @@ services:
       MAX_CONCURRENT_INTERVIEWS: "2"  # 운영 기준 GPU당 5건(INT-08)
       UPLOAD_DIR: /data/uploads
       SANDBOX_DIR: /sandbox
+      # 질문 은행 벡터 저장소(Redis 8) + 로컬 임베딩 모델(Ollama)
+      REDIS_URL: redis://redis:6379/0
+      EMBED_MODEL: qwen3-embedding:0.6b
+      EMBED_DIM: "1024"
+      TRANSLATE_MODEL: qwen3.5:4b     # 언어 번역 에이전트. 한국어 자연스러움 비교에서 qwen3:4b보다 나음(2026-11-04)
+      QUESTIONBANK_DIR: /questionbank
       # LangSmith 추적(개발 전용, TRD v0.2 §13.4). 값은 저장소 루트 .env(커밋 안 됨)에서 읽는다. 키가 없거나 DEV_MODE=0이면 꺼진다
       LANGSMITH_TRACING: ${LANGSMITH_TRACING:-false}
       LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
@@ -49,6 +57,30 @@ services:
       SMTP_STARTTLS: "1"
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # 코딩 문제 수집 에이전트의 ExpertHire 어댑터(ADLC v0.4 6.9). 키는 .env에만, 비어 있으면 experthire 수집이 '키 없음'으로 멈춘다
+      EH_SECRET_KEY: ${EH_SECRET_KEY:-}
+      CODING_GEN_MODEL: ${CODING_GEN_MODEL:-qwen3:8b}   # 코딩 문제 생성 에이전트 모델(호스트 Ollama에 설치 필요)
+      # 코딩 문제은행 생성만 OpenAI API(사용자 결정 2026-11-05). 키·가격은 .env에만. 검토·채점·다른 기능은 로컬 Qwen
+      CODING_GEN_PROVIDER: ${CODING_GEN_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      OPENAI_SEND_TEMPERATURE: ${OPENAI_SEND_TEMPERATURE:-1}
+      OPENAI_PRICE_IN_PER_M: ${OPENAI_PRICE_IN_PER_M:-0}
+      OPENAI_PRICE_OUT_PER_M: ${OPENAI_PRICE_OUT_PER_M:-0}
+      # SQL 문제은행(2026-11-06): 실행 검증 격리 DB(앱 DB와 다른 DB·역할, backend/db/sqlbank_init.sql) · 생성 모델
+      SQLBANK_URL: postgresql://sqlbank_exec:sqlbank_exec@db:5432/sqlbank
+      SQL_GEN_MODEL: ${SQL_GEN_MODEL:-gpt-5.5}
+      # 네이버 검색 API(SQLD 유형 통계). 키는 .env에만
+      NAVER_CLIENT_ID: ${NAVER_CLIENT_ID:-}
+      NAVER_CLIENT_SECRET: ${NAVER_CLIENT_SECRET:-}
+      # 음성 서비스(v0.9, Qwen3-ASR·Qwen3-TTS). 비어 있거나 응답이 없으면 STT는 비상 입력란, TTS는 브라우저 음성으로 대체
+      SPEECH_URL: http://speech:8090
+      SPEECH_TOKEN: ${SPEECH_TOKEN:-}
+      # 결제(v0.9, 네이버페이 자동결제). 키는 .env에만. 키가 없으면 결제 비활성, PAYMENTS_MODE=mock은 로컬 개발에서만
+      PAYMENTS_MODE: ${PAYMENTS_MODE:-}
+      NAVERPAY_CLIENT_ID: ${NAVERPAY_CLIENT_ID:-}
+      NAVERPAY_CLIENT_SECRET: ${NAVERPAY_CLIENT_SECRET:-}
+      NAVERPAY_CHAIN_ID: ${NAVERPAY_CHAIN_ID:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
       # CrewAI(리포트 코치): 자체 텔레메트리·추적 전송 끔
       REPORT_WRITER: crewai
@@ -66,6 +98,34 @@ services:
       - ./applicant:/web/applicant:ro
       - ./shared:/web/shared:ro
       - ./images:/web/images:ro
+      - ./questionbank:/questionbank:ro
+      - ./questionbank/sql_taxonomy:/questionbank/sql_taxonomy   # SQLD 유형 통계(쓰기)
+      - ./backend/app/prompts/skills:/srv/app/prompts/skills:ro   # 번역 에이전트 스킬: 파일을 넣거나 고치면 다음 실행부터 자동 사용
+
+  redis:
+    image: redis:8.2.1                # Query Engine(벡터 검색) 내장
+    container_name: AI-Interview-project-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"         # 호스트에서만 접근(방화벽 열지 않음)
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
+  # 음성 서비스(v0.9): STT = Qwen3-ASR-0.6B, TTS = Qwen3-TTS-12Hz-0.6B-CustomVoice(화자 Sohee). 로컬 실행, 외부 음성 API 없음.
+  # 기본 CPU. 첫 기동 때 모델(약 3GB)을 speech_models 볼륨에 내려받는다. 호스트 8090은 열지 않는다(api만 내부망으로 부름)
+  speech:
+    build: ./backend/speech
+    container_name: AI-Interview-project-speech
+    environment:
+      SPEECH_DEVICE: ${SPEECH_DEVICE:-cpu}
+      SPEECH_TOKEN: ${SPEECH_TOKEN:-}
+      TTS_SPEAKER: Sohee
+    volumes:
+      - speech_models:/models
 
   runner:
     build: ./backend/runner
@@ -75,6 +135,8 @@ services:
       - sandbox:/sandbox
 
 volumes:
+  speech_models:
   pgdata:
   uploads:
   sandbox:
+  redisdata:

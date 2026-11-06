@@ -6,7 +6,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, db, routes_admin, routes_applicant, routes_auth, scheduler, security, seed
+from . import config, db, routes_admin, routes_applicant, routes_auth, routes_payments, scheduler, security, seed
 
 WEB_ROOT = Path("/web")
 
@@ -15,7 +15,10 @@ WEB_ROOT = Path("/web")
 async def lifespan(_app):
     db.pool.open(wait=True)
     _ensure_schema()
+    _migrate()
     seed.seed()
+    seed.ensure_demo_companies()
+    seed.sync_recruiter_names()
     scheduler.start()
     yield
     db.pool.close()
@@ -31,11 +34,29 @@ def _ensure_schema():
             conn.execute(path.read_text(encoding="utf-8"))
 
 
+# 이미 있는 DB(로컬·Railway)에 v0.9 변경을 적용한다. 모두 IF NOT EXISTS라 여러 번 돌아도 같다. 원본은 schema.sql
+MIGRATIONS_V09 = [
+    "ALTER TABLE attempt_questions ADD COLUMN IF NOT EXISTS answer_source TEXT CHECK (answer_source IN ('voice','typed','voice+typed'))",
+]
+
+
+def _migrate():
+    with db.tx() as conn:
+        for sql in MIGRATIONS_V09:
+            conn.execute(sql)
+        if not conn.execute("SELECT to_regclass('public.subscriptions') AS t").fetchone()["t"]:
+            text = Path(config.SCHEMA_PATH).read_text(encoding="utf-8") if Path(config.SCHEMA_PATH).exists() else ""
+            a, b = text.find("-- 결제 (v0.9"), text.find("-- 감사·삭제 로그")
+            if 0 <= a < b:
+                conn.execute(text[a:b])
+
+
 app = FastAPI(title="headhunterAI", lifespan=lifespan)
 app.include_router(routes_auth.router)
 app.include_router(routes_applicant.router)
 app.include_router(routes_admin.router)
 app.include_router(routes_admin.ops_router)
+app.include_router(routes_payments.router)
 
 
 @app.middleware("http")
@@ -72,6 +93,18 @@ def dev_reset_my_applications(app_id: int | None = None, user=Depends(security.c
     db.run("DELETE FROM applications WHERE user_id=%s" + only, *args)
     db.audit(user["id"], "dev_reset_applications", "user", user["id"])
     return {"ok": True, "deleted": n}
+
+
+@app.get("/privacy")
+def privacy_page():
+    """개인정보 처리방침(v0.9, 원본 legal/privacy_policy.md → main/privacy.html)"""
+    return FileResponse(WEB_ROOT / "main" / "privacy.html")
+
+
+@app.get("/terms")
+def terms_page():
+    """이용약관(v0.9, 원본 legal/terms_of_service.md → main/terms.html)"""
+    return FileResponse(WEB_ROOT / "main" / "terms.html")
 
 
 @app.get("/")

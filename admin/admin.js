@@ -113,7 +113,8 @@ function jobForm(j) {
   const today = new Date().toISOString().slice(0, 10);
   const v = (k, d = '') => esc(j ? (j[k] ?? d) : d);
   return `<div class="card col">
-    <div class="between"><h2>공고 내용</h2><button class="btn sm" id="ai-draft">AI 공고 초안 만들기</button></div>
+    <div class="between"><h2>공고 내용</h2><span class="row"><button class="btn sm" id="ai-draft">① AI 공고 초안 만들기</button><button class="btn sm" id="import-job">② 기존 공고 가져오기</button></span></div>
+    <p class="small">공고 내용은 기업이 정합니다. 직접 쓰거나, ① 몇 가지 답으로 AI 초안을 받거나, ② 이미 쓴 공고를 붙여 넣어 칸을 채운 뒤 검토·수정해 게시하세요.</p>
     <div class="grid2">
       <div class="field"><label>제목 *</label><input id="title" value="${v('title')}"></div>
       <div class="field"><label>직무 *</label><select id="role_code">${roles.map((r) => `<option value="${r.code}" ${r.status !== 'active' ? 'disabled' : ''} ${(j ? j.role_code : 'ai_ax') === r.code ? 'selected' : ''}>${esc(r.name)}${r.status !== 'active' ? ' (준비 중)' : ''}</option>`).join('')}</select></div>
@@ -211,6 +212,27 @@ async function jobEdit(id) {
     await put(`/api/admin/jobs/${id}/criteria`, critBody()); toast('평가 기준을 저장했습니다.'); router();
   });
   $('#ai-draft').onclick = () => aiDraft();
+  $('#import-job').onclick = () => importJob();
+}
+
+// JOB-09 (PRD v0.8): 기존 공고 가져오기 — 원문을 칸에 옮겨 담기만 한다(내용을 지어내지 않음)
+async function importJob() {
+  const bg = document.createElement('div'); bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal"><h2>기존 공고 가져오기</h2><p class="small">다른 채용 사이트나 사내 문서에 이미 쓴 공고 본문을 붙여 넣거나 공고 링크를 넣으면, 제목·회사 소개·주요 업무·자격 요건·우대 사항·근무지 칸으로 나눠 채웁니다. 원문에 없는 내용은 넣지 않습니다.</p>
+    <div class="field"><label>공고 본문 붙여넣기</label><textarea id="i-text" style="min-height:200px" placeholder="공고 전체를 복사해 붙여 넣으세요"></textarea></div>
+    <div class="field"><label>또는 공고 링크 (본문이 비어 있을 때만 사용)</label><input id="i-url" placeholder="https://"></div>
+    <div class="row" style="justify-content:flex-end"><button class="btn" id="i-cancel">취소</button><button class="btn primary" id="i-go">가져오기</button></div></div>`;
+  document.body.appendChild(bg);
+  $('#i-cancel').onclick = () => bg.remove();
+  $('#i-go').onclick = async () => {
+    $('#i-go').disabled = true; $('#i-go').innerHTML = '<span class="spinner"></span> 가져오는 중';
+    try {
+      const r = await post('/api/admin/jobs/import', { text: $('#i-text').value, url: $('#i-url').value });
+      ['title', 'company_intro', 'duties', 'requirements', 'preferred', 'location'].forEach((k) => { if (r.fields[k] && $('#' + k)) $('#' + k).value = r.fields[k]; });
+      bg.remove();
+      toast(`공고 칸을 채웠습니다(${r.method === 'rule' ? '제목 줄로 분리' : '제목 줄 + AI 보조'}). ${r.warnings.join(' ')}`);
+    } catch (e) { $('#i-go').disabled = false; $('#i-go').textContent = '가져오기'; toast(e.message, true); }
+  };
 }
 
 async function aiDraft() {
@@ -248,16 +270,16 @@ async function applicantsView(params) {
   const f = { job_id: params.get('job_id') || '', result: params.get('result') || '', status: params.get('status') || '' };
   const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
   const rows = await get('/api/admin/applicants?' + qs);
-  main.innerHTML = `<div class="between"><div><h1>지원자 목록</h1><p class="sub">1차 결과는 AI가 산출합니다. 반자동 공고는 담당자가 확인해야 확정됩니다. 2~3명을 골라 비교할 수 있습니다.</p></div>
-      <button class="btn" id="cmp" disabled>선택한 지원자 비교</button></div>
+  main.innerHTML = `<div class="between"><div><h1>지원자 목록</h1><p class="sub">1차 결과는 AI가 산출합니다. 반자동 공고는 담당자가 확인해야 확정됩니다. 2~3명을 골라 비교할 수 있습니다(분석 완료된 지원자만).</p></div>
+      <div class="row"><button class="btn ghost" id="del-sel" disabled>선택 삭제</button><button class="btn ghost" id="del-all" ${rows.length ? '' : 'disabled'}>목록 전체 삭제</button><button class="btn" id="cmp" disabled>선택한 지원자 비교</button></div></div>
     <div class="row">
       <select id="f-job"><option value="">전체 공고</option>${jobs.map((j) => `<option value="${j.id}" ${String(j.id) === f.job_id ? 'selected' : ''}>${esc(j.title)}</option>`).join('')}</select>
       <select id="f-result"><option value="">전체 결과</option><option value="pass" ${f.result === 'pass' ? 'selected' : ''}>1차 합격</option><option value="fail" ${f.result === 'fail' ? 'selected' : ''}>1차 불합격</option><option value="pending" ${f.result === 'pending' ? 'selected' : ''}>확인 대기</option></select>
       <select id="f-status"><option value="">전체 응시 상태</option>${Object.entries(ATTEMPT_KO).map(([k, v]) => `<option value="${k}" ${f.status === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
     </div>
-    ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th></th><th>지원자</th><th>공고</th><th>응시 상태</th><th>분석</th><th class="num">AI 면접</th><th class="num">코딩</th><th class="num">종합</th><th>1차 결과</th><th>장애·이탈</th></tr></thead><tbody>
+    ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th><input type="checkbox" id="pick-all" aria-label="전체 선택"></th><th>지원자</th><th>공고</th><th>응시 상태</th><th>분석</th><th class="num">AI 면접</th><th class="num">코딩</th><th class="num">종합</th><th>1차 결과</th><th>장애·이탈</th></tr></thead><tbody>
     ${rows.map((r) => { const done = r.analysis_status === 'done'; return `<tr class="click" data-id="${r.application_id}">
-      <td><input type="checkbox" data-pick="${r.application_id}" ${done ? '' : 'disabled'}></td>
+      <td><input type="checkbox" data-pick="${r.application_id}" data-done="${done ? 1 : 0}" aria-label="선택"></td>
       <td><b>${esc(r.name)}</b><div class="small">지원 ${fmtYMD(r.applied_at)}</div></td><td class="small">${esc(r.job_title)}</td>
       <td>${r.attempt_status ? esc(ATTEMPT_KO[r.attempt_status]) : `<span class="small">${esc(HH.STEP_KO[r.step])}</span>`}</td>
       <td>${r.analysis_status ? `<span class="pill ${r.analysis_status === 'needs_check' ? 'neon' : 'dim'}">${ANALYSIS_KO[r.analysis_status]}</span>` : '-'}</td>
@@ -268,12 +290,29 @@ async function applicantsView(params) {
   const nav = () => go(`#/applicants?job_id=${$('#f-job').value}&result=${$('#f-result').value}&status=${$('#f-status').value}`);
   ['#f-job', '#f-result', '#f-status'].forEach((s) => ($(s).onchange = nav));
   $$('tr[data-id]').forEach((tr) => (tr.onclick = (e) => { if (e.target.dataset.pick === undefined) go(`#/applicants/${tr.dataset.id}`); }));
-  const picks = () => $$('[data-pick]:checked').map((c) => c.dataset.pick);
-  $$('[data-pick]').forEach((c) => (c.onchange = () => {
-    if (picks().length > 3) { c.checked = false; toast('최대 3명까지 비교할 수 있습니다.', true); }
-    $('#cmp').disabled = !(picks().length >= 2);
-  }));
-  $('#cmp').onclick = () => go(`#/compare?ids=${picks().join(',')}`);
+  const picked = () => $$('[data-pick]:checked');
+  const picks = () => picked().map((c) => c.dataset.pick);
+  const sync = () => {
+    const p = picked(), all = $$('[data-pick]');
+    $('#del-sel').disabled = !p.length;
+    $('#del-sel').textContent = p.length ? `선택 삭제 (${p.length})` : '선택 삭제';
+    $('#cmp').disabled = !(p.length >= 2 && p.length <= 3 && p.every((c) => c.dataset.done === '1'));
+    if ($('#pick-all')) { $('#pick-all').checked = all.length > 0 && p.length === all.length; $('#pick-all').indeterminate = p.length > 0 && p.length < all.length; }
+  };
+  $$('[data-pick]').forEach((c) => { c.onclick = (e) => e.stopPropagation(); c.onchange = sync; });
+  if ($('#pick-all')) $('#pick-all').onchange = (e) => { $$('[data-pick]').forEach((c) => (c.checked = e.target.checked)); sync(); };
+  $('#cmp').onclick = () => {
+    if (picked().some((c) => c.dataset.done !== '1')) return toast('비교는 분석 완료된 지원자 2~3명만 할 수 있습니다.', true);
+    go(`#/compare?ids=${picks().join(',')}`);
+  };
+  const remove = async (ids, label) => {
+    const okGo = await modal({ title: `${label} ${ids.length}명을 삭제할까요?`, body: '지원서·응시 기록·답변·평가 결과가 모두 지워지며 되돌릴 수 없습니다.', buttons: [{ label: '취소', value: false }, { label: '삭제', value: true, primary: true }] });
+    if (!okGo) return;
+    try { const r = await post('/api/admin/applicants/delete', { ids: ids.map(Number) }); toast(`${r.deleted}명을 삭제했습니다.`); applicantsView(params); }
+    catch (err) { toast(err.message, true); }
+  };
+  $('#del-sel').onclick = () => remove(picks(), '선택한 지원자');
+  $('#del-all').onclick = () => remove($$('[data-pick]').map((c) => c.dataset.pick), '지금 목록의 지원자');
 }
 
 /* ───────── 지원자 상세 · 리포트 (RPT-01, ADM-02, ADM-05) ───────── */

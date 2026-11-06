@@ -14,7 +14,7 @@ from app.main import app
 
 AUTH = {"applicant": "지원자", "recruiter": "기업 담당자", "operator": "운영자", "current_user": "로그인", "optional_user": "공개(로그인 선택)"}
 GROUPS = [("/api/auth", "인증"), ("/api/dev", "개발 전용 (DEV_MODE=1)"), ("/api/admin", "기업 담당자"), ("/api/ops", "운영자"),
-          ("/api/system", "공개"), ("/api/job", "공개"), ("/api", "지원자")]
+          ("/api/system", "공개"), ("/api/job", "공개"), ("/api/companies", "공개"), ("/api", "지원자")]
 
 
 # 함수 설명(docstring)이 없는 엔드포인트의 설명 — TRD 4장 요약과 같게 유지
@@ -25,7 +25,7 @@ DESC = {
     ("GET", "/api/auth/me"): "현재 사용자(로그인 안 했으면 null)",
     ("POST", "/api/auth/change-password"): "초기 비밀번호 변경(담당자는 변경 전 다른 API 403). ACC-03",
     ("GET", "/api/job-roles"): "직무 목록(준비 중 포함)",
-    ("GET", "/api/jobs"): "게시·마감 공고 목록(직무·검색어 필터). APP-01",
+    ("GET", "/api/jobs"): "게시·마감 공고 목록(직무·기업·검색어 필터, role_status·company_id 포함). APP-01, APP-10",
     ("GET", "/api/jobs/{job_id}"): "공고 상세·예상 소요·코딩테스트 여부",
     ("POST", "/api/applications"): "지원 생성(이미 있으면 기존 건 반환). APP-02",
     ("GET", "/api/applications/{app_id}"): "지원 단계·공고·응시 상태",

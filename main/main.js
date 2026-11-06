@@ -15,7 +15,7 @@ const T = {
       'coding-practice': {
         title: ['무제한 코딩 연습', '원하는 만큼, 원하는 언어로'],
         lead: '공고가 없어도 IT 직군 코딩 문제를 반복해서 풀어 볼 수 있습니다. 언어를 고르고, 바로 실행해 보고, 실제 코딩테스트와 같은 방식으로 채점받습니다.',
-        status: '준비 중입니다. 횟수 걱정 없는 연습은 Advanced 요금제로 제공할 예정이며, 내용은 출시 전 바뀔 수 있습니다.',
+        status: '지금은 알고리즘 문제를 Python으로 로그인 후 횟수 제한 없이 풀 수 있습니다(공개 예제 실행 · 숨은 테스트까지 채점, Junior·Senior 레벨). SQLD 유형 SQL 문제(제1·2과목 4지선다)도 풀 수 있습니다. C언어는 준비 중이며, 내용은 출시 전 바뀔 수 있습니다.',
         sections: [
           { h: '할 수 있는 것', cards: [
             { h: '언어 선택', p: 'Python · C · SQL 중에서 골라 같은 유형의 문제를 언어별로 연습합니다.' },
@@ -31,6 +31,20 @@ const T = {
           ] },
         ],
         ctas: [{ label: '요금제 보기', href: '#/pricing', primary: true }, { label: '채용 공고 둘러보기', href: '/applicant/#/jobs' }],
+        // 첫 화면 바로가기 버튼 → 미니 창(알고리즘 / SQL). 2026-11-06 사용자 지시
+        launch: {
+          label: 'headhunterAI 코딩테스트 연습 바로가기',
+          title: '어떤 문제를 연습할까요?',
+          close: '닫기',
+          tracks: [
+            { key: 'algo', btn: '알고리즘 문제 시작하기', href: '/applicant/#/practice/coding/junior',
+              desc: 'Python · C언어로 푸는 알고리즘 문제입니다. 지금은 Python만 지원하고 C언어는 준비 중입니다.',
+              who: '백엔드 개발자, 소프트웨어 개발자, AI/AX 엔지니어에게 유용해요.' },
+            { key: 'sql', btn: 'SQL 문제 시작하기', href: '/applicant/#/practice/sql',
+              desc: 'SQLD 시험 유형(제1과목 데이터 모델링 · 제2과목 SQL 기본과 활용)의 4지선다 문제입니다. SQL 결과는 실제로 실행해 계산했습니다.',
+              who: '데이터 분석가, 데이터 사이언티스트에게 유용해요.' },
+          ],
+        },
       },
       'career-consulting': {
         title: ['headhunter 취업 컨설팅', '내 면접을 숫자로 보고, 다음을 준비'],
@@ -95,7 +109,7 @@ const T = {
     },
     statusH: '지금 제공 범위',
     aboutTitle: ['면접의 첫 단계를', '더 투명하게'],
-    aboutLead: 'headhunterAI는 1차 면접을 AI로 진행하되, 판단 과정을 지원자와 기업이 모두 이해할 수 있게 만드는 서비스입니다.',
+    aboutLead: 'headhunterAI는 1차 면접을 AI로 진행하되, 판단 과정을 지원자와 기업이 모두 이해할 수 있게 만드는 서비스입니다. 중소·중견 기업 그룹, 스타트업 창업자, 인원이 적은 HR팀이 headhunterAI로 초기 지원자 선별의 힘든 일을 덜어 냅니다.',
     aboutWhyH: '만든 이유',
     aboutWhy: '1차 면접은 지원자가 많을수록 기준이 흔들리기 쉽고, 지원자는 왜 떨어졌는지 알기 어렵습니다. 같은 구조의 질문, 답변에 근거한 평가, 정해진 규칙에 따른 판정으로 이 단계를 정리하고자 합니다.',
     aboutPrinciplesH: '일하는 방식',
@@ -141,7 +155,7 @@ const T = {
       'coding-practice': {
         title: ['Unlimited Coding Practice', 'As much as you want, in your language'],
         lead: 'Practise IT coding problems again and again — no job post needed. Pick a language, run your code right away, and get graded the same way as a real coding test.',
-        status: 'Coming soon. Practice without usage worries is planned for the Advanced plan and may change before launch.',
+        status: 'Algorithm problems in Python are available now after sign-in, with no limit on runs (public examples, then hidden tests on submit; Junior and Senior levels). SQLD-style SQL problems (Parts 1 and 2, multiple choice) are available too. C is coming, and details may change before launch.',
         sections: [
           { h: 'What you can do', cards: [
             { h: 'Choose a language', p: 'Practise the same problem types in Python, C or SQL.' },
@@ -157,6 +171,19 @@ const T = {
           ] },
         ],
         ctas: [{ label: 'See pricing', href: '#/pricing', primary: true }, { label: 'Browse open roles', href: '/applicant/#/jobs' }],
+        launch: {
+          label: 'Go to headhunterAI coding test practice',
+          title: 'What would you like to practise?',
+          close: 'Close',
+          tracks: [
+            { key: 'algo', btn: 'Start algorithm problems', href: '/applicant/#/practice/coding/junior',
+              desc: 'Algorithm problems in Python and C. Python is available now; C is coming soon.',
+              who: 'Useful for backend developers, software engineers and AI/AX engineers.' },
+            { key: 'sql', btn: 'Start SQL problems', href: '/applicant/#/practice/sql',
+              desc: 'Multiple-choice problems in the SQLD exam format (Part 1 data modeling, Part 2 SQL basics and usage). SQL results are computed by actually running the queries.',
+              who: 'Useful for data analysts and data scientists.' },
+          ],
+        },
       },
       'career-consulting': {
         title: ['headhunter Career Consulting', 'See your interview in numbers, prepare the next one'],
@@ -221,7 +248,7 @@ const T = {
     },
     statusH: 'Available today',
     aboutTitle: ['Making the first interview', 'more transparent'],
-    aboutLead: 'headhunterAI runs first-round interviews with AI while keeping the reasoning understandable for both applicants and companies.',
+    aboutLead: 'headhunterAI runs first-round interviews with AI while keeping the reasoning understandable for both applicants and companies. Small and mid-sized corporate groups, startup founders, and lean HR teams use headhunterAI to handle the heavy lifting of early-stage applicant screening.',
     aboutWhyH: 'Why we built it',
     aboutWhy: 'With many applicants, first-round standards drift, and applicants rarely learn why they were turned down. We structure this step with the same question format, evaluation grounded in answers, and decisions made by fixed rules.',
     aboutPrinciplesH: 'How we work',
@@ -325,6 +352,7 @@ function service(id) {
   if (!S) return home();
   return `<div class="wrap">${head(S.title, S.lead)}
     ${S.status ? `<p class="note" style="margin:-16px 0 8px">${esc(S.status)}</p>` : ''}
+    ${S.launch ? `<div class="row" style="justify-content:center;margin:20px 0 8px"><button type="button" class="btn lg launch-btn" id="launch-practice">${esc(S.launch.label)}</button></div>` : ''}
     ${S.sections.map(sec => `<section class="sec"><h2>${esc(sec.h)}</h2>${cards(sec.cards)}</section>`).join('')}
     <div class="row" style="justify-content:center;margin:28px 0 8px">${S.ctas.map(c => `<a class="btn lg${c.primary ? ' primary' : ''}" href="${c.href}">${esc(c.label)}</a>`).join('')}</div>
   </div>`;
@@ -380,6 +408,23 @@ let lastHash = null;
 
 document.querySelector('.lang').addEventListener('click', e => { const b = e.target.closest('[data-lang]'); if (b) setLang(b.dataset.lang); });
 view.addEventListener('click', e => { const b = e.target.closest('[data-aud]'); if (b) { audience = b.dataset.aud; render(); } });
+// 코딩테스트 연습 바로가기 → 미니 창: 알고리즘(Python·C) / SQL (2026-11-06 사용자 지시)
+view.addEventListener('click', e => {
+  if (!e.target.closest('#launch-practice')) return;
+  const Lx = t().services['coding-practice'].launch;
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal launch-modal" role="dialog" aria-modal="true" aria-label="${esc(Lx.title)}">
+    <h2>${esc(Lx.title)}</h2>
+    ${Lx.tracks.map(tr => `<div class="launch-track">
+      <a class="btn lg${tr.key === 'algo' ? ' primary' : ''}" href="${tr.href}">${esc(tr.btn)}</a>
+      <p class="small">${esc(tr.desc)}</p><p class="small launch-who">${esc(tr.who)}</p></div>`).join('')}
+    <div class="row" style="justify-content:flex-end"><button type="button" class="btn sm ghost" data-close>${esc(Lx.close)}</button></div></div>`;
+  const close = () => bg.remove();
+  bg.addEventListener('click', ev => { if (ev.target === bg || ev.target.closest('[data-close]')) close(); });
+  document.addEventListener('keydown', function esc1(ev) { if (ev.key === 'Escape') { close(); document.removeEventListener('keydown', esc1); } });
+  document.body.appendChild(bg);
+});
 window.addEventListener('hashchange', render);
 // Features: 마우스를 올리면(데스크톱) 또는 누르면(모바일·터치) 드롭다운이 열린다. 누르기만으로는 페이지를 바꾸지 않는다
 const dd = document.querySelector('.dd');

@@ -75,7 +75,7 @@ CTX_SCHEMA = {"type": "object", "properties": {"question": {"type": "string"},
 def contextualize(q, job, intent=""):
     """질문 은행 문항을 {회사}가 직접 출제한 것처럼 다시 쓴다. 회사 정보에 없는 사실·차단 목록·과도한 길이면 원문 유지."""
     info = " ".join([job.get("company_intro") or "", job.get("duties") or "", job.get("requirements") or ""])
-    system = prompts.load("question_generator", company_name=job.get("company_name") or "우리 회사", role_name=job.get("role_name") or "",
+    system = prompts.load("generate/question_generator", company_name=job.get("company_name") or "우리 회사", role_name=job.get("role_name") or "",
                           company_intro=(job.get("company_intro") or "")[:400], duties=(job.get("duties") or "")[:400],
                           requirements=(job.get("requirements") or "")[:300], intent=intent or "원래 질문과 같음", seconds=config.QUESTION_SECONDS)
     try:

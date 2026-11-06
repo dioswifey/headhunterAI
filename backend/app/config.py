@@ -30,6 +30,30 @@ LLM_MODEL = os.getenv("LLM_MODEL", "qwen3:4b")
 LLM_TIMEOUT = _int("LLM_TIMEOUT", 120)
 FOLLOWUP_TIMEOUT = float(os.getenv("FOLLOWUP_TIMEOUT", "5"))  # INT-06: 5초 안에 판단 못 하면 생략
 
+# 질문 은행 벡터 저장소 (Redis 8 Query Engine). 임베딩은 로컬 Ollama 모델만 사용
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+EMBED_BASE_URL = os.getenv("EMBED_BASE_URL", LLM_BASE_URL)
+EMBED_MODEL = os.getenv("EMBED_MODEL", "qwen3-embedding:0.6b")
+EMBED_DIM = _int("EMBED_DIM", 1024)
+QUESTIONBANK_DIR = os.getenv("QUESTIONBANK_DIR", "/questionbank")
+# 질문 은행 번역 에이전트 모델(영↔한). 비우면 LLM_MODEL과 같다
+TRANSLATE_MODEL = os.getenv("TRANSLATE_MODEL", "") or LLM_MODEL
+CODING_GEN_MODEL = os.getenv("CODING_GEN_MODEL", "qwen3:8b")   # 코딩 문제 생성·검토(오프라인, 사용자 지시 2026-11-05)
+# 코딩 문제은행 **생성만** 외부 API(사용자 결정 2026-11-05). openai | ollama. 검토·조회·채점·다른 기능은 로컬 Qwen
+CODING_GEN_PROVIDER = os.getenv("CODING_GEN_PROVIDER", "openai")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+OPENAI_MODEL = (os.getenv("OPENAI_MODEL", "") or "gpt-4.1-mini").strip()   # .env의 앞뒤 공백 제거
+OPENAI_SEND_TEMPERATURE = os.getenv("OPENAI_SEND_TEMPERATURE", "1") == "1"   # 추론 모델은 temperature를 받지 않으면 0으로
+OPENAI_PRICE_IN_PER_M = float(os.getenv("OPENAI_PRICE_IN_PER_M", "0") or 0)    # 비용 계산용(USD/100만 토큰), 사용자가 요금표로 넣음
+OPENAI_PRICE_OUT_PER_M = float(os.getenv("OPENAI_PRICE_OUT_PER_M", "0") or 0)
+# SQL 문제은행(2026-11-06): 실행 검증용 격리 DB(backend/db/sqlbank_init.sql) · 생성 모델(비우면 OPENAI_MODEL)
+SQLBANK_URL = os.getenv("SQLBANK_URL", "postgresql://sqlbank_exec:sqlbank_exec@localhost:5432/sqlbank")
+SQL_GEN_MODEL = os.getenv("SQL_GEN_MODEL", "").strip()
+# 네이버 검색 API(공식, developers.naver.com) — SQLD 유형 통계용. 제목·요약만 읽고 원문은 저장하지 않는다
+NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID", "").strip()
+NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET", "").strip()
+
 # LangSmith 추적 (TRD v0.2 §13.4) — 개발 환경 + 시드·가상 데이터 전용. 운영(DEV_MODE=0)이나 키가 없으면 강제로 끈다.
 LANGSMITH_TRACING = DEV_MODE and bool(os.getenv("LANGSMITH_API_KEY")) and os.getenv("LANGSMITH_TRACING", "false").lower() == "true"
 os.environ["LANGSMITH_TRACING"] = "true" if LANGSMITH_TRACING else "false"
@@ -51,6 +75,31 @@ os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 REPORT_WRITER = os.getenv("REPORT_WRITER", "crewai")  # crewai | template
 
+# 음성 서비스 (v0.9, TRD v0.6 15장) — Qwen3-ASR(STT)·Qwen3-TTS(TTS) 로컬 모델 컨테이너(backend/speech).
+# 비어 있거나 응답이 없으면 STT는 비상 입력란, TTS는 브라우저 내장 음성으로 대체(INT-01)
+SPEECH_URL = os.getenv("SPEECH_URL", "").rstrip("/")
+SPEECH_TOKEN = os.getenv("SPEECH_TOKEN", "")
+STT_TIMEOUT = float(os.getenv("STT_TIMEOUT", "60"))
+TTS_TIMEOUT = float(os.getenv("TTS_TIMEOUT", "90"))
+TTS_DIR = os.getenv("TTS_DIR", "/data/tts")      # 질문 음성 캐시(질문 문장 해시 → wav). 개인정보 아님(질문 문장만)
+
+# 결제 (v0.9, PRD PAY-07~12, TRD v0.6 14장) — 네이버페이 자동결제. 금액은 이 요금표에서만 정한다
+NAVERPAY_CLIENT_ID = os.getenv("NAVERPAY_CLIENT_ID", "").strip()
+NAVERPAY_CLIENT_SECRET = os.getenv("NAVERPAY_CLIENT_SECRET", "").strip()
+NAVERPAY_CHAIN_ID = os.getenv("NAVERPAY_CHAIN_ID", "").strip()
+# off | test(네이버페이 개발 서버) | live(운영 서버) | mock(가짜 결제, 로컬 개발 전용). 비우면 키가 있을 때 test, 없으면 off
+_pm = os.getenv("PAYMENTS_MODE", "").strip().lower()
+if not _pm:
+    _pm = "test" if (NAVERPAY_CLIENT_ID and NAVERPAY_CLIENT_SECRET and NAVERPAY_CHAIN_ID) else "off"
+if _pm == "mock" and (os.getenv("RAILWAY_ENVIRONMENT") or not DEV_MODE):
+    _pm = "off"   # 가짜 결제는 배포본에서 절대 켜지지 않는다(무료로 Advanced가 되는 것을 막음)
+PAYMENTS_MODE = _pm
+PLANS = {   # PRD PAY-01: 표시 가격 = 결제 금액(부가세 포함 여부 미결 → 표시 가격 그대로 과세 금액으로 보냄)
+    "applicant_advanced": {"owner_type": "user", "amount": 9900, "name": "headhunterAI Advanced (지원자, 월간)"},
+    "company_advanced": {"owner_type": "company", "amount": 89900, "name": "headhunterAI Advanced (기업, 월간)"},
+}
+RENEW_RETRY_DAYS = 3
+
 OCR_LANG = os.getenv("OCR_LANG", "kor+eng")
 UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/data/uploads")
 SANDBOX_DIR = os.getenv("SANDBOX_DIR", "/sandbox")
@@ -64,4 +113,4 @@ FOLLOWUP_SECONDS = 60
 MAX_FOLLOWUPS = 4
 CONSENT_VERSION = "2026-10-28.v1"
 
-VERSIONS = {"prompt": "p-2026.10.28", "rubric": "r-1.0", "ocr": "tesseract-5 " + OCR_LANG}
+VERSIONS = {"prompt": "p-2026.11.05b", "rubric": "r-1.0", "ocr": "tesseract-5 " + OCR_LANG}

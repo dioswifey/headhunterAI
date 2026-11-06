@@ -192,6 +192,7 @@ CREATE TABLE attempt_questions (
   time_limit      INT NOT NULL DEFAULT 90,
   answer_text     TEXT,
   answer_status   TEXT NOT NULL DEFAULT 'pending' CHECK (answer_status IN ('pending','answered','no_answer')),
+  answer_source   TEXT CHECK (answer_source IN ('voice','typed','voice+typed')),  -- v0.9: STT(Qwen3-ASR)·비상 입력란 구분, 음성 파일은 저장 안 함
   answered_at     TIMESTAMPTZ,
   prescore        JSONB,
   UNIQUE (attempt_id, seq, parent_id)
@@ -218,6 +219,83 @@ CREATE TABLE coding_submissions (
   total         INT,
   paste_blocked INT NOT NULL DEFAULT 0,
   UNIQUE (attempt_id, problem_id)
+);
+
+-- 코딩 문제 수집 에이전트(agents/coding_problem_agent.py)가 모은 원본 문제. 지원자 화면에는 안 나감.
+-- 재사용 권한 확인(license_status='approved') + 품질 ready + 함수형 Python인 문제만 publish가 coding_problems로 복사
+CREATE TABLE collected_problems (
+  id                   SERIAL PRIMARY KEY,
+  source               TEXT NOT NULL,                 -- 사이트 어댑터 이름: programmers | leetcode
+  source_id            TEXT NOT NULL,
+  source_url           TEXT NOT NULL,
+  title                TEXT NOT NULL,
+  statement            TEXT NOT NULL DEFAULT '',
+  difficulty           TEXT NOT NULL DEFAULT '',      -- 원본 표기 (Lv.1, Easy …)
+  level                TEXT CHECK (level IN ('basic','applied')),
+  category             TEXT NOT NULL DEFAULT '',
+  kind                 TEXT NOT NULL CHECK (kind IN ('python_func','sql','other')),
+  languages            TEXT[] NOT NULL DEFAULT '{}',
+  func_name            TEXT,
+  params               TEXT[] NOT NULL DEFAULT '{}',
+  starter              TEXT NOT NULL DEFAULT '',
+  examples             JSONB NOT NULL DEFAULT '[]',   -- [{args, expected, public}] (공개 예제만)
+  quality              TEXT NOT NULL CHECK (quality IN ('ready','needs_review')),
+  issues               TEXT[] NOT NULL DEFAULT '{}',
+  content_hash         TEXT NOT NULL,
+  license_status       TEXT NOT NULL DEFAULT 'unverified' CHECK (license_status IN ('unverified','approved','rejected')),
+  published_problem_id INT REFERENCES coding_problems(id),
+  collected_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (source, source_id)
+);
+
+-- 코딩 문제 생성 에이전트(agents/coding_generator_agent.py, ADLC v0.4 6.11)가 새로 만든 문제. 검증 ①정확성 ②모호함·난이도 ③중복·유사도를
+-- 모두 통과한 것만 저장. solution·brute·gen_large는 지원자에게 보이지 않는다. 게시되면 coding_problems로 복사
+CREATE TABLE generated_problems (
+  id                   SERIAL PRIMARY KEY,
+  origin               TEXT NOT NULL DEFAULT 'self_generated',   -- 자체 생성(외부 수집 문제는 collected_problems)
+  quality_status       TEXT NOT NULL DEFAULT 'verified' CHECK (quality_status IN ('verified','on_hold','rejected')),  -- 자체 문제 품질(외부 문제의 license_status와 별개)
+  concept              TEXT NOT NULL,                 -- topic
+  level                TEXT NOT NULL CHECK (level IN ('basic','applied')),   -- difficulty
+  learning_objective   TEXT NOT NULL DEFAULT '',
+  target_complexity    TEXT NOT NULL DEFAULT '',
+  spec                 JSONB NOT NULL,                -- 출제 명세 전체
+  title                TEXT NOT NULL,
+  statement            TEXT NOT NULL,
+  io_spec              TEXT NOT NULL DEFAULT '',
+  constraints          TEXT[] NOT NULL DEFAULT '{}',
+  examples             JSONB NOT NULL DEFAULT '[]',   -- [{input, expected, explanation}] expected = 실행기가 기준 풀이로 계산
+  public_statement     TEXT NOT NULL,                 -- 화면용: 설명 + 입출력 규격 + 제한 사항 + 예시 설명
+  func_name            TEXT NOT NULL,
+  params               TEXT[] NOT NULL DEFAULT '{}',
+  starter              TEXT NOT NULL,
+  solution             TEXT NOT NULL,                 -- 기준 정답 코드(비공개)
+  solution_explanation TEXT NOT NULL DEFAULT '',
+  time_complexity      TEXT NOT NULL DEFAULT '',
+  space_complexity     TEXT NOT NULL DEFAULT '',
+  brute                TEXT NOT NULL,                 -- 단순 풀이(비공개)
+  validator            TEXT NOT NULL DEFAULT '',      -- 제약 조건 검사 함수
+  gen_examples         TEXT NOT NULL DEFAULT '',
+  gen_edge             TEXT NOT NULL DEFAULT '',
+  gen_random           TEXT NOT NULL DEFAULT '',
+  gen_large            TEXT NOT NULL,
+  wrong_solutions      JSONB NOT NULL DEFAULT '[]',   -- 테스트가 잡아내야 하는 틀린 풀이
+  tests                JSONB NOT NULL,                -- [{args, expected, public}] 예시 3개 공개, 경계·무작위는 비공개
+  checks               JSONB NOT NULL DEFAULT '{}',
+  status               TEXT NOT NULL CHECK (status IN ('pending_review','approved','rejected','on_hold')),  -- 게시 흐름
+  review_mode          TEXT NOT NULL CHECK (review_mode IN ('auto','manual')),
+  published_problem_id INT REFERENCES coding_problems(id),
+  generation_log       JSONB NOT NULL DEFAULT '[]',   -- 생성·수정·예시 설명 이력
+  verification_log     JSONB NOT NULL DEFAULT '[]',   -- 검증 V1~V11 결과
+  verification_summary JSONB NOT NULL DEFAULT '{}',
+  history              JSONB NOT NULL DEFAULT '[]',   -- 전체 이력(두 로그를 합친 것)
+  license              TEXT NOT NULL,
+  references_used      TEXT[] NOT NULL DEFAULT '{}',
+  model                TEXT,
+  prompt_version       TEXT,
+  content_hash         TEXT NOT NULL,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- 장애·이탈·응시 이벤트 (RES-06, CHT-05)
@@ -304,6 +382,77 @@ CREATE TABLE email_logs (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- SQL 문제은행(2026-11-06): SQLD 유형 객관식. 자체 생성(OpenAI) + 실행 검증(격리 DB sqlbank) + 로컬 Qwen 풀이 대조.
+-- 수집한 외부 문제 문장은 쓰지 않는다(유형 통계만, agents/sql_scope.py)
+CREATE TABLE sql_problems (
+  id                   SERIAL PRIMARY KEY,
+  origin               TEXT NOT NULL DEFAULT 'self_generated',
+  quality_status       TEXT NOT NULL DEFAULT 'verified' CHECK (quality_status IN ('verified','on_hold','rejected')),
+  status               TEXT NOT NULL DEFAULT 'published' CHECK (status IN ('published','on_hold','rejected')),
+  subject              INT NOT NULL CHECK (subject IN (1,2)),          -- 1 데이터 모델링의 이해 · 2 SQL 기본과 활용
+  area                 TEXT NOT NULL,                                  -- 주요항목
+  item                 TEXT NOT NULL,                                  -- 세부항목
+  kind                 TEXT NOT NULL CHECK (kind IN ('concept','result','sql_pick')),
+  title                TEXT NOT NULL,
+  stem                 TEXT NOT NULL,                                  -- 문제 문장
+  setup_sql            TEXT NOT NULL DEFAULT '',                       -- 표 만들기(화면에는 tables로 보여 줌)
+  query_sql            TEXT NOT NULL DEFAULT '',                       -- 문제에 보여 주는 SQL(result)
+  tables               JSONB NOT NULL DEFAULT '{}',                    -- 실행기가 만든 표 스냅샷 {이름: {columns, rows}}
+  choices              JSONB NOT NULL,                                 -- [{type: text|table|sql, ...}] 4개
+  answer               INT NOT NULL CHECK (answer BETWEEN 1 AND 4),
+  explanation          TEXT NOT NULL,
+  hidden               JSONB NOT NULL DEFAULT '{}',                    -- 정답 계산용(기준 SQL·오답 SQL), 화면에 내보내지 않음
+  generation_model     TEXT,
+  prompt_version       TEXT,
+  generation_log       JSONB NOT NULL DEFAULT '[]',
+  verification_log     JSONB NOT NULL DEFAULT '[]',
+  usage                JSONB NOT NULL DEFAULT '{}',
+  elapsed_sec          INT,
+  created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 결제 (v0.9, PRD PAY-07~12, TRD v0.6 14장): 네이버페이 자동결제. 카드·계좌 번호와 결제 수단 원문은 저장하지 않는다
+CREATE TABLE subscriptions (
+  id                  SERIAL PRIMARY KEY,
+  owner_type          TEXT NOT NULL CHECK (owner_type IN ('user','company')),
+  owner_id            INT NOT NULL,
+  plan_code           TEXT NOT NULL,                              -- config.PLANS 키
+  amount              INT NOT NULL,                               -- 등록 시점 서버 요금표 금액(원)
+  provider            TEXT NOT NULL DEFAULT 'naverpay' CHECK (provider IN ('naverpay','toss','mock')),
+  status              TEXT NOT NULL DEFAULT 'pending'
+                      CHECK (status IN ('pending','active','canceled','past_due','expired','failed')),
+  reg_state           TEXT,                                       -- 등록창 왕복 검증용 무작위 값(1회용)
+  recurrent_id        TEXT,                                       -- 네이버페이 자동결제 등록 번호(결제 수단 원문 아님)
+  current_period_end  TIMESTAMPTZ,                                -- 이 시각까지 Advanced
+  next_charge_at      TIMESTAMPTZ,
+  retry_count         INT NOT NULL DEFAULT 0,
+  created_by          INT REFERENCES users(id),
+  canceled_at         TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX subscriptions_one_live ON subscriptions (owner_type, owner_id) WHERE status IN ('active','canceled','past_due');
+
+CREATE TABLE payments (
+  id                  SERIAL PRIMARY KEY,
+  subscription_id     INT NOT NULL REFERENCES subscriptions(id),
+  merchant_pay_id     TEXT NOT NULL UNIQUE,                       -- 우리 주문 번호(멱등 키)
+  amount              INT NOT NULL,
+  provider            TEXT NOT NULL,
+  status              TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('ready','paid','failed','canceled')),
+  provider_payment_id TEXT,                                       -- 네이버페이 결제 번호(paymentId)
+  period_start        TIMESTAMPTZ,
+  period_end          TIMESTAMPTZ,
+  fail_code           TEXT,
+  fail_message        TEXT,
+  paid_at             TIMESTAMPTZ,
+  canceled_at         TIMESTAMPTZ,
+  receipt             JSONB NOT NULL DEFAULT '{}',                -- 결제 일시·금액·수단 종류만(카드 번호·계좌 번호 제외)
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ON subscriptions (status, next_charge_at);
+CREATE INDEX ON payments (subscription_id, created_at);
+
 -- 감사·삭제 로그: 원문 없이 식별자·시각·행위만 (6.1, 3년)
 CREATE TABLE audit_logs (
   id           BIGSERIAL PRIMARY KEY,
@@ -322,3 +471,4 @@ CREATE INDEX ON attempt_events (attempt_id, created_at);
 CREATE INDEX ON analysis_jobs (status, next_run_at);
 CREATE INDEX ON question_bank (category, use_count);
 CREATE INDEX ON email_logs (attempt_id, created_at);
+CREATE INDEX ON sql_problems (status, subject, item);

@@ -1,0 +1,414 @@
+"""QA 에이전트의 컨테이너 안 검사 모음 — `tools/qa_agent.py`가 api 컨테이너에 복사해 실행한다(직접 실행해도 됨).
+
+    docker cp tools/qa_checks.py AI-Interview-project-api:/srv/qa_checks.py
+    docker exec -w /srv AI-Interview-project-api python qa_checks.py [TC ID …]
+
+한 줄에 하나씩 JSON 결과: {"id", "status": 통과|실패|보류, "actual", "ms"}.
+외부 AI API(OpenAI)는 부르지 않는다(생성 품질 지표는 DB에 저장된 결과로 계산). 로컬 모델 호출도 하지 않는다.
+테스트가 남기는 데이터(조회 인원 키 등)는 끝에서 지운다.
+"""
+import json
+import sys
+import time
+import traceback
+
+import httpx
+
+from app import db
+
+db.pool.open()
+BASE = "http://localhost:8000"
+CHECKS = {}
+
+
+def check(tc):
+    def deco(fn):
+        CHECKS[tc] = fn
+        return fn
+    return deco
+
+
+# ---------------- 회귀: 기존 단위 테스트 중 순수 함수 ----------------
+@check("UT-03")
+def ut03():
+    from app.evaluation import quote_ok
+    a = "저는 RAG 검색 품질을 먼저 측정했습니다. 그다음 프롬프트를 고쳤습니다."
+    r = (quote_ok("RAG 검색 품질을   먼저 측정했습니다", a), quote_ok("없는 문장입니다", a), quote_ok("저는", a))
+    return r == (True, False, False), f"공백 차이 인용 {r[0]} / 없는 문장 {r[1]} / 4자 미만 {r[2]}"
+
+
+@check("UT-07")
+def ut07():
+    from app.security import hash_pw, verify_pw
+    h = hash_pw("Test1234!")
+    r = (h.startswith("$argon2"), verify_pw(h, "Test1234!"), verify_pw(h, "test1234!"))
+    return r == (True, True, False), f"argon2 {r[0]} / 같은 값 {r[1]} / 대소문자 다름 {r[2]}"
+
+
+@check("UT-13")
+def ut13():
+    from app.agents.translation_agent import normalize
+    out = normalize({"q": "올바른  chunk 를 검색했지만 RAG 가 무시하면?"}, "ko")["q"]
+    return out == "올바른 chunk를 검색했지만 RAG가 무시하면?", out
+
+
+# ---------------- 코딩 문제은행: 검증 에이전트 A11 (모델 호출 없음) ----------------
+GOOD = {
+    "title": "가장 긴 오름 구간", "func_name": "longest_rise", "params": ["nums"],
+    "statement": "x", "io_spec": "x", "constraints": ["0 <= len(nums) <= 100000", "빈 배열 허용", "중복 허용"],
+    "solution": "def longest_rise(nums):\n    best = cur = 0\n    prev = None\n    for v in nums:\n        cur = cur + 1 if prev is not None and v > prev else 1\n        best = max(best, cur)\n        prev = v\n    return best\n",
+    "brute": "def longest_rise(nums):\n    n = len(nums)\n    best = 0\n    for i in range(n):\n        for j in range(i, n):\n            if all(nums[k] < nums[k + 1] for k in range(i, j)):\n                best = max(best, j - i + 1)\n    return best\n",
+    "validator": "def validate(nums):\n    return isinstance(nums, list) and len(nums) <= 100000 and all(isinstance(v, int) and -10**9 <= v <= 10**9 for v in nums)\n",
+    "gen_examples": "def gen_examples():\n    return [[[1, 2, 3, 1, 2]], [[5, 4, 3]], [[1, 3, 5, 7, 2, 4, 6, 8, 10]]]\n",
+    "gen_edge": "def gen_edge():\n    return [[[]], [[7]], [[2, 2, 2]], [[1, 2]], [[2, 1]], [[-1000000000, 1000000000]]]\n",
+    "gen_random": "import random\ndef gen_random(seed):\n    rng = random.Random(seed)\n    return [[rng.randint(-3, 3) for _ in range(rng.randint(0, 8))]]\n",
+    "gen_large": "import random\ndef gen_large(seed):\n    rng = random.Random(seed)\n    return [[rng.randint(-10**9, 10**9) for _ in range(100000)]]\n",
+    "wrong_solutions": [
+        "# 버그: 같은 값도 오름으로 셈\ndef longest_rise(nums):\n    best = cur = 0\n    prev = None\n    for v in nums:\n        cur = cur + 1 if prev is not None and v >= prev else 1\n        best = max(best, cur)\n        prev = v\n    return best\n",
+        "# 버그: 빈 배열에서 1을 반환\ndef longest_rise(nums):\n    best = cur = 1\n    for i in range(1, len(nums)):\n        cur = cur + 1 if nums[i] > nums[i - 1] else 1\n        best = max(best, cur)\n    return best\n"],
+}
+
+
+def _verify(draft):
+    from app.agents import coding_verifier_agent as V
+    x = {"spec": {}, "history": [], "attempt": 1, "draft": json.loads(json.dumps(draft)), "fail": None}
+    x = V.execution_verifier.invoke(x)
+    return x.get("fail")
+
+
+@check("UT-20")
+def ut20():
+    f = _verify(GOOD)
+    return f is None, "정상 초안 V1~V7 통과" if f is None else f"실패: {f}"
+
+
+@check("UT-21")
+def ut21():
+    bad = dict(GOOD, solution="def longest_rise(nums):\n    return len(nums)\n", brute="def longest_rise(nums):\n    return len(nums)\n")
+    f = _verify(bad) or {}
+    return f.get("stage") == "V5_trivial", f"{f.get('stage')}: {str(f.get('reason'))[:90]}"
+
+
+@check("UT-22")
+def ut22():
+    weak = dict(GOOD, gen_edge="def gen_edge():\n    return [[[1, 2, 3]], [[3, 2, 1]], [[1, 3, 2]], [[5, 6]]]\n",
+                gen_random="import random\ndef gen_random(seed):\n    rng = random.Random(seed)\n    return [[rng.randint(0, 9) for _ in range(rng.randint(1, 8))]]\n")
+    f = _verify(weak) or {}
+    return f.get("stage") == "V6_wrong", f"{f.get('stage')}: {str(f.get('reason'))[:90]}"
+
+
+@check("UT-23")
+def ut23():
+    inval = dict(GOOD, gen_random="import random\ndef gen_random(seed):\n    rng = random.Random(seed)\n    return [[rng.randint(-3, 3) for _ in range(rng.randint(0, 8))] + ['x']]\n")
+    f = _verify(inval) or {}
+    return f.get("stage") == "V2_inputs", f"{f.get('stage')}: {str(f.get('reason'))[:90]}"
+
+
+# ---------------- 공고 · 조회 인원 · 범위 필터 · 명세 ----------------
+@check("UT-24")
+def ut24():
+    from app import job_import as J
+    sample = ("[테스트] 백엔드 엔지니어\n테스트 회사입니다.\n근무지: 서울\n\n주요 업무\n- API 개발\n- DB 설계\n\n자격 요건\n• Python 3년\n\n"
+              "우대 사항\n1. Redis 경험\n\n복지\n- 점심")
+    r = J.import_job(sample)["fields"]
+    blocked = 0
+    for u in ("http://127.0.0.1:8000/", "http://10.0.0.5/", "file:///etc/passwd"):
+        try:
+            J.import_job("", u)
+        except ValueError:
+            blocked += 1
+    ok = (r["title"] == "[테스트] 백엔드 엔지니어" and r["location"] == "서울" and r["duties"] == "- API 개발\n- DB 설계"
+          and r["requirements"] == "- Python 3년" and r["preferred"] == "- Redis 경험" and "근무지" not in r["company_intro"] and blocked == 3)
+    return ok, f"칸 분리 {'정상' if ok else r} · 내부·파일 주소 차단 {blocked}/3"
+
+
+@check("UT-25")
+def ut25():
+    from app import presence, vectorstore
+    jid = 999999
+    try:
+        one = presence.beat(jid, "10.250.0.1")
+        for i in range(2, 10):
+            presence.beat(jid, f"10.250.0.{i}")
+        nine = presence.beat(jid, "10.250.0.9")
+        dup = presence.beat(jid, "10.250.0.9")
+        ten = presence.beat(jid, "10.250.0.10")
+    finally:
+        vectorstore.client().delete(presence.KEY.format(jid))
+    ok = (one, nine, dup, ten) == (None, None, None, 10)
+    return ok, f"1명 {one} · 9명 {nine} · 같은 IP 재신호 {dup} · 10명 {ten} (10명 미만 숨김)"
+
+
+@check("UT-26")
+def ut26():
+    from app.agents.coding_specs import framework_specs
+    sp = framework_specs(10, seed=11)
+    jr = sum(s["difficulty"] == "basic" for s in sp)
+    st = json.load(open("/questionbank/coding_taxonomy/programmers_taxonomy.json", encoding="utf-8"))
+    fams = {k for k, v in st["structure_families"].items() if v >= 10 and k != "예제 없음"}
+    ok = len(sp) == 10 and jr == 6 and all(s["structure"] in fams for s in sp)
+    return ok, f"명세 {len(sp)}개 · Junior {jr} / Senior {10 - jr} · 구조 모두 10회 이상 나온 구조 {all(s['structure'] in fams for s in sp)}"
+
+
+@check("UT-27")
+def ut27():
+    from app.agents.translation_agent import scope
+    a = scope({"question": "How do you handle Indian languages in an LLM feature?"})
+    b = scope({"question": "How do you debug a slow API endpoint?", "follow_up": "What metric do you check first?"})
+    ok = a["decision"] == "drop" and a["by"] == "rule" and b["decision"] == "keep"
+    return ok, f"다른 나라 언어 질문 {a['decision']}({a['by']}) · 일반 IT 질문 {b['decision']}"
+
+
+@check("UT-30")
+def ut30():
+    from app.agents.coding_quality import eloquence, code_size
+    good, _ = eloquence("정수 배열이 주어집니다. 가장 긴 오름 구간의 길이를 반환하세요. 배열이 비어 있으면 0을 반환합니다.")
+    bad, d = eloquence("당신은 그것은 배열에 대해서 처리하는 것이다. 당신은 결과를 가지고 있는 것을 반환하는 것이다.")
+    cs = code_size("def f(a):\n    for x in a:\n        if x:\n            return x\n    return 0\n")
+    ok = good >= 80 and bad < good and d["translationese"] >= 3 and cs == {"lines": 5, "loops": 1, "branches": 1}
+    return ok, f"자연스러운 문장 {good}점 · 번역투 문장 {bad}점(번역투 {d['translationese']}개) · 코드 규모 {cs}"
+
+
+@check("UT-31")
+def ut31():
+    from app import sqlbank
+    a = sqlbank.run("CREATE TABLE T (A INT); INSERT INTO T VALUES (1),(2);", ["SELECT A FROM T ORDER BY A"])
+    b = sqlbank.run("", ["SELECT pg_read_file('/etc/passwd')"])
+    c = sqlbank.run("", ["COMMIT"])
+    d = sqlbank.run("", ["SELECT count(*) FROM users"])
+    e = sqlbank.run("", ["SELECT count(*) FROM T"])
+    ok = (a["result"] == {"columns": ["A"], "rows": [["1"], ["2"]]} and "허용" in b["error"] and "허용" in c["error"]
+          and "does not exist" in d["error"] and "does not exist" in e["error"])
+    return ok, f"조회 {a['result']} · pg_ 함수 차단 {bool(b['error'])} · COMMIT 차단 {bool(c['error'])} · 앱 표 접근 {d['error'][:30]} · 실행 후 표 남음 {not e['error']}"
+
+
+@check("UT-32")
+def ut32():
+    from collections import Counter
+    from app.agents.sql_scope import items, plan
+    from app.agents.sql_generator_agent import split_sql
+    p = plan(60)
+    c = Counter(s["subject"] for s in p)
+    every = set(it for _, _, it in items()) <= {s["item"] for s in p}
+    parts = split_sql("UPDATE T SET B='a;b' WHERE A=1; SELECT * FROM T ORDER BY A;")
+    ok = c[1] == 12 and c[2] == 48 and every and len(parts) == 2
+    return ok, f"1과목 {c[1]} · 2과목 {c[2]} · 세부항목 모두 포함 {every} · 문장 나누기 {len(parts)}개"
+
+
+# ---------------- 통합 ----------------
+def _login():
+    c = httpx.Client(base_url=BASE, timeout=60)
+    r = c.post("/api/auth/login", json={"email": "applicant@headhunter.ai", "password": "test1234!", "role": "applicant"})
+    if r.status_code != 200:
+        raise RuntimeError(f"테스트 계정 로그인 실패 {r.status_code}")
+    return c
+
+
+@check("IT-23")
+def it23():
+    c = _login()
+    lst = c.get("/api/practice/coding").json()
+    g = db.one("SELECT published_problem_id pid, solution FROM generated_problems WHERE published_problem_id IS NOT NULL ORDER BY id DESC LIMIT 1")
+    v = c.get(f"/api/practice/coding/{g['pid']}").json()
+    run = c.post(f"/api/practice/coding/{g['pid']}/run", json={"code": v["starter"]}).json()
+    ok_sub = c.post(f"/api/practice/coding/{g['pid']}/submit", json={"code": g["solution"]}).json()
+    bad_sub = c.post(f"/api/practice/coding/{g['pid']}/submit", json={"code": v["starter"]}).json()
+    ok = (len(lst) > 0 and run.get("status") == "ok" and ok_sub["passed"] == ok_sub["total"] and bad_sub["passed"] < bad_sub["total"])
+    return ok, (f"목록 {len(lst)}문제 · 문제 {g['pid']} 기준 풀이 제출 {ok_sub['passed']}/{ok_sub['total']}"
+                f"(숨은 {ok_sub['hidden_passed']}/{ok_sub['hidden_total']}) · 시작 코드 제출 {bad_sub['passed']}/{bad_sub['total']}")
+
+
+@check("IT-24")
+def it24():
+    c = _login()
+    lst = c.get("/api/practice/coding").json()
+    jr, sr = sum(p["level"] == "basic" for p in lst), sum(p["level"] == "applied" for p in lst)
+    n = db.one("SELECT count(*) n FROM coding_problems")["n"]
+    return jr + sr == n == len(lst), f"Junior {jr} + Senior {sr} = {jr + sr} (게시 문제 {n})"
+
+
+@check("IT-25")
+def it25():
+    jobs = httpx.get(BASE + "/api/jobs", timeout=30).json()
+    exp = {r["id"]: r["n"] for r in db.all_("""SELECT id, (status='published' AND open_date <= (now() AT TIME ZONE 'Asia/Seoul')::date
+                                              AND open_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - 7) n FROM jobs""")}
+    ok = all("is_new" in j and "viewers" in j and j["is_new"] == exp[j["id"]] for j in jobs)
+    small = all(j["viewers"] is None or j["viewers"] >= 10 for j in jobs)
+    return ok and small, f"공고 {len(jobs)}건 is_new 규칙 일치 {ok} · 10명 미만 숫자 노출 없음 {small}"
+
+
+@check("IT-27")
+def it27():
+    r = db.one("""SELECT count(*) n, count(*) FILTER (WHERE license_status<>'unverified') changed,
+                  count(published_problem_id) published FROM collected_problems""")
+    ok = r["published"] == 0 or r["changed"] >= r["published"]
+    return ok, f"수집 {r['n']}문항 · 권한 상태 변경 {r['changed']} · 게시 {r['published']} (승인 없이 게시 0)"
+
+
+@check("IT-28")
+def it28():
+    r = db.one("""SELECT count(*) FILTER (WHERE published_problem_id IS NOT NULL AND quality_status<>'verified') bad,
+                  count(*) FILTER (WHERE quality_status='on_hold' AND published_problem_id IS NOT NULL) held_pub,
+                  count(*) FILTER (WHERE origin<>'self_generated') other,
+                  count(*) FILTER (WHERE published_problem_id IS NOT NULL) pub FROM generated_problems""")
+    ok = r["bad"] == 0 and r["held_pub"] == 0 and r["other"] == 0
+    return ok, f"게시 {r['pub']}건 모두 verified {r['bad'] == 0} · 보류 게시 {r['held_pub']} · origin 이상 {r['other']}"
+
+
+@check("IT-29")
+def it29():
+    c = _login()
+    lst = c.get("/api/practice/sql").json()
+    p = db.one("SELECT id, answer FROM sql_problems WHERE status='published' ORDER BY id LIMIT 1")
+    v = c.get(f"/api/practice/sql/{p['id']}").json()
+    leak = [k for k in ("answer", "hidden", "explanation", "setup_sql") if k in v]
+    right = c.post(f"/api/practice/sql/{p['id']}/answer", json={"choice": p["answer"]}).json()
+    wrong = c.post(f"/api/practice/sql/{p['id']}/answer", json={"choice": p["answer"] % 4 + 1}).json()
+    ok = len(lst) > 0 and not leak and right["correct"] and not wrong["correct"] and bool(right["explanation"])
+    return ok, f"목록 {len(lst)}문제 · 문제 응답 노출 {leak or '없음'} · 정답 {right['correct']} · 오답 {wrong['correct']}"
+
+
+@check("IT-30")
+def it30():
+    from app import sqlbank
+    from app.agents.sql_generator_agent import split_sql
+    rows = db.all_("SELECT * FROM sql_problems WHERE status='published'")
+    bad = [r["id"] for r in rows if r["quality_status"] != "verified" or len(r["choices"]) != 4 or r["answer"] not in (1, 2, 3, 4)]
+    redo = []
+    for r in rows:
+        if r["kind"] == "result":
+            got = sqlbank.run(r["setup_sql"], split_sql(r["query_sql"]))["result"]
+            want = {k: r["choices"][r["answer"] - 1][k] for k in ("columns", "rows")}
+            if got != want:
+                redo.append(r["id"])
+    held = db.one("SELECT count(*) n FROM sql_problems WHERE status='on_hold'")["n"]
+    return not bad and not redo, f"게시 {len(rows)} · 형식 이상 {bad or 0} · 실행 결과 재계산 불일치 {redo or 0} · 보류 {held}"
+
+
+@check("IT-31")
+def it31():
+    c = httpx.Client(base_url=BASE, timeout=30)
+    r = c.post("/api/auth/login", json={"email": "recruiter@headhunter.ai", "password": "recruiter99!", "role": "recruiter"})
+    if r.status_code != 200:
+        raise RuntimeError(f"담당자 로그인 실패 {r.status_code}")
+    empty = c.post("/api/admin/applicants/delete", json={"ids": []}).status_code
+    none = c.post("/api/admin/applicants/delete", json={"ids": [987654321]}).json()
+    return empty == 400 and none.get("deleted") == 0, f"빈 목록 {empty} · 없는 id 삭제 {none.get('deleted')}건"
+
+
+@check("IT-32")
+def it32():
+    bad = db.all_("""SELECT u.email FROM users u JOIN companies c ON c.id=u.company_id
+                     WHERE u.role='recruiter' AND u.name<>c.name""")
+    demo = db.all_("""SELECT c.name, string_agg(j.role_code, ',' ORDER BY j.role_code) roles FROM companies c
+                      JOIN jobs j ON j.company_id=c.id WHERE c.name LIKE %s GROUP BY c.name""", "헤드헌터랩\\_%")
+    ok_demo = len(demo) == 3 and all(d["roles"] == "ai_ax,backend,data_sci" for d in demo)
+    return not bad and ok_demo, f"이름≠기업명 담당자 {len(bad)} · 테스트 기업 {len(demo)}곳 직무 {[d['roles'] for d in demo]}"
+
+
+@check("IT-33")
+def it33():
+    c = _login()
+    comps = c.get("/api/companies?role=ai_ax").json()
+    exp = {r["id"]: r["n"] for r in db.all_("""SELECT company_id id, count(*) n FROM jobs
+                                              WHERE status IN ('published','closed') GROUP BY company_id""")}
+    counts_ok = len(comps) == len(exp) and all(x["jobs"] == exp[x["id"]] for x in comps)
+    jobs = c.get(f"/api/jobs?company={comps[0]['id']}").json()
+    scoped = all(j["company_id"] == comps[0]["id"] and "role_status" in j for j in jobs)
+    prep = db.one("""SELECT j.id FROM jobs j JOIN job_roles r ON r.code=j.role_code
+                     WHERE r.status='preparing' AND j.status='published' LIMIT 1""")
+    code = c.post("/api/applications", json={"job_id": prep["id"]}).status_code if prep else None
+    return counts_ok and scoped and code == 400, f"기업 {len(comps)}곳 공고 수 일치 {counts_ok} · 기업 필터 {scoped} · 준비 중 직무 지원 {code}"
+
+
+# ---------------- AI 평가: 문제은행 생성 품질 (DB 기록으로 계산, 외부 호출 없음) ----------------
+def _batch():
+    from app import config
+    rows = db.all_("SELECT quality_status, verification_summary s FROM generated_problems WHERE model=%s", config.OPENAI_MODEL)
+    return config.OPENAI_MODEL, rows
+
+
+@check("EV-17")
+def ev17():
+    m, rows = _batch()
+    v = sum(r["quality_status"] == "verified" for r in rows)
+    rate = round(v / len(rows), 3) if rows else None
+    return (rate is not None and rate >= 0.8), {"value": rate, "n": len(rows), "model": m, "note": f"검증 통과 {v}/{len(rows)}"}
+
+
+@check("EV-18")
+def ev18():
+    m, rows = _batch()
+    first = sum(r["quality_status"] == "verified" and (r["s"] or {}).get("attempts") == 1 for r in rows)
+    rate = round(first / len(rows), 3) if rows else None
+    return (rate is not None and rate >= 0.6), {"value": rate, "n": len(rows), "model": m, "note": f"첫 시도 통과 {first}/{len(rows)}"}
+
+
+@check("EV-19")
+def ev19():
+    m, rows = _batch()
+    secs = [(r["s"] or {}).get("elapsed_sec") for r in rows if (r["s"] or {}).get("elapsed_sec")]
+    avg = round(sum(secs) / len(secs), 1) if secs else None
+    return (avg is not None and avg <= 120), {"value": avg, "n": len(secs), "model": m, "note": f"문제당 평균 {avg}초(최대 {max(secs) if secs else '-'}초)"}
+
+
+@check("EV-20")
+def ev20():
+    m, rows = _batch()
+    ok_rows = [r for r in rows if r["quality_status"] == "verified"]
+    tok = sum(((r["s"] or {}).get("cost") or {}).get("prompt_tokens", 0) + ((r["s"] or {}).get("cost") or {}).get("completion_tokens", 0) for r in rows)
+    per = round(tok / len(ok_rows)) if ok_rows else None
+    return (per is not None and per <= 15000), {"value": per, "n": len(ok_rows), "model": m, "note": f"전체 토큰 {tok} ÷ 통과 {len(ok_rows)}"}
+
+
+@check("EV-21")
+def ev21():
+    rows = db.all_("SELECT verification_log v FROM generated_problems WHERE quality_status='verified'")
+    sims = []
+    for r in rows:
+        for h in r["v"]:
+            if h.get("stage") == "V11_similarity" and h.get("ok"):
+                sims.append(h.get("top_collected") or 0)
+    mx = max(sims) if sims else None
+    return (mx is not None and mx < 0.9), {"value": mx, "n": len(sims), "model": "-", "note": "참고 지표(독창성·법적 적합성 확정 아님)"}
+
+
+@check("EV-27")
+def ev27():
+    r = db.one("SELECT count(*) n, count(*) FILTER (WHERE status='published') p FROM sql_problems")
+    rate = round(r["p"] / r["n"], 3) if r["n"] else None
+    return (rate is not None and rate >= 0.8), {"value": rate, "n": r["n"], "model": "SQL_GEN_MODEL", "note": f"게시 {r['p']}/{r['n']}"}
+
+
+@check("EV-28")
+def ev28():
+    rows = db.all_("SELECT answer, verification_log v FROM sql_problems WHERE kind='concept'")
+    tries = hits = 0
+    for r in rows:
+        for h in r["v"]:
+            if h.get("step") == "S6_solve":
+                tries += 1
+        last = [h for h in r["v"] if h.get("step") == "S6_solve"]
+        hits += sum(1 for h in last if h.get("answer") == r["answer"])
+    rate = round(hits / tries, 3) if tries else None
+    return (rate is not None and rate >= 0.8), {"value": rate, "n": tries, "model": "qwen3:8b(로컬)", "note": f"블라인드 풀이 일치 {hits}/{tries}(수정 전 시도 포함)"}
+
+
+def main(ids):
+    for tc in ids or list(CHECKS):
+        fn = CHECKS.get(tc)
+        if not fn:
+            continue
+        t = time.time()
+        try:
+            ok, actual = fn()
+            status = "통과" if ok else "실패"
+        except Exception as e:
+            status, actual = "보류", f"실행 오류: {type(e).__name__}: {str(e)[:150]}"
+            traceback.print_exc(file=sys.stderr)
+        print(json.dumps({"id": tc, "status": status, "actual": actual, "ms": round((time.time() - t) * 1000)},
+                         ensure_ascii=False, default=str), flush=True)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

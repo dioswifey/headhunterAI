@@ -82,7 +82,7 @@ def seed():
     c = db.run("""INSERT INTO companies (name, intro) VALUES (%s,%s) RETURNING id""", "헤드헌터랩",
                "사내 업무를 AI로 자동화하는 AX 솔루션을 만드는 데모 회사입니다. 문서 검색·요약 에이전트와 사내 LLM 플랫폼을 운영합니다.")
     db.run("""INSERT INTO users (role, company_id, email, password_hash, name, phone, email_verified, must_change_password)
-              VALUES ('recruiter',%s,'recruiter@headhunter.ai',%s,'김담당','010-1111-2222',true,true)""", c["id"], pw(config.SEED_RECRUITER_PASSWORD))
+              VALUES ('recruiter',%s,'recruiter@headhunter.ai',%s,%s,'010-1111-2222',true,true)""", c["id"], "헤드헌터랩", pw(config.SEED_RECRUITER_PASSWORD))
     db.run("""INSERT INTO users (role, email, password_hash, name, email_verified)
               VALUES ('operator','ops@headhunter.ai',%s,'운영자',true)""", pw(config.SEED_OPERATOR_PASSWORD))
     db.run("""INSERT INTO users (role, email, password_hash, name, phone, email_verified, age14_confirmed)
@@ -108,3 +108,97 @@ def seed():
     for level, title, stmt, starter, fn, tests in PROBLEMS:
         db.run("INSERT INTO coding_problems (level, title, statement, starter, func_name, tests) VALUES (%s,%s,%s,%s,%s,%s)",
                level, title, stmt, starter, fn, db.J([{"args": a, "expected": e, "public": p} for a, e, p in tests]))
+
+
+# ---------- 개발 테스트용 기업 3곳 · 공고 9개 (2026-11-06 사용자 지시, PRD v0.9 ACC-07·APP-10) ----------
+# 공고 문장은 원티드 공고 구성(회사 소개·주요 업무·자격 요건·우대 사항)을 따라 새로 쓴 가상 공고다.
+# 원티드는 robots.txt부터 403으로 막혀 있어 수집하지 않았고, 실제 회사 문장을 옮기지 않았다.
+# (회사명, 담당자 이메일, 회사 소개, 근무지, [(직무, 제목, 주요 업무, 자격 요건, 우대 사항, 고용 형태, 인원, 시작(오늘-일), 마감(오늘+일), 코딩테스트)])
+DEMO_COMPANIES = [
+    ("헤드헌터랩_서울", "recruiter.seoul@headhunter.ai",
+     "금융·커머스 고객사에 AI 상담·검색 서비스를 공급하는 B2B AI 회사입니다. 고객 상담 기록과 상품 문서를 근거로 답하는 상담 에이전트를 직접 만들고 운영합니다.",
+     "서울 강남구", [
+        ("ai_ax", "LLM 애플리케이션 엔지니어 (AI 상담 에이전트)",
+         "- 고객사 상담 문서 기반 RAG 파이프라인 설계·개발\n- 상담 에이전트 도구 호출·대화 흐름 설계\n- 답변 품질 평가셋 구축과 회귀 평가 자동화\n- 고객사 PoC 기술 지원",
+         "- Python 실무 경험 2년 이상\n- LLM API 또는 오픈소스 LLM으로 서비스를 만들어 본 경험\n- 검색(BM25·벡터 검색) 기본 원리 이해\n- Git 기반 협업 경험",
+         "- LangChain·LangGraph 등 오케스트레이션 도구 사용 경험\n- 금융 도메인 프로젝트 경험\n- 프롬프트·검색 개선을 지표로 검증해 본 경험",
+         "정규직", 2, 2, 21, True),
+        ("backend", "백엔드 개발자 (상담 플랫폼 API)",
+         "- 상담 플랫폼 REST API 설계·개발\n- 고객사 연동(웹훅·SSO) 개발\n- 대화 로그 저장 구조 설계와 성능 개선",
+         "- Python(FastAPI·Django) 또는 Java(Spring) 실무 경험 3년 이상\n- RDBMS 설계와 쿼리 튜닝 경험\n- 테스트 코드 작성 습관",
+         "- 대용량 트래픽 서비스 운영 경험\n- Docker·Kubernetes 운영 경험\n- 메시지 큐(Kafka·RabbitMQ) 사용 경험",
+         "정규직", 1, 5, 25, True),
+        ("data_sci", "데이터 분석가 (상담 품질·지표)",
+         "- 상담 지표(해결률·재문의율) 정의와 대시보드 운영\n- 상담 로그 분석으로 개선 과제 발굴\n- A/B 테스트 설계와 결과 해석",
+         "- SQL로 원하는 데이터를 직접 뽑을 수 있는 분\n- Python(pandas) 분석 경험\n- 통계적 가설 검정 기본 이해",
+         "- 텍스트 데이터 분석 경험\n- BI 도구(Superset·Tableau 등) 사용 경험",
+         "정규직", 1, 8, 14, False),
+     ]),
+    ("헤드헌터랩_경기", "recruiter.gyeonggi@headhunter.ai",
+     "제조 현장의 AX(AI 전환)를 돕는 스마트팩토리 솔루션 회사입니다. 비전 검사와 설비 센서 데이터 분석으로 불량과 설비 정지를 줄입니다.",
+     "경기 성남시 분당구", [
+        ("ai_ax", "AI 엔지니어 (제조 비전 검사)",
+         "- 제품 외관 불량 탐지 모델 개발·개선\n- 학습 데이터 수집·라벨링 기준 정리\n- 엣지 장비 추론 최적화와 현장 배포\n- 현장 담당자와 불량 기준 협의",
+         "- 딥러닝 기반 컴퓨터 비전 프로젝트 경험\n- PyTorch 사용 경험\n- 모델 성능 지표(mAP·재현율)를 근거로 개선해 본 경험",
+         "- ONNX·TensorRT 변환 경험\n- 제조·품질 도메인 경험\n- 적은 불량 데이터 문제를 다뤄 본 경험",
+         "정규직", 2, 1, 28, True),
+        ("backend", "백엔드 개발자 (설비 데이터 수집 플랫폼)",
+         "- 설비 센서 데이터 수집 서버 개발\n- 시계열 데이터 저장·조회 API 개발\n- 현장 장비 연동 프로토콜 대응",
+         "- 백엔드 실무 경험 2년 이상(언어 무관)\n- 리눅스 서버 운영 기본 지식\n- 비동기 처리 이해",
+         "- 시계열 DB(TimescaleDB·InfluxDB) 경험\n- MQTT·OPC UA 경험\n- Go 또는 Rust 경험",
+         "정규직", 1, 3, 20, True),
+        ("data_sci", "데이터 사이언티스트 (설비 예지 보전)",
+         "- 설비 고장 예측 모델 개발\n- 센서 데이터 이상 탐지\n- 분석 결과를 현장 의사결정 보고서로 정리",
+         "- 머신러닝 모델링 경험(분류·회귀·이상 탐지)\n- Python(pandas·scikit-learn) 능숙\n- 시계열 데이터 처리 경험",
+         "- 제조 데이터 분석 경험\n- 통계·산업공학 전공 또는 그에 준하는 지식",
+         "정규직", 1, 10, 10, False),
+     ]),
+    ("헤드헌터랩_인천", "recruiter.incheon@headhunter.ai",
+     "항만·물류 기업의 운영 데이터를 다루는 물류 AI 회사입니다. 물동량 수요 예측과 배차·경로 최적화 서비스를 만듭니다.",
+     "인천 연수구", [
+        ("ai_ax", "AX 엔지니어 (물류 업무 자동화)",
+         "- 물류 운영 문서(선적·통관 서류) 정보 추출 자동화\n- 사내 업무용 LLM 에이전트 개발\n- 자동화 전후 업무 시간 측정과 개선 보고",
+         "- Python 개발 경험\n- LLM 또는 OCR을 업무 자동화에 적용해 본 경험\n- 현업 담당자와 요구사항을 정리해 본 경험",
+         "- 문서 이해 모델(레이아웃·표 추출) 경험\n- 사내 시스템(ERP·WMS) 연동 경험",
+         "정규직", 1, 0, 30, True),
+        ("backend", "백엔드 개발자 (배차·경로 서비스)",
+         "- 배차·경로 최적화 엔진 API 개발\n- 운송사·화주 연동 API 개발\n- 서비스 장애 대응과 모니터링",
+         "- 백엔드 실무 경험 3년 이상\n- PostgreSQL 사용 경험\n- API 설계 원칙 이해",
+         "- 지도·위치 데이터(PostGIS) 경험\n- 최적화 알고리즘 구현 경험\n- 클라우드(AWS·GCP) 운영 경험",
+         "정규직", 2, 6, 18, True),
+        ("data_sci", "데이터 분석가 (물동량 수요 예측)",
+         "- 항만 물동량·주문 데이터 분석\n- 수요 예측 모델 개발과 정확도 관리\n- 운영팀 주간 리포트 작성",
+         "- SQL·Python 데이터 분석 경험\n- 시계열 예측 모델 경험\n- 분석 결과를 비전공자에게 설명해 본 경험",
+         "- 물류·유통 도메인 경험\n- 예측 모델 운영(재학습·모니터링) 경험",
+         "계약직", 1, 4, 12, False),
+     ]),
+]
+
+
+def ensure_demo_companies():
+    """개발 테스트용 기업 3곳을 없으면 넣는다(회사 이름 기준, 이미 있으면 그대로). 개발 모드에서만."""
+    if not config.DEV_MODE:
+        return
+    from datetime import datetime
+    import secrets
+    today = datetime.now(KST).date()
+    for name, email, intro, location, posts in DEMO_COMPANIES:
+        if db.one("SELECT 1 FROM companies WHERE name=%s", name):
+            continue
+        c = db.run("INSERT INTO companies (name, intro) VALUES (%s,%s) RETURNING id", name, intro)
+        if not db.one("SELECT 1 FROM users WHERE email=%s", email):
+            db.run("""INSERT INTO users (role, company_id, email, password_hash, name, email_verified, must_change_password)
+                      VALUES ('recruiter',%s,%s,%s,%s,true,true)""", c["id"], email,
+                   security.hash_pw(config.SEED_RECRUITER_PASSWORD or secrets.token_urlsafe(24)), name)
+        for role, title, duties, req, pref, etype, head, ago, left, coding in posts:
+            j = db.run("""INSERT INTO jobs (company_id, role_code, title, company_intro, duties, requirements, preferred, employment_type,
+                          location, headcount, open_date, close_date, status) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'published') RETURNING id""",
+                       c["id"], role, title, intro, duties, req, pref, etype, location, head,
+                       today - timedelta(days=ago), today + timedelta(days=left))
+            db.run("INSERT INTO eval_criteria (job_id, coding_enabled) VALUES (%s,%s)", j["id"], coding)
+
+
+def sync_recruiter_names():
+    """기업 담당자 계정 이름 = 소속 기업명 (PRD v0.9 ACC-07). 회사 이름이 바뀌어도 맞춰 둔다."""
+    db.run("""UPDATE users u SET name=c.name FROM companies c
+              WHERE u.company_id=c.id AND u.role='recruiter' AND u.name<>c.name""")

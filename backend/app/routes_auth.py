@@ -2,10 +2,10 @@
 import re
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from . import config, db, llm, security
+from . import config, db, llm, presence, security
 
 router = APIRouter(prefix="/api")
 LOGIN_FAIL = "이메일 또는 비밀번호가 올바르지 않습니다."  # 계정 존재 여부를 드러내지 않음 (ACC-05)
@@ -117,24 +117,42 @@ def publish_date(close_date):
     return (close_date + timedelta(days=1)).isoformat()
 
 
+@router.get("/companies")
+def companies(role: str | None = None):
+    """공고를 올린 기업 목록(공개, APP-10): 기업마다 공개 공고 수와 지금 지원할 수 있는 공고 수(운영 중 직무·접수 중)."""
+    return db.all_("""SELECT c.id, c.name, c.intro, MIN(j.location) location,
+                      COUNT(j.id) jobs,
+                      COUNT(j.id) FILTER (WHERE j.status='published' AND r.status='active'
+                                          AND j.close_date >= (now() AT TIME ZONE 'Asia/Seoul')::date) open_jobs,
+                      COUNT(j.id) FILTER (WHERE %s::text IS NOT NULL AND j.role_code=%s) role_jobs
+                      FROM companies c JOIN jobs j ON j.company_id=c.id AND j.status IN ('published','closed')
+                      JOIN job_roles r ON r.code=j.role_code
+                      GROUP BY c.id ORDER BY c.id""", role, role)
+
+
 @router.get("/jobs")
-def jobs(role: str | None = None, q: str | None = None):
-    rows = db.all_("""SELECT j.id, j.title, j.role_code, r.name role_name, c.name company, j.location, j.employment_type,
-                      j.open_date, j.close_date, j.status, ec.coding_enabled
+def jobs(role: str | None = None, q: str | None = None, company: int | None = None):
+    rows = db.all_("""SELECT j.id, j.title, j.role_code, r.name role_name, r.status role_status, c.id company_id, c.name company,
+                      j.location, j.employment_type, j.open_date, j.close_date, j.status, ec.coding_enabled,
+                      (j.status='published' AND j.open_date <= (now() AT TIME ZONE 'Asia/Seoul')::date AND j.open_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - 7) AS is_new
                       FROM jobs j JOIN companies c ON c.id=j.company_id JOIN job_roles r ON r.code=j.role_code
                       JOIN eval_criteria ec ON ec.job_id=j.id
                       WHERE j.status IN ('published','closed')
                         AND (%s::text IS NULL OR j.role_code=%s)
+                        AND (%s::int IS NULL OR j.company_id=%s)
                         AND (%s::text IS NULL OR j.title ILIKE '%%'||%s||'%%' OR c.name ILIKE '%%'||%s||'%%')
-                      ORDER BY j.status='closed', j.close_date""", role, role, q, q, q)
+                      ORDER BY j.status='closed', r.status<>'active', r.sort, j.close_date""", role, role, company, company, q, q, q)
+    live = presence.counts([r["id"] for r in rows if r["status"] == "published"])
     for r in rows:
         r["result_date"] = publish_date(r["close_date"])
+        r["viewers"] = live.get(r["id"])          # 실측 · 표시 기준(10명) 미만이면 None
     return rows
 
 
 @router.get("/jobs/{job_id}")
 def job_detail(job_id: int):
-    j = db.one("""SELECT j.*, c.name company, r.name role_name, ec.coding_enabled FROM jobs j JOIN companies c ON c.id=j.company_id
+    j = db.one("""SELECT j.*, c.name company, r.name role_name, r.status role_status, ec.coding_enabled,
+                  (j.status='published' AND j.open_date <= (now() AT TIME ZONE 'Asia/Seoul')::date AND j.open_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - 7) AS is_new FROM jobs j JOIN companies c ON c.id=j.company_id
                   JOIN job_roles r ON r.code=j.role_code JOIN eval_criteria ec ON ec.job_id=j.id
                   WHERE j.id=%s AND j.status IN ('published','closed')""", job_id)
     if not j:
@@ -142,6 +160,14 @@ def job_detail(job_id: int):
     j["result_date"] = publish_date(j["close_date"])
     j["expected_minutes"] = 25 + (60 if j["coding_enabled"] else 0)
     return j
+
+
+@router.post("/jobs/{job_id}/viewing")
+def job_viewing(job_id: int, request: Request):
+    """공고 상세를 보고 있다는 신호(30초마다). 반환 viewers = 실측 인원, 표시 기준 미만이면 null (presence.py)."""
+    if not db.one("SELECT 1 FROM jobs WHERE id=%s AND status='published'", job_id):
+        return {"viewers": None}
+    return {"viewers": presence.beat(job_id, presence.client_ip(request))}
 
 
 @router.get("/system/health")

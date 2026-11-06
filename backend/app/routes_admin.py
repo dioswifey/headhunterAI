@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import config, db, evaluation, llm, security
+from . import config, db, evaluation, job_import, llm, security
 
 router = APIRouter(prefix="/api/admin")
 ops_router = APIRouter(prefix="/api/ops")
@@ -147,6 +147,20 @@ def draft(body: DraftIn, user=Depends(security.recruiter)):
     return out
 
 
+class ImportIn(BaseModel):
+    text: str = ""
+    url: str = ""
+
+
+@router.post("/jobs/import")
+def import_posting(body: ImportIn, user=Depends(security.recruiter)):
+    """JOB-09 (PRD v0.8): 기존 공고 가져오기 — 붙여넣기 또는 링크. 원문을 칸에 옮겨 담기만 하고 내용을 지어내지 않는다."""
+    try:
+        return job_import.import_job(body.text, body.url)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 class CriteriaIn(BaseModel):
     w_expertise: int
     w_logic: int
@@ -198,6 +212,24 @@ def applicants(job_id: int | None = None, result: str | None = None, status: str
                    AND (%s::text IS NULL OR a.status=%s) ORDER BY e.total_score DESC NULLS LAST, ap.created_at DESC""",
                    user["company_id"], job_id, job_id, result, result, result, status, status)
     return rows
+
+
+class DeleteIn(BaseModel):
+    ids: list[int]
+
+
+@router.post("/applicants/delete")
+def applicants_delete(body: DeleteIn, user=Depends(security.recruiter)):
+    """지원자 목록에서 선택·전체 삭제(2026-11-06 사용자 지시). 우리 회사 공고의 지원 건만 지운다.
+    응시·답변·평가·코딩 제출·메모 등은 ON DELETE CASCADE로 같이 지워진다. 되돌릴 수 없음(화면에서 확인 창)."""
+    ids = sorted({int(i) for i in body.ids})[:1000]
+    if not ids:
+        raise HTTPException(400, "삭제할 지원자를 고르세요.")
+    rows = db.all_("""DELETE FROM applications ap USING jobs j WHERE ap.job_id=j.id AND j.company_id=%s AND ap.id = ANY(%s)
+                      RETURNING ap.id""", user["company_id"], ids)
+    for r in rows:
+        db.audit(user["id"], "application.delete", "application", r["id"])
+    return {"deleted": len(rows)}
 
 
 def _company_application(app_id, user):

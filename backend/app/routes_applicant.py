@@ -5,11 +5,11 @@ import uuid
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from . import coding, config, db, evaluation, llm, ocr, questions, report_mail, scheduler, security
+from . import coding, config, db, evaluation, llm, ocr, questions, report_mail, scheduler, security, speech
 
 router = APIRouter(prefix="/api")
 KST = ZoneInfo("Asia/Seoul")
@@ -290,6 +290,7 @@ def start_attempt(app_id: int, user=Depends(security.applicant)):
         conn.execute("UPDATE applications SET step='started' WHERE id=%s", (app_id,))
         conn.execute("INSERT INTO attempt_events (attempt_id, type, detail) VALUES (%s,'started',%s)",
                      (att["id"], db.J({"pregen": a["pregen_status"]})))
+    speech.prewarm([q["text"] for q in qs])   # v0.9 INT-01: 기본 질문 음성(Qwen3-TTS)을 미리 만든다
     return {"attempt_id": att["id"]}
 
 
@@ -300,7 +301,7 @@ def _current_question(attempt_id):
 
 def _state(att):
     st = {"attempt_id": att["id"], "application_id": att["application_id"], "status": att["status"], "phase": att["phase"], "exit_count": att["exit_count"],
-          "publish_at": att["publish_at"].isoformat() if att["publish_at"] else None}
+          "publish_at": att["publish_at"].isoformat() if att["publish_at"] else None, "stt": speech.enabled()}
     if att["status"] == "interview" or (att["status"] == "interrupted" and att["phase"] == "interview"):
         q = _current_question(att["id"])
         if q:
@@ -370,17 +371,63 @@ class Answer(BaseModel):
     text: str
 
 
-@router.post("/attempts/{attempt_id}/answer")
-def answer(attempt_id: int, body: Answer, user=Depends(security.applicant)):
+def _answer_target(attempt_id, question_id, user):
     att = _own_attempt(attempt_id, user)
     if att["status"] != "interview":
         raise HTTPException(409, "지금은 답변을 제출할 수 없습니다.")
     q = _current_question(attempt_id)
-    if not q or q["id"] != body.question_id:
+    if not q or q["id"] != question_id:
         raise HTTPException(409, "현재 질문이 아닙니다.")
-    text = body.text.strip()
-    db.run("UPDATE attempt_questions SET answer_text=%s, answer_status=%s, answered_at=now() WHERE id=%s",
-           text or None, "answered" if text else "no_answer", q["id"])
+    return att, q
+
+
+@router.post("/attempts/{attempt_id}/answer")
+def answer(attempt_id: int, body: Answer, user=Depends(security.applicant)):
+    att, q = _answer_target(attempt_id, body.question_id, user)
+    return _save_answer(att, q, body.text.strip(), "typed" if body.text.strip() else None, user)
+
+
+@router.post("/attempts/{attempt_id}/answer-audio")
+async def answer_audio(attempt_id: int, question_id: int = Form(...), text: str = Form(""), audio: UploadFile = File(None),
+                       user=Depends(security.applicant)):
+    """v0.9 INT-03: 답변 녹음 → Qwen3-ASR로 글로 바꿔 저장. 음성 파일은 저장하지 않는다.
+    음성 인식이 실패하면 비상 입력란 글만 쓴다(흐름은 멈추지 않음)."""
+    att, q = _answer_target(attempt_id, question_id, user)
+    typed = (text or "").strip()
+    heard, stt_error = "", None
+    if audio is not None:
+        raw = await audio.read(20 * 1024 * 1024 + 1)
+        if raw and len(raw) <= 20 * 1024 * 1024:
+            try:
+                heard = speech.transcribe(raw)
+            except speech.SpeechError as e:
+                stt_error = str(e)[:200]
+        del raw
+    full = "\n".join(x for x in (heard, typed) if x)
+    source = "voice+typed" if (heard and typed) else ("voice" if heard else ("typed" if typed else None))
+    if stt_error:
+        db.run("INSERT INTO attempt_events (attempt_id, type, detail) VALUES (%s,'stt_failed',%s)", attempt_id, db.J({"question_id": q["id"], "error": stt_error}))
+    return _save_answer(att, q, full, source, user)
+
+
+@router.get("/attempts/{attempt_id}/questions/{question_id}/audio")
+def question_audio(attempt_id: int, question_id: int, user=Depends(security.applicant)):
+    """v0.9 INT-01: 질문 음성(Qwen3-TTS, 캐시). 실패하면 503 → 화면이 브라우저 내장 음성으로 읽는다."""
+    _own_attempt(attempt_id, user)
+    q = db.one("SELECT text FROM attempt_questions WHERE id=%s AND attempt_id=%s", question_id, attempt_id)
+    if not q:
+        raise HTTPException(404, "질문을 찾을 수 없습니다.")
+    try:
+        data = speech.synthesize(q["text"])
+    except speech.SpeechError:
+        raise HTTPException(503, "질문 음성을 만들 수 없습니다.")
+    return Response(data, media_type="audio/wav", headers={"cache-control": "private, max-age=3600"})
+
+
+def _save_answer(att, q, text, source, user):
+    attempt_id = att["id"]
+    db.run("UPDATE attempt_questions SET answer_text=%s, answer_status=%s, answer_source=%s, answered_at=now() WHERE id=%s",
+           text or None, "answered" if text else "no_answer", source, q["id"])
     if text:
         fu = _maybe_followup(att, q, text)
         if fu:
@@ -388,6 +435,7 @@ def answer(attempt_id: int, body: Answer, user=Depends(security.applicant)):
                       VALUES (%s,%s,%s,'followup',%s,%s,'llm',%s)""", attempt_id, q["seq"], q["id"], q["eval_items"], fu[0], config.FOLLOWUP_SECONDS)
             db.run("UPDATE attempt_questions SET prescore=%s WHERE id=%s", db.J({"followup_reason": fu[1]}), q["id"])
             db.run("UPDATE attempts SET followups_used=followups_used+1 WHERE id=%s", attempt_id)
+            speech.prewarm([fu[0]])
     if not _current_question(attempt_id):  # 기본 10문항 + 꼬리질문 모두 끝남
         crit = att["criteria_snapshot"]
         if crit["coding_enabled"]:
@@ -489,6 +537,80 @@ def coding_submit(attempt_id: int, user=Depends(security.applicant)):
     db.run("UPDATE coding_submissions SET submitted_at=now() WHERE attempt_id=%s", attempt_id)
     scheduler.finish_attempt(attempt_id, "completed", "coding_submitted")
     return _state(_own_attempt(attempt_id, user))
+
+
+# ---------- 무제한 코딩 연습 (Features '무제한 코딩 연습', 2026-11-05) ----------
+# 공고·응시와 무관. 게시된 문제(coding_problems)만, 횟수 제한 없음, 기록 저장 없음. 비공개 테스트는 통과 수만 알려 준다
+@router.get("/practice/coding")
+def practice_list(user=Depends(security.applicant)):
+    return db.all_("""SELECT p.id, p.title, p.level, (g.id IS NOT NULL) AS generated
+                      FROM coding_problems p LEFT JOIN generated_problems g ON g.published_problem_id=p.id
+                      ORDER BY p.level, p.id""")
+
+
+def _practice_problem(pid):
+    p = db.one("SELECT * FROM coding_problems WHERE id=%s", pid)
+    if not p:
+        raise HTTPException(404, "문제를 찾을 수 없습니다.")
+    return p
+
+
+@router.get("/practice/coding/{pid}")
+def practice_view(pid: int, user=Depends(security.applicant)):
+    p = _practice_problem(pid)
+    return {"id": p["id"], "title": p["title"], "level": p["level"], "statement": p["statement"], "func_name": p["func_name"],
+            "starter": p["starter"], "examples": [{"input": t["args"], "expected": t["expected"]} for t in p["tests"] if t.get("public")]}
+
+
+@router.post("/practice/coding/{pid}/run")
+def practice_run(pid: int, body: Code, user=Depends(security.applicant)):
+    return coding.run_public(_practice_problem(pid), body.code[:20000])
+
+
+@router.post("/practice/coding/{pid}/submit")
+def practice_submit(pid: int, body: Code, user=Depends(security.applicant)):
+    p = _practice_problem(pid)
+    tests = p["tests"]
+    res = coding.sandbox_run(body.code[:20000], p["func_name"], tests, hide_hidden=True)
+    results = res.get("results", [])
+    passed = sum(1 for r in results if r.get("ok"))
+    pub = [{"input": t["args"], "expected": t["expected"], **r} for t, r in zip(tests, results) if t.get("public")]
+    hidden = [r for t, r in zip(tests, results) if not t.get("public")]
+    return {"status": res.get("status"), "stderr": res.get("stderr", ""), "passed": passed, "total": len(tests),
+            "public": pub, "hidden_passed": sum(1 for r in hidden if r.get("ok")), "hidden_total": len(hidden)}
+
+
+# ---------- SQL 연습 (SQLD 유형 4지선다, 2026-11-06) ----------
+# 게시된(sql_problems.status='published') 문제만. 정답·해설은 답을 고른 뒤에만, 기록 저장 없음. 외부 API 호출 없음
+class SqlAnswer(BaseModel):
+    choice: int
+
+
+@router.get("/practice/sql")
+def practice_sql_list(subject: int | None = None, user=Depends(security.applicant)):
+    return db.all_("""SELECT id, subject, area, item, kind, title FROM sql_problems WHERE status='published'
+                      AND (%s::int IS NULL OR subject=%s) ORDER BY subject, area, item, id""", subject, subject)
+
+
+def _sql_problem(pid):
+    p = db.one("SELECT * FROM sql_problems WHERE id=%s AND status='published'", pid)
+    if not p:
+        raise HTTPException(404, "문제를 찾을 수 없습니다.")
+    return p
+
+
+@router.get("/practice/sql/{pid}")
+def practice_sql_view(pid: int, user=Depends(security.applicant)):
+    p = _sql_problem(pid)
+    return {k: p[k] for k in ("id", "subject", "area", "item", "kind", "title", "stem", "tables", "query_sql", "choices")}
+
+
+@router.post("/practice/sql/{pid}/answer")
+def practice_sql_answer(pid: int, body: SqlAnswer, user=Depends(security.applicant)):
+    p = _sql_problem(pid)
+    if body.choice not in (1, 2, 3, 4):
+        raise HTTPException(400, "보기 번호는 1~4입니다.")
+    return {"correct": body.choice == p["answer"], "answer": p["answer"], "explanation": p["explanation"]}
 
 
 # ---------- 결과 (RPT-03~05) ----------

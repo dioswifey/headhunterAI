@@ -6,3 +6,6 @@ __pycache__/
 .env.*
 *.env
 
+
+# QA 에이전트 임시 결과
+tools/.last_ab.json

@@ -37,7 +37,30 @@ function stopMedia() {
 
 function onLeave(fn) { cleanup.push(fn); }
 function go(hash) { location.hash = hash; }
-function setNav(key) { $$('#top nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === key)); }
+function setNav(key) {
+  $$('#top nav a[data-nav]').forEach((a) => a.classList.toggle('on', a.dataset.nav === key));
+  const b = document.getElementById('practice-dd-btn');
+  if (b) b.classList.toggle('on', /^#\/practice\//.test(location.hash));
+}
+
+// 상단 '무제한 코딩 연습' 드롭다운: 클릭으로 열기/닫기, 바깥 클릭·Esc·항목 선택·화면 이동 시 닫힘
+function setPracticeMenu(open) {
+  const dd = document.getElementById('practice-dd');
+  if (!dd) return;
+  dd.classList.toggle('open', open);
+  const b = document.getElementById('practice-dd-btn');
+  b.setAttribute('aria-expanded', String(open));
+  b.querySelector('.caret').textContent = open ? '▴' : '▾';
+}
+(function initPracticeMenu() {
+  const dd = document.getElementById('practice-dd');
+  if (!dd) return;
+  document.getElementById('practice-dd-btn').addEventListener('click', (e) => { e.stopPropagation(); setPracticeMenu(!dd.classList.contains('open')); });
+  dd.querySelectorAll('.nav-dd-item').forEach((a) => a.addEventListener('click', () => setPracticeMenu(false)));
+  document.addEventListener('click', (e) => { if (!dd.contains(e.target)) setPracticeMenu(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && dd.classList.contains('open')) { setPracticeMenu(false); document.getElementById('practice-dd-btn').focus(); } });
+  window.addEventListener('hashchange', () => setPracticeMenu(false));
+})();
 
 // 지원자 테스트 계정(시드 이지원): 접수 취소 버튼이 보인다. 서버도 이 계정만 허용(config.TEST_APPLICANT_EMAIL)
 const isTestApplicant = () => !!(me && me.email === 'applicant@headhunter.ai');
@@ -48,6 +71,8 @@ async function loadMe() {
   area.innerHTML = me
     ? `<span class="who">${esc(me.name)} 님</span> <button class="btn sm ghost" id="logout">로그아웃</button>`
     : `<a class="btn sm ghost" href="#/login">로그인</a> <a class="btn sm primary" href="#/signup">회원가입</a>`;
+  const pdd = document.getElementById('practice-dd');
+  if (pdd) { pdd.hidden = !me; if (!me) setPracticeMenu(false); }
   const reset = document.getElementById('dev-reset');
   if (reset) reset.hidden = !isTestApplicant();
   const lo = $('#logout');
@@ -62,12 +87,16 @@ function requireLogin(next) {
 
 // ACC-04: 허용된 내부 경로만 복귀
 function safeNext(next) {
-  return next && /^\/(jobs\/\d+(\/apply)?|my|apply\/\d+\/[a-z]+)$/.test(next) ? next : '/my';
+  return next && /^\/(jobs\/\d+(\/apply)?|jobs\/applied|my|apply\/\d+\/[a-z]+|practice\/(sql(\/(s[12]|\d+))?|coding(\/(\d+|junior|senior))?))$/.test(next) ? next : '/my';
 }
 
 const routes = [
   [/^\/?$/, landing],
   [/^\/jobs$/, jobs],
+  [/^\/jobs\/role\/([a-z_]+)$/, jobsRole],
+  [/^\/jobs\/browse$/, jobsBrowse],
+  [/^\/jobs\/company\/(\d+)$/, jobsCompany],
+  [/^\/jobs\/applied$/, jobsApplied],
   [/^\/jobs\/(\d+)$/, jobDetail],
   [/^\/jobs\/(\d+)\/apply$/, applyJob],
   [/^\/login$/, login],
@@ -79,6 +108,10 @@ const routes = [
   [/^\/interview\/(\d+)$/, interviewView],
   [/^\/done\/(\d+)$/, doneView],
   [/^\/result\/(\d+)$/, resultView],
+  [/^\/practice\/coding(?:\/(junior|senior))?$/, practiceList],
+  [/^\/practice\/sql(?:\/s([12]))?$/, practiceSql],
+  [/^\/practice\/sql\/(\d+)$/, practiceSqlProblem],
+  [/^\/practice\/coding\/(\d+)$/, practiceProblem],
 ];
 
 async function router() {
@@ -118,39 +151,89 @@ async function landing() {
 }
 
 /* ───────── 공고 ───────── */
+// '지금 n명이 보고 있어요' — 서버가 실측 10명 이상일 때만 숫자를 준다(presence.py). 없으면 아무것도 그리지 않는다
+const viewersHtml = (n, sm) => (n ? `<span class="live-viewers${sm ? ' sm' : ''}"><span class="live-dot" aria-hidden="true"></span>지금 <b>${n}명</b>이 보고 있어요</span>` : '');
+
 function jobCard(j) {
   const closed = j.status === 'closed';
   return `<button class="card click" data-job="${j.id}">
-    <div class="between"><span class="pill ${closed ? 'dim' : 'neon'}">${closed ? '마감' : '접수 중'}</span>
-      ${j.coding_enabled ? '<span class="pill">코딩테스트 포함</span>' : '<span class="pill dim">AI 면접만</span>'}</div>
+    <div class="between"><span class="row" style="gap:10px"><span class="pill ${closed ? 'dim' : 'neon'}">${closed ? '마감' : '접수 중'}</span>${j.is_new ? '<span class="new-badge">NEW</span>' : ''}</span>
+      ${j.role_status !== 'active' ? '<span class="pill dim">준비 중 · 지원 불가</span>' : j.coding_enabled ? '<span class="pill">코딩테스트 포함</span>' : '<span class="pill dim">AI 면접만</span>'}</div>
     <h2 style="margin:12px 0 4px">${esc(j.title)}</h2>
     <div class="sub">${esc(j.company)} · ${esc(j.role_name)} · ${esc(j.location || '')}</div>
     <div class="small" style="margin-top:10px">접수 마감 ${fmtYMD(j.close_date)} · 결과 공개 ${fmtYMD(j.result_date)}</div>
+    ${j.viewers && !closed ? `<div style="margin-top:12px">${viewersHtml(j.viewers, true)}</div>` : ''}
   </button>`;
 }
 
-async function jobs(params) {
+/* 채용 공고 (PRD v0.9 APP-10): ① 직무 → ② 둘러보기 / 내가 지원한 공고 → ③ 기업 → ④ 그 기업 공고 */
+const backLink = (href, label) => `<a class="btn sm ghost" href="${href}">← ${label}</a>`;
+
+async function jobs() {
   setNav('jobs');
   if (!roles.length) roles = await get('/api/job-roles');
-  const role = params.get('role') || '';
-  const q = params.get('q') || '';
+  const list = await get('/api/jobs');
+  const count = (code) => list.filter((j) => j.role_code === code && j.status === 'published').length;
   view.innerHTML = `<div class="wrap">
-    <h1>채용 공고</h1><p class="sub">로그인 없이 공고를 둘러볼 수 있습니다. 현재 AI 면접은 AI/AX 엔지니어 직무만 운영합니다.</p>
-    <div class="row" style="margin:18px 0">
-      <select id="f-role"><option value="">전체 직무</option>${roles.map((r) => `<option value="${r.code}" ${r.status !== 'active' ? 'disabled' : ''} ${r.code === role ? 'selected' : ''}>${esc(r.name)}${r.status !== 'active' ? ' (준비 중)' : ''}</option>`).join('')}</select>
-      <input class="input" id="f-q" placeholder="공고명·회사명 검색" value="${esc(q)}" style="max-width:280px">
-      <button class="btn" id="f-go">검색</button>
-    </div>
-    <div class="row" style="margin-bottom:18px">${roles.map((r) => `<span class="pill ${r.status === 'active' ? 'neon' : 'dim'}">${esc(r.name)}${r.status === 'active' ? '' : ' · 준비 중'}</span>`).join('')}</div>
-    <div class="grid3" id="list"><span class="spinner"></span></div></div>`;
-  const qs = new URLSearchParams();
-  if (role) qs.set('role', role);
-  if (q) qs.set('q', q);
-  const list = await get('/api/jobs?' + qs);
-  $('#list').innerHTML = list.length ? list.map(jobCard).join('') : '<div class="empty" style="grid-column:1/-1">조건에 맞는 공고가 없습니다.</div>';
+    <h1>채용 공고</h1><p class="sub">직무를 고르세요. 현재 AI 면접은 AI/AX 엔지니어 직무만 운영합니다.</p>
+    <div class="grid3" style="margin-top:20px">${roles.map((r) => r.status === 'active'
+      ? `<button class="card click" data-role="${r.code}"><span class="pill neon">운영 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">접수 중 공고 ${count(r.code)}개</div></button>`
+      : `<div class="card" style="opacity:.45"><span class="pill dim">준비 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">질문 은행 준비 중</div></div>`).join('')}</div></div>`;
+  $$('[data-role]').forEach((b) => (b.onclick = () => go(`#/jobs/role/${b.dataset.role}`)));
+}
+
+async function jobsRole(code) {
+  setNav('jobs');
+  if (!roles.length) roles = await get('/api/job-roles');
+  const r = roles.find((x) => x.code === code);
+  if (!r || r.status !== 'active') { go('#/jobs'); return; }
+  view.innerHTML = `<div class="wrap">
+    ${backLink('#/jobs', '직무 선택')}
+    <h1 style="margin-top:14px">${esc(r.name)}</h1><p class="sub">열려 있는 공고를 둘러보거나, 지원한 공고의 진행 상황을 확인하세요.</p>
+    <div class="grid2" style="margin-top:20px">
+      <button class="card click" data-go="#/jobs/browse?role=${code}"><h2 style="margin:0 0 6px">현재 열려 있는 공고 둘러보기</h2><div class="sub">기업을 고른 뒤 그 기업의 공고를 봅니다. 로그인 없이 볼 수 있습니다.</div></button>
+      <button class="card click" data-go="#/jobs/applied?role=${code}"><h2 style="margin:0 0 6px">내가 지원한 공고</h2><div class="sub">지원한 공고의 진행 상태와 응시할 면접을 확인합니다. 로그인이 필요합니다.</div></button>
+    </div></div>`;
+  $$('[data-go]').forEach((b) => (b.onclick = () => go(b.dataset.go)));
+}
+
+async function jobsBrowse(params) {
+  setNav('jobs');
+  const role = params.get('role') || 'ai_ax';
+  const list = await get(`/api/companies?role=${encodeURIComponent(role)}`);
+  view.innerHTML = `<div class="wrap">
+    ${backLink(`#/jobs/role/${role}`, '이전')}
+    <h1 style="margin-top:14px">기업 선택</h1><p class="sub">공고를 올린 기업입니다. 기업을 고르면 그 기업의 공고를 모두 볼 수 있습니다.</p>
+    <div class="grid3" style="margin-top:20px">${list.length ? list.map((c) => `<button class="card click" data-company="${c.id}">
+      <div class="between"><span class="pill ${c.open_jobs ? 'neon' : 'dim'}">지원 가능 ${c.open_jobs}개</span><span class="small">공고 ${c.jobs}개</span></div>
+      <h2 style="margin:12px 0 4px">${esc(c.name)}</h2><div class="sub">${esc(c.location || '')}</div>
+      <div class="small" style="margin-top:10px">${esc(c.intro || '')}</div></button>`).join('')
+      : '<div class="empty" style="grid-column:1/-1">공고를 올린 기업이 없습니다.</div>'}</div></div>`;
+  $$('[data-company]').forEach((b) => (b.onclick = () => go(`#/jobs/company/${b.dataset.company}?role=${role}`)));
+}
+
+async function jobsCompany(id, params) {
+  setNav('jobs');
+  const role = params.get('role') || 'ai_ax';
+  const list = await get(`/api/jobs?company=${id}`);
+  if (!list.length) { go(`#/jobs/browse?role=${role}`); return; }
+  view.innerHTML = `<div class="wrap">
+    ${backLink(`#/jobs/browse?role=${role}`, '기업 선택')}
+    <h1 style="margin-top:14px">${esc(list[0].company)}</h1><p class="sub">이 기업의 공고 ${list.length}개입니다. 준비 중인 직무의 공고는 볼 수만 있고 지원할 수 없습니다.</p>
+    <div class="grid3" style="margin-top:20px">${list.map(jobCard).join('')}</div></div>`;
   $$('[data-job]').forEach((b) => (b.onclick = () => go(`#/jobs/${b.dataset.job}`)));
-  $('#f-go').onclick = () => go(`#/jobs?role=${$('#f-role').value}&q=${encodeURIComponent($('#f-q').value)}`);
-  $('#f-q').onkeydown = (e) => { if (e.key === 'Enter') $('#f-go').click(); };
+}
+
+async function jobsApplied(params) {
+  setNav('jobs');
+  if (!requireLogin('/jobs/applied')) return;
+  const role = params.get('role') || 'ai_ax';
+  const apps = await get('/api/me/applications');
+  view.innerHTML = `<div class="wrap">
+    ${backLink(`#/jobs/role/${role}`, '이전')}
+    <h1 style="margin-top:14px">내가 지원한 공고</h1><p class="sub">${esc(me.name)} 님이 지원한 공고입니다.</p>
+    <div class="card" style="margin-top:20px">${appsTableHtml(apps)}</div></div>`;
+  bindAppsTable(() => jobsApplied(params));
 }
 
 const lines = (t) => esc(t || '').replace(/\n/g, '<br>');
@@ -160,9 +243,10 @@ async function jobDetail(id) {
   const j = await get(`/api/jobs/${id}`);
   const closed = j.status === 'closed';
   view.innerHTML = `<div class="wrap mid">
-    <a class="btn sm ghost" href="#/jobs">← 공고 목록</a>
-    <h1 style="margin-top:14px">${esc(j.title)}</h1>
+    <a class="btn sm ghost" href="#/jobs/company/${j.company_id}">← ${esc(j.company)} 공고</a>
+    <h1 style="margin-top:14px">${esc(j.title)}${j.is_new ? '<span class="new-badge">NEW</span>' : ''}</h1>
     <div class="sub">${esc(j.company)} · ${esc(j.role_name)} · ${esc(j.employment_type)} · ${esc(j.location)} · 모집 ${j.headcount}명</div>
+    <div id="viewers" style="margin-top:14px"></div>
     <div class="grid3" style="margin:22px 0">
       <div class="card"><div class="small">접수 기간</div><b>${fmtYMD(j.open_date)} ~ ${fmtYMD(j.close_date)}</b></div>
       <div class="card"><div class="small">진행 방식 · 예상 소요</div><b>AI 면접 ${j.coding_enabled ? '+ 코딩테스트' : ''} · 약 ${j.expected_minutes}분</b></div>
@@ -175,9 +259,18 @@ async function jobDetail(id) {
       ${j.preferred ? `<h3>우대 사항</h3><p class="sub">${lines(j.preferred)}</p>` : ''}
     </div>
     <div class="note" style="margin:18px 0">지원 후 이력서를 올리면 AI가 내용을 읽어 맞춤 질문 2개를 만듭니다. AI 면접은 1회만 응시할 수 있고 중단 버튼이 없습니다.</div>
-    <button class="btn primary lg" id="apply" ${closed ? 'disabled' : ''}>${closed ? '접수 마감' : '지원하기'}</button>
+    <button class="btn primary lg" id="apply" ${closed || j.role_status !== 'active' ? 'disabled' : ''}>${closed ? '접수 마감' : j.role_status !== 'active' ? '준비 중인 직무 · 지원 불가' : '지원하기'}</button>
   </div>`;
   $('#apply').onclick = () => go(`#/jobs/${id}/apply`);
+  if (!closed) {                      // 보고 있다는 신호: 탭이 보일 때만 30초마다
+    const beat = async () => {
+      if (document.hidden) return;
+      try { const r = await post(`/api/jobs/${id}/viewing`); const el = $('#viewers'); if (el) el.innerHTML = viewersHtml(r.viewers); } catch (_) { /* 표시 안 함 */ }
+    };
+    beat();
+    const timer = setInterval(beat, 30000);
+    onLeave(() => clearInterval(timer));
+  }
 }
 
 async function applyJob(id) {
@@ -261,6 +354,24 @@ function appAction(a) {
   return `<a class="btn sm" href="#/result/${a.id}">${a.decision_mode === 'semi' ? '담당자 확인 중' : '리포트 보기'}</a>`;
 }
 
+function appsTableHtml(apps) {
+  return apps.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>공고</th><th>진행 상태</th><th>응시 상태</th><th></th></tr></thead><tbody>
+        ${apps.map((a) => `<tr><td><b>${esc(a.title)}</b><div class="small">${esc(a.company)} · 지원일 ${fmtYMD(a.created_at)}${a.coding_enabled ? ' · 코딩테스트 포함' : ''}</div></td>
+          <td>${a.attempt_id ? '<span class="pill dim">응시함</span>' : `<span class="pill neon">${STEP_KO[a.step]}</span>`}</td>
+          <td>${a.attempt_status ? esc(ATTEMPT_KO[a.attempt_status]) : '-'}</td><td class="num">${appAction(a)}${isTestApplicant() ? ` <button class="btn sm ghost" data-devcancel="${a.id}" title="테스트 계정 전용">접수 취소</button>` : ''}</td></tr>`).join('')}
+        </tbody></table></div>` : '<div class="empty">아직 지원한 공고가 없습니다.</div>';
+}
+
+function bindAppsTable(refresh) {
+  $$('[data-cont]').forEach((b) => (b.onclick = async () => continueApplication(await get(`/api/applications/${b.dataset.cont}`))));
+  $$('[data-devcancel]').forEach((b) => (b.onclick = async () => {
+    const yes = await modal({ title: '접수 취소(테스트용)', body: '이 지원 건의 응시·답변·평가 기록을 모두 지웁니다. 같은 공고에 다시 지원할 수 있게 됩니다.',
+      buttons: [{ label: '닫기', value: false }, { label: '접수 취소', value: true, primary: true }] });
+    if (!yes) return;
+    try { await post(`/api/dev/reset-my-applications?app_id=${b.dataset.devcancel}`); toast('접수를 취소했습니다.'); refresh(); } catch (e) { toast(e.message, true); }
+  }));
+}
+
 async function mypage() {
   setNav('my');
   if (!requireLogin('/my')) return;
@@ -269,23 +380,13 @@ async function mypage() {
     <h1>마이페이지</h1><p class="sub">${esc(me.name)} 님의 지원 현황입니다.</p>
     <div class="grid2" style="margin-top:20px;align-items:start">
       <div class="card" style="grid-column:1/-1"><div class="between"><h2>지원한 공고 · 응시할 면접</h2><a class="btn sm" href="#/jobs">공고 둘러보기</a></div>
-        ${apps.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>공고</th><th>진행 상태</th><th>응시 상태</th><th></th></tr></thead><tbody>
-        ${apps.map((a) => `<tr><td><b>${esc(a.title)}</b><div class="small">${esc(a.company)} · 지원일 ${fmtYMD(a.created_at)}${a.coding_enabled ? ' · 코딩테스트 포함' : ''}</div></td>
-          <td>${a.attempt_id ? '<span class="pill dim">응시함</span>' : `<span class="pill neon">${STEP_KO[a.step]}</span>`}</td>
-          <td>${a.attempt_status ? esc(ATTEMPT_KO[a.attempt_status]) : '-'}</td><td class="num">${appAction(a)}${isTestApplicant() ? ` <button class="btn sm ghost" data-devcancel="${a.id}" title="테스트 계정 전용">접수 취소</button>` : ''}</td></tr>`).join('')}
-        </tbody></table></div>` : '<div class="empty">아직 지원한 공고가 없습니다.</div>'}
+        ${appsTableHtml(apps)}
       </div>
       <div class="card"><h2>알림</h2>${notes.length ? notes.map((n) => `<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>${esc(n.title)}</b><div class="small">${esc(n.body)}</div></div>`).join('') : '<p class="small">새 알림이 없습니다.</p>'}</div>
       <div class="card"><h2>내 이력서</h2><p class="small">지원할 때 불러와 쓸 수 있습니다. 지원에 제출한 이력서는 별도로 보관됩니다.</p>
         ${resumes.length ? resumes.map((r) => `<div class="between" style="padding:8px 0;border-bottom:1px solid var(--line)"><span>${esc(r.title)} <span class="small">${fmtYMD(r.updated_at)}</span></span><button class="btn sm ghost" data-delres="${r.id}">삭제</button></div>`).join('') : '<p class="small">등록한 이력서가 없습니다. 지원 과정에서 저장할 수 있습니다.</p>'}</div>
     </div></div>`;
-  $$('[data-cont]').forEach((b) => (b.onclick = async () => continueApplication(await get(`/api/applications/${b.dataset.cont}`))));
-  $$('[data-devcancel]').forEach((b) => (b.onclick = async () => {
-    const yes = await modal({ title: '접수 취소(테스트용)', body: '이 지원 건의 응시·답변·평가 기록을 모두 지웁니다. 같은 공고에 다시 지원할 수 있게 됩니다.',
-      buttons: [{ label: '닫기', value: false }, { label: '접수 취소', value: true, primary: true }] });
-    if (!yes) return;
-    try { await post(`/api/dev/reset-my-applications?app_id=${b.dataset.devcancel}`); toast('접수를 취소했습니다.'); mypage(); } catch (e) { toast(e.message, true); }
-  }));
+  bindAppsTable(mypage);
   $$('[data-delres]').forEach((b) => (b.onclick = async () => { await del(`/api/me/resumes/${b.dataset.delres}`); mypage(); }));
   if (notes.some((n) => !n.read_at)) post('/api/me/notifications/read');
 }
@@ -534,7 +635,7 @@ async function envView(appId) {
           <dt>화면 이탈</dt><dd>다른 탭·창으로 전환, 2초 이상 포커스 이탈, 전체 화면 해제 시 1회 경고, 2회째 응시가 취소됩니다.</dd></dl>
           <label class="check" style="margin-top:10px"><input type="checkbox" id="rules"><b>위 응시 규칙을 확인했습니다</b></label>
           <p class="small" id="pregen">맞춤 질문은 점검을 통과하면 준비를 시작합니다.</p>
-          <div class="note">개발 환경 안내: 음성 인식(STT) 엔진이 연결되지 않아 답변은 입력창에 작성합니다. 질문 음성은 브라우저 내장 한국어 음성으로 재생됩니다.</div>
+          <div class="note">질문은 AI 음성으로 읽어 드리고, 답변은 말씀하시면 AI가 글로 바꿔 저장합니다(답변 음성 파일은 저장하지 않습니다). 음성 인식이 되지 않을 때만 화면의 비상 입력란을 쓰세요.</div>
           <button class="btn primary lg" id="start" disabled style="width:100%;margin-top:12px">전체 화면으로 면접 시작</button>
           <p class="small" id="start-why" style="margin-top:8px"></p>
         </div>
@@ -735,6 +836,8 @@ async function interviewView(attemptId) {
   let current = null;           // current question
   let codingCtx = null;
   let wave = null;              // 음성 파형 { stop, listen(on) }
+  let rec = null;               // v0.9 INT-03: 답변 녹음(MediaRecorder) → 서버에서 Qwen3-ASR로 글로 바꿈
+  let qAudio = null;            // v0.9 INT-01: Qwen3-TTS 질문 음성
 
   // heartbeat (5초)
   const hb = setInterval(async () => {
@@ -784,7 +887,7 @@ async function interviewView(attemptId) {
   onLeave(() => {
     document.removeEventListener('visibilitychange', onVis); window.removeEventListener('blur', onBlur); window.removeEventListener('focus', onFocus);
     document.removeEventListener('fullscreenchange', onFs); window.removeEventListener('offline', onOffline); window.removeEventListener('online', onOnline);
-    clearInterval(qTimer); clearTimeout(blurTimer); speechSynthesis.cancel();
+    clearInterval(qTimer); clearTimeout(blurTimer); speechSynthesis.cancel(); stopQuestionAudio(); stopRecording(true);
     if (codingCtx) codingCtx.stop();
     if (wave) { wave.stop(); wave = null; }
   });
@@ -795,6 +898,35 @@ async function interviewView(attemptId) {
     media.stream = r.stream;
     return r.mic ? null : media.stream; // 카메라는 임시로 선택(env 점검 참고)
   }
+  /* v0.9 INT-03: 답변 시간 동안 마이크만 녹음한다(카메라 영상은 넣지 않음). 제출할 때 서버로 보내 글로 바꾸고, 파일은 저장하지 않는다 */
+  function startRecording() {
+    stopRecording(true);
+    if (!st.stt || !window.MediaRecorder || !media.stream || !media.stream.getAudioTracks().length) return;
+    try {
+      const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+      const mimeType = types.find((t) => MediaRecorder.isTypeSupported(t)) || '';
+      const r = new MediaRecorder(new MediaStream(media.stream.getAudioTracks()), mimeType ? { mimeType } : undefined);
+      const chunks = [];
+      r.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      r.start(1000);
+      rec = { r, chunks, type: r.mimeType || mimeType || 'audio/webm' };
+    } catch (_) { rec = null; }
+  }
+  function stopRecording(discard) {
+    const cur = rec; rec = null;
+    if (!cur) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const done = () => resolve(discard || !cur.chunks.length ? null : new Blob(cur.chunks, { type: cur.type }));
+      if (cur.r.state === 'inactive') return done();
+      cur.r.onstop = done;
+      try { cur.r.stop(); } catch (_) { done(); }
+      setTimeout(done, 1500);
+    });
+  }
+  function stopQuestionAudio() {
+    if (qAudio) { try { qAudio.pause(); URL.revokeObjectURL(qAudio.src); } catch (_) { /* ignore */ } qAudio = null; }
+  }
+
   function attachCam() {
     const box = $('#cam');
     if (!box || !media.stream) return;
@@ -941,9 +1073,28 @@ async function interviewView(attemptId) {
 
   function present(q) {
     clearInterval(qTimer);
-    speechSynthesis.cancel();
+    speechSynthesis.cancel(); stopQuestionAudio();
     const phase = $('#phase');
-    const afterSpeech = () => countdown(3, () => startAnswer(q.time_limit));
+    let started = false;
+    const afterSpeech = () => { if (!started) { started = true; countdown(3, () => startAnswer(q.time_limit)); } };
+    if (phase) phase.textContent = '질문을 읽어 드리고 있습니다…';
+    // v0.9 INT-01: Qwen3-TTS 음성(서버, 미리 만들어 둠)을 먼저 쓰고, 6초 안에 못 받거나 재생이 안 되면 브라우저 음성으로 읽는다
+    const ctl = new AbortController();
+    const limit = setTimeout(() => ctl.abort(), 6000);
+    fetch(`/api/attempts/${attemptId}/questions/${q.id}/audio`, { credentials: 'same-origin', signal: ctl.signal })
+      .then((r) => { clearTimeout(limit); if (!r.ok) throw new Error('tts'); return r.blob(); })
+      .then((b) => {
+        if (current !== q) return;
+        const a = new Audio(URL.createObjectURL(b)); qAudio = a;
+        a.onended = afterSpeech; a.onerror = () => browserSpeak(q, afterSpeech);
+        setTimeout(afterSpeech, Math.max(6000, q.text.length * 220)); // 끝 이벤트가 오지 않을 때 대비
+        return a.play();
+      })
+      .catch(() => { if (current === q && !started) browserSpeak(q, afterSpeech); });
+  }
+
+  function browserSpeak(q, afterSpeech) {
+    stopQuestionAudio();
     try {
       const u = new SpeechSynthesisUtterance(q.text);
       u.lang = 'ko-KR'; u.rate = 1.0;
@@ -954,7 +1105,6 @@ async function interviewView(attemptId) {
       u.onend = fin; u.onerror = fin;                       // INT-01: TTS 실패 시 자막만으로 진행
       setTimeout(fin, Math.max(4000, q.text.length * 160)); // 음성 끝 이벤트가 오지 않을 때 대비
       speechSynthesis.speak(u);
-      if (phase) phase.textContent = '질문을 읽어 드리고 있습니다…';
     } catch (_) { afterSpeech(); }
   }
 
@@ -973,6 +1123,7 @@ async function interviewView(attemptId) {
     $('#phase').textContent = '답변해 주세요. 말씀하시는 동안 아래 파형이 움직입니다.';
     ans.disabled = false; $('#done').disabled = false;
     if (wave) wave.listen(true);
+    startRecording();
     timer.classList.remove('idle'); timer.textContent = remaining;
     qTimer = setInterval(() => {
       remaining -= 1;
@@ -987,9 +1138,17 @@ async function interviewView(attemptId) {
     if (!ans || $('#done').disabled) return;
     $('#done').disabled = true; ans.disabled = true;
     if (wave) wave.listen(false);
-    $('#phase').innerHTML = '<span class="spinner"></span> 답변을 저장하고 다음 질문을 준비하고 있습니다…';
+    const audio = await stopRecording(false);
+    $('#phase').innerHTML = audio ? '<span class="spinner"></span> 답변 음성을 글로 바꾸고 다음 질문을 준비하고 있습니다…'
+      : '<span class="spinner"></span> 답변을 저장하고 다음 질문을 준비하고 있습니다…';
     try {
-      st = await post(`/api/attempts/${attemptId}/answer`, { question_id: current.id, text: ans.value });
+      if (audio) {
+        const fd = new FormData();
+        fd.append('question_id', current.id); fd.append('text', ans.value); fd.append('audio', audio, 'answer.webm');
+        st = await HH.api(`/api/attempts/${attemptId}/answer-audio`, { method: 'POST', body: fd });
+      } else {
+        st = await post(`/api/attempts/${attemptId}/answer`, { question_id: current.id, text: ans.value });
+      }
       render();
     } catch (e) {
       st = await get(`/api/attempts/${attemptId}`);
@@ -1002,6 +1161,7 @@ async function interviewView(attemptId) {
       active = true;
       const ans = $('#ans'); if (ans) { ans.disabled = true; }
       if (wave) wave.listen(false);
+      stopRecording(true);
       $('#done') && ($('#done').disabled = true);
       $('#timer') && ($('#timer').textContent = current.time_limit);
       present(current);
@@ -1130,6 +1290,149 @@ function reportBox(appId, box, opt = {}) {
   load();
   timer = setInterval(load, 5000);
   onLeave(() => clearInterval(timer));
+}
+
+/* ───────── 무제한 코딩 연습 (Features '무제한 코딩 연습', 2026-11-05) ─────────
+   공고·응시와 무관. 게시된 문제만, 횟수 제한 없음, 기록 저장 없음. 기업 코딩테스트(#/interview/<id>의 코딩 단계)와 별개 화면.
+   화면 요소는 기존 코딩테스트 화면(.tabs · .tbl · .grid2 · .editor · .out · .btn)을 그대로 쓴다(새 디자인 요소 없음). */
+const LEVEL_KO = { basic: '기초', applied: '응용' };
+
+// 레벨: Junior = 초급(프로그래머스 Lv.0~1 수준, DB level 'basic') · Senior = 중·고급(Lv.2 이상, 'applied')
+const PRACTICE_LEVELS = [
+  { key: 'junior', db: 'basic', name: 'Junior', ko: '초급' },
+  { key: 'senior', db: 'applied', name: 'Senior', ko: '중·고급' },
+];
+const levelOf = (db) => PRACTICE_LEVELS.find((l) => l.db === db) || PRACTICE_LEVELS[0];
+// 연습 영역: 알고리즘(Python·C) / SQL(SQLD 유형, 준비 중). 2026-11-06 사용자 지시
+const trackTabs = (on) => `<div class="tabs" style="margin:14px 0 0">
+  <a class="btn sm ${on === 'algo' ? 'primary' : 'ghost'}" href="#/practice/coding/junior">알고리즘</a>
+  <a class="btn sm ${on === 'sql' ? 'primary' : 'ghost'}" href="#/practice/sql">SQL</a></div>`;
+
+// SQL 연습(SQLD 유형 4지선다, 2026-11-06): 과목별 목록 → 문제(표·SQL·보기) → 답 고르기 → 정답·해설. 기록 저장 없음
+const SQL_SUBJECTS = [
+  { key: 's1', no: 1, name: '제1과목', ko: '데이터 모델링의 이해' },
+  { key: 's2', no: 2, name: '제2과목', ko: 'SQL 기본과 활용' },
+];
+const SQL_KIND_KO = { concept: '개념', result: '실행 결과', sql_pick: 'SQL 고르기' };
+const sqlTable = (name, t) => `<div class="tbl-wrap" style="margin:6px 0">${name ? `<div class="small mono" style="margin-bottom:4px">${esc(name)}</div>` : ''}<table class="tbl"><thead><tr>${t.columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+  <tbody>${t.rows.length ? t.rows.map((r) => `<tr>${r.map((v) => `<td class="mono">${v === null ? '<span class="small">NULL</span>' : esc(v)}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${t.columns.length}" class="small">결과 없음(0행)</td></tr>`}</tbody></table></div>`;
+
+async function practiceSql(sKey) {
+  setNav('');
+  const sub = SQL_SUBJECTS.find((x) => x.key === (sKey ? `s${sKey}` : 's1'));
+  if (!requireLogin(`/practice/sql/${sub.key}`)) return;
+  const list = await get('/api/practice/sql');
+  const rows = list.filter((p) => p.subject === sub.no);
+  view.innerHTML = `<div class="wrap">
+    <h1>무제한 코딩 연습</h1><p class="sub">SQLD 시험 유형의 4지선다 문제입니다. 답을 고르면 바로 정답과 해설을 보여 줍니다. 횟수 제한이 없고 기록은 저장하지 않습니다. SQL 결과는 PostgreSQL 16에서 실제로 실행해 계산했습니다.</p>
+    ${trackTabs('sql')}
+    <div class="practice-layout" style="margin-top:18px">
+      <aside class="card col practice-side"><div class="small">과목</div>
+        <div class="tabs" style="flex-direction:column">${SQL_SUBJECTS.map((x) => `<a class="${x.key === sub.key ? 'on' : ''}" href="#/practice/sql/${x.key}"><b>${x.name}</b> <span class="small">${x.ko} · ${list.filter((p) => p.subject === x.no).length}문제</span></a>`).join('')}</div>
+      </aside>
+      <section>
+        <div class="between" style="margin-bottom:12px"><h2>${sub.name} <span class="small">${sub.ko}</span></h2><span class="small">${rows.length}문제</span></div>
+        ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th>문제</th><th>세부 항목</th><th>형식</th><th></th></tr></thead><tbody>
+          ${rows.map((p, i) => `<tr><td class="num">${i + 1}</td><td><b>${esc(p.title)}</b></td><td class="small">${esc(p.item)}</td><td class="small">${SQL_KIND_KO[p.kind]}</td>
+            <td class="num"><a class="btn sm" href="#/practice/sql/${p.id}">풀기</a></td></tr>`).join('')}
+        </tbody></table></div>` : `<div class="empty">아직 게시된 ${sub.name} 문제가 없습니다.</div>`}
+      </section>
+    </div></div>`;
+}
+
+async function practiceSqlProblem(id) {
+  setNav('');
+  if (!requireLogin(`/practice/sql/${id}`)) return;
+  const p = await get(`/api/practice/sql/${id}`);
+  const sub = SQL_SUBJECTS.find((x) => x.no === p.subject);
+  const choice = (c) => c.type === 'table' ? sqlTable('', c) : c.type === 'sql' ? `<div class="out mono" style="min-height:0;margin:0">${esc(c.sql)}</div>` : `<span>${esc(c.text)}</span>`;
+  view.innerHTML = `<div class="wrap sql-q" style="max-width:960px">
+    <div class="between" style="margin-bottom:14px"><a class="btn sm ghost" href="#/practice/sql/${sub.key}">← ${sub.name} 문제 목록</a>
+      <span class="row"><span class="pill neon">SQL</span><span class="pill dim">${sub.name} · ${esc(p.item)}</span></span></div>
+    <div class="card col">
+      <h2>${esc(p.title)}</h2><p>${lines(p.stem)}</p>
+      ${Object.entries(p.tables || {}).map(([n, t]) => sqlTable(n, t)).join('')}
+      ${p.query_sql ? `<div class="small">SQL</div><div class="out mono" style="min-height:0">${esc(p.query_sql)}</div>` : ''}
+      <div class="col" role="radiogroup" aria-label="보기">${p.choices.map((c, i) => `<label class="check" style="align-items:flex-start"><input type="radio" name="ans" value="${i + 1}"><span style="flex:1;min-width:0"><b class="sql-no">${'①②③④'[i]}</b> ${choice(c)}</span></label>`).join('')}</div>
+      <div class="row"><button class="btn primary" id="ans" disabled>정답 확인</button><span class="sp"></span><span class="small">답을 바꿔 몇 번이든 다시 확인할 수 있습니다.</span></div>
+      <div class="out sql-expl" id="out" style="display:none"></div>
+    </div></div>`;
+  $$('input[name="ans"]').forEach((r) => (r.onchange = () => ($('#ans').disabled = false)));
+  $('#ans').onclick = async () => {
+    const pick = Number($('input[name="ans"]:checked').value);
+    $('#ans').disabled = true;
+    try {
+      const r = await post(`/api/practice/sql/${id}/answer`, { choice: pick });
+      $('#out').style.display = '';
+      $('#out').textContent = `${r.correct ? '정답입니다.' : `오답입니다. 정답은 ${'①②③④'[r.answer - 1]}번입니다.`}\n\n[해설]\n${r.explanation}`;
+    } catch (e) { toast(e.message, true); } finally { $('#ans').disabled = false; }
+  };
+}
+
+async function practiceList(levelKey) {
+  setNav('');
+  const lv = PRACTICE_LEVELS.find((l) => l.key === levelKey);
+  if (!lv) { go('#/practice/coding/junior'); return; }
+  if (!requireLogin(`/practice/coding/${lv.key}`)) return;
+  const list = await get('/api/practice/coding');
+  const rows = list.filter((p) => p.level === lv.db);
+  view.innerHTML = `<div class="wrap">
+    <h1>무제한 코딩 연습</h1><p class="sub">공고 없이 코딩 문제를 원하는 만큼 풀어 볼 수 있습니다. 실행·제출 횟수 제한이 없고, 기록은 기업에 전달되지 않습니다. 알고리즘 문제는 지금 Python 3만 지원합니다(C언어 준비 중).</p>
+    ${trackTabs('algo')}
+    <div class="practice-layout" style="margin-top:18px">
+      <aside class="card col practice-side"><div class="small">레벨</div>
+        <div class="tabs" style="flex-direction:column">${PRACTICE_LEVELS.map((l) => `<a class="${l.key === lv.key ? 'on' : ''}" href="#/practice/coding/${l.key}"><b>${l.name}</b> <span class="small">${l.ko} · ${list.filter((p) => p.level === l.db).length}문제</span></a>`).join('')}</div>
+      </aside>
+      <section>
+        <div class="between" style="margin-bottom:12px"><h2>${lv.name} <span class="small">${lv.ko}</span></h2><span class="small">${rows.length}문제</span></div>
+        ${rows.length ? `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>#</th><th>문제</th><th></th></tr></thead><tbody>
+          ${rows.map((p, i) => `<tr><td class="num">${i + 1}</td><td><b>${esc(p.title)}</b></td>
+            <td class="num"><a class="btn sm" href="#/practice/coding/${p.id}">풀기</a></td></tr>`).join('')}
+        </tbody></table></div>` : `<div class="empty">아직 게시된 ${lv.name} 문제가 없습니다.</div>`}
+      </section>
+    </div></div>`;
+}
+
+async function practiceProblem(id) {
+  setNav('');
+  if (!requireLogin(`/practice/coding/${id}`)) return;
+  const p = await get(`/api/practice/coding/${id}`);
+  view.innerHTML = `<div class="wrap" style="max-width:1200px">
+    <div class="between" style="margin-bottom:14px"><a class="btn sm ghost" href="#/practice/coding/${levelOf(p.level).key}">← ${levelOf(p.level).name} 문제 목록</a>
+      <span class="row"><span class="pill neon">알고리즘</span><span class="tabs lang-switch" role="group" aria-label="풀이 언어"><button type="button" class="on">Python 3</button><button type="button" disabled title="C언어는 준비 중입니다">C · 준비 중</button></span><span class="pill ${p.level === 'basic' ? 'neon' : 'dim'}">${levelOf(p.level).name} · ${levelOf(p.level).ko}</span></span></div>
+    <div class="grid2" style="align-items:start;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr)">
+      <div class="card col" id="pdesc"><h2>${esc(p.title)}</h2><p>${lines(p.statement)}</p><div class="small">함수 이름: <span class="mono neon">${esc(p.func_name)}</span></div>
+        <h3 style="margin-top:8px">입출력 예시</h3>${p.examples.map((e) => `<div class="out" style="min-height:0">입력: ${esc(JSON.stringify(e.input))}\n출력: ${esc(JSON.stringify(e.expected))}</div>`).join('')}</div>
+      <div class="col"><textarea class="editor" id="code" spellcheck="false"></textarea>
+        <div class="row"><button class="btn" id="run">예제 실행</button><button class="btn ghost" id="reset">처음 코드로</button><span class="sp"></span><button class="btn primary" id="submit">제출(전체 채점)</button></div>
+        <div class="out" id="out">예제 실행은 공개 예제만, 제출은 숨은 테스트까지 채점합니다. 몇 번이든 다시 할 수 있습니다.</div></div>
+    </div></div>`;
+  const code = $('#code');
+  code.value = p.starter;
+  code.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') { e.preventDefault(); const s = code.selectionStart; code.setRangeText('    ', s, code.selectionEnd, 'end'); }
+  });
+  const busy = (on) => { $('#run').disabled = on; $('#submit').disabled = on; };
+  $('#reset').onclick = () => { code.value = p.starter; };
+  $('#run').onclick = async () => {
+    busy(true); $('#out').innerHTML = '<span class="spinner"></span> 실행 중…';
+    try {
+      const r = await post(`/api/practice/coding/${id}/run`, { code: code.value });
+      $('#out').textContent = r.status !== 'ok' ? `오류\n${r.stderr}` :
+        r.cases.map((c, i) => `예제 ${i + 1}: ${c.ok ? '통과' : '실패'}${c.error ? ` · ${c.error}` : ` · 출력 ${c.got}`}`).join('\n') + (r.stdout ? `\n\n[print 출력]\n${r.stdout}` : '');
+    } catch (e) { $('#out').textContent = e.message; } finally { busy(false); }
+  };
+  $('#submit').onclick = async () => {
+    busy(true);
+    $('#out').innerHTML = '<div class="grade-orb-wrap"><div class="grade-orb" aria-hidden="true"></div><span>headhunter 코치가 제출하신 코드를 채점하고 있어요</span></div>';
+    try {
+      // 채점이 바로 끝나도 모션은 최소 1.5초 보여 준다(사용자 지시)
+      const [r] = await Promise.all([post(`/api/practice/coding/${id}/submit`, { code: code.value }), new Promise((ok) => setTimeout(ok, 1500))]);
+      $('#out').textContent = r.status !== 'ok' ? `오류\n${r.stderr}` :
+        `전체 ${r.passed} / ${r.total} 통과 (숨은 테스트 ${r.hidden_passed} / ${r.hidden_total})${r.passed === r.total ? ' — 모두 통과했습니다.' : ''}\n\n`
+        + r.public.map((c, i) => `예제 ${i + 1}: ${c.ok ? '통과' : '실패'}${c.error ? ` · ${c.error}` : ` · 출력 ${c.got}`}`).join('\n');
+    } catch (e) { $('#out').textContent = e.message; } finally { busy(false); }
+  };
 }
 
 async function doneView(appId) { go('#/my'); }

@@ -16,12 +16,24 @@ def assign_problems(attempt_id):
                attempt_id, p["id"], starter)
 
 
-def sandbox_run(code, func, tests, wait=20):
+def _payload(tests, hide_hidden):
+    """실행기로 보낼 케이스. hide_hidden=True(지원자 화면·채점)이면 public 표시를 같이 보내 실행기가 비공개 케이스의
+    반환값·출력·오류 문구를 버리게 한다. 내부 검증 에이전트는 False(전부 공개 취급)."""
+    out = []
+    for t in tests:
+        c = {"args": t["args"], "expected": t["expected"]}
+        if hide_hidden:
+            c["public"] = bool(t.get("public"))
+        out.append(c)
+    return out
+
+
+def sandbox_run(code, func, tests, wait=20, hide_hidden=False):
     if config.RUNNER_URL:  # Railway: 실행기 서비스를 HTTP로 부른다(네트워크 격리 없음 — CLAUDE.md 배포 절)
         import httpx
         try:
             r = httpx.post(config.RUNNER_URL + "/run", headers={"x-runner-token": config.RUNNER_TOKEN}, timeout=wait,
-                           json={"code": code, "func": func, "tests": [{"args": t["args"], "expected": t["expected"]} for t in tests]})
+                           json={"code": code, "func": func, "tests": _payload(tests, hide_hidden)})
             r.raise_for_status()
             return r.json()
         except Exception:
@@ -32,7 +44,7 @@ def sandbox_run(code, func, tests, wait=20):
     os.makedirs(results, exist_ok=True)
     tmp = os.path.join(jobs, job_id + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump({"code": code, "func": func, "tests": [{"args": t["args"], "expected": t["expected"]} for t in tests]}, f)
+        json.dump({"code": code, "func": func, "tests": _payload(tests, hide_hidden)}, f)
     os.replace(tmp, os.path.join(jobs, job_id + ".json"))
     out = os.path.join(results, job_id + ".json")
     deadline = time.time() + wait
@@ -49,7 +61,7 @@ def sandbox_run(code, func, tests, wait=20):
 def run_public(problem, code):
     """반복 실행: 공개 예제만 (정답·비공개 테스트 비노출)."""
     tests = [t for t in problem["tests"] if t.get("public")]
-    res = sandbox_run(code, problem["func_name"], tests)
+    res = sandbox_run(code, problem["func_name"], tests, hide_hidden=True)
     view = []
     for t, r in zip(tests, res.get("results", [])):
         view.append({"input": t["args"], "expected": t["expected"], **r})
@@ -68,7 +80,7 @@ def grade(attempt_id):
         if not s["code"].strip():
             passed = 0
         else:
-            res = sandbox_run(s["code"], s["func_name"], tests)
+            res = sandbox_run(s["code"], s["func_name"], tests, hide_hidden=True)
             passed = sum(1 for r in res.get("results", []) if r.get("ok"))
         db.run("UPDATE coding_submissions SET passed=%s, total=%s WHERE id=%s", passed, len(tests), s["id"])
         rates.append(passed / len(tests))

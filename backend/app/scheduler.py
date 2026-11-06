@@ -56,6 +56,12 @@ def heartbeat_monitor_one(att):
 
 
 def housekeeping():
+    # v0.9 PAY-08: 정기결제 갱신·재시도·만료 (결제가 꺼져 있으면 아무것도 안 함)
+    try:
+        from . import payments
+        payments.renew_due()
+    except Exception as e:   # 결제 오류가 다른 정리 작업을 막지 않게
+        print(f"[payments] renew_due 실패: {type(e).__name__}: {e}", flush=True)
     # 누락 작업 재등록: 끝난 응시인데 분석 작업이 없는 건 (6.2 안정성)
     for r in db.all_("""SELECT a.id FROM attempts a LEFT JOIN analysis_jobs j ON j.attempt_id=a.id
                         WHERE a.status IN ('completed','terminated','cancelled') AND j.attempt_id IS NULL"""):
