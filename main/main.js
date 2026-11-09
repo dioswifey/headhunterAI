@@ -143,6 +143,7 @@ const T = {
       ],
     },
     payReady: '결제 준비 중',
+    paySubscribe: '네이버페이로 구독하기',
     pricingNote: 'Advanced 결제(네이버페이 · 토스페이먼츠)는 준비 중입니다. 표시 가격은 출시 전 바뀔 수 있습니다.',
   },
   en: {
@@ -282,6 +283,7 @@ const T = {
       ],
     },
     payReady: 'Payments coming soon',
+    paySubscribe: 'Subscribe with Naver Pay',
     pricingNote: 'Advanced payments (Naver Pay · Toss Payments) are coming soon. Prices may change before launch.',
   },
 };
@@ -381,7 +383,9 @@ function pricing() {
         <div class="price">${esc(won(p.price))}${p.price ? `<small> ${esc(L.perMonth)}</small>` : ''}</div>
         <div class="sub">${esc(p.sub)}</div>
         <ul>${p.items.map(i => `<li>${esc(i)}</li>`).join('')}</ul>
-        ${p.href ? `<a class="btn lg" href="${p.href}">${esc(p.cta)}</a>` : `<button class="btn primary lg" type="button" disabled style="opacity:.55;cursor:not-allowed">${esc(L.payReady)}</button>`}
+        ${p.href ? `<a class="btn lg" href="${p.href}">${esc(p.cta)}</a>`
+          : payOn ? `<a class="btn primary lg" href="${audience === 'company' ? '/admin/#/billing' : '/applicant/#/billing'}">${esc(L.paySubscribe)}</a>`
+          : `<button class="btn primary lg" type="button" disabled style="opacity:.55;cursor:not-allowed">${esc(L.payReady)}</button>`}
       </div>`).join('')}
     </div>
     <p class="note">${esc(L.pricingNote)}</p>
@@ -390,6 +394,10 @@ function pricing() {
 
 // Features는 드롭다운만 있고 목록 페이지는 없다. #/features/<id> = 서비스 페이지 4개
 const ROUTES = { '': home, about, pricing };
+
+// 결제가 켜진 환경(네이버페이 키 또는 로컬 가짜 결제)에서만 Advanced 버튼이 요금제 화면으로 간다(PRD v0.9 PAY-05)
+let payOn = false;
+fetch('/api/payments/config').then((r) => r.json()).then((c) => { payOn = !!c.enabled; if (payOn && location.hash.startsWith('#/pricing')) render(); }).catch(() => {});
 
 function render() {
   document.documentElement.lang = lang;

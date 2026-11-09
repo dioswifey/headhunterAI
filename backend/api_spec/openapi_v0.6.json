@@ -220,6 +220,61 @@
         }
       }
     },
+    "/api/auth/withdraw": {
+      "post": {
+        "summary": "Withdraw",
+        "description": "회원 탈퇴(PRD v0.9 ACC-10). 지원자만 화면에서 직접 탈퇴한다(기업 담당자는 회사 데이터가 있어 운영자 문의).\n진행 중 응시 취소 → 정기결제 해지 → 업로드 파일 삭제 → 계정 삭제(지원·응시·이력서·동의·알림은 CASCADE).\n결제 기록(payments·subscriptions)은 법정 보관(5년)으로 남기되 계정과의 연결(created_by)은 끊는다.",
+        "operationId": "withdraw_api_auth_withdraw_post",
+        "parameters": [
+          {
+            "name": "hh_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Hh Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Withdraw"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/job-roles": {
       "get": {
         "summary": "Job Roles",
@@ -1297,6 +1352,133 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/attempts/{attempt_id}/answer-audio": {
+      "post": {
+        "summary": "Answer Audio",
+        "description": "v0.9 INT-03: 답변 녹음 → Qwen3-ASR로 글로 바꿔 저장. 음성 파일은 저장하지 않는다.\n음성 인식이 실패하면 비상 입력란 글만 쓴다(흐름은 멈추지 않음).",
+        "operationId": "answer_audio_api_attempts__attempt_id__answer_audio_post",
+        "parameters": [
+          {
+            "name": "attempt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attempt Id"
+            }
+          },
+          {
+            "name": "hh_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Hh Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_answer_audio_api_attempts__attempt_id__answer_audio_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/attempts/{attempt_id}/questions/{question_id}/audio": {
+      "get": {
+        "summary": "Question Audio",
+        "description": "v0.9 INT-01: 질문 음성(Qwen3-TTS, 캐시). 실패하면 503 → 화면이 브라우저 내장 음성으로 읽는다.",
+        "operationId": "question_audio_api_attempts__attempt_id__questions__question_id__audio_get",
+        "parameters": [
+          {
+            "name": "attempt_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Attempt Id"
+            }
+          },
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Question Id"
+            }
+          },
+          {
+            "name": "hh_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Hh Session"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -3608,6 +3790,269 @@
         }
       }
     },
+    "/api/payments/me": {
+      "get": {
+        "summary": "My Plan",
+        "description": "내(지원자) 또는 우리 회사(기업 담당자)의 요금제·정기결제·결제 내역.",
+        "operationId": "my_plan_api_payments_me_get",
+        "parameters": [
+          {
+            "name": "hh_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Hh Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/payments/subscriptions": {
+      "post": {
+        "summary": "Subscribe",
+        "description": "Advanced 정기결제 시작 → 네이버페이 등록창 호출 값(공개 값만). 금액은 서버 요금표에서 정한다.",
+        "operationId": "subscribe_api_payments_subscriptions_post",
+        "parameters": [
+          {
+            "name": "hh_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Hh Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/payments/naverpay/return": {
+      "get": {
+        "summary": "Naverpay Return",
+        "description": "네이버페이 등록창 → returnUrl. 1회용 state로 우리 주문을 확인하고, 서버가 등록 완료·첫 결제를 직접 요청한다.",
+        "operationId": "naverpay_return_api_payments_naverpay_return_get",
+        "parameters": [
+          {
+            "name": "sub",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Sub"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/payments/subscriptions/cancel": {
+      "post": {
+        "summary": "Cancel",
+        "operationId": "cancel_api_payments_subscriptions_cancel_post",
+        "parameters": [
+          {
+            "name": "hh_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Hh Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/payments/{payment_id}/refund": {
+      "post": {
+        "summary": "Refund",
+        "description": "운영자 전용 전액 취소(환불 기준 미결 → 운영자 판단, 감사 로그).",
+        "operationId": "refund_api_payments__payment_id__refund_post",
+        "parameters": [
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Payment Id"
+            }
+          },
+          {
+            "name": "hh_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Hh Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Refund"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/payments/config": {
+      "get": {
+        "summary": "Pay Config",
+        "description": "화면이 결제 버튼을 열지 정할 때 쓰는 공개 정보(키 없음).",
+        "operationId": "pay_config_api_payments_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/dev/publish-now/{job_id}": {
       "post": {
         "summary": "Dev Publish Now",
@@ -3723,6 +4168,40 @@
         }
       }
     },
+    "/privacy": {
+      "get": {
+        "summary": "Privacy Page",
+        "description": "개인정보 처리방침(v0.9, 원본 legal/privacy_policy.md → main/privacy.html)",
+        "operationId": "privacy_page_privacy_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/terms": {
+      "get": {
+        "summary": "Terms Page",
+        "description": "이용약관(v0.9, 원본 legal/terms_of_service.md → main/terms.html)",
+        "operationId": "terms_page_terms_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/main.html": {
       "get": {
         "summary": "Root",
@@ -3790,6 +4269,29 @@
           "job_id"
         ],
         "title": "Apply"
+      },
+      "Body_answer_audio_api_attempts__attempt_id__answer_audio_post": {
+        "properties": {
+          "question_id": {
+            "type": "integer",
+            "title": "Question Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "default": ""
+          },
+          "audio": {
+            "type": "string",
+            "format": "binary",
+            "title": "Audio"
+          }
+        },
+        "type": "object",
+        "required": [
+          "question_id"
+        ],
+        "title": "Body_answer_audio_api_attempts__attempt_id__answer_audio_post"
       },
       "Body_upload_api_resume_uploads_post": {
         "properties": {
@@ -4152,6 +4654,17 @@
         ],
         "title": "MemoIn"
       },
+      "Refund": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "Refund"
+      },
       "ResumeConfirm": {
         "properties": {
           "data": {
@@ -4295,6 +4808,19 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "Withdraw": {
+        "properties": {
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "title": "Withdraw"
       }
     }
   }

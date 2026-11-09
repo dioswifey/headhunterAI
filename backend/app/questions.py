@@ -221,6 +221,8 @@ def pregenerate(application_id):
         app = db.one("SELECT * FROM applications WHERE id=%s", application_id)
         qs = build_set(app, use_llm=True)
         db.run("UPDATE applications SET pregen_status='ready', pregen_questions=%s WHERE id=%s", db.J(qs), application_id)
+        from . import speech   # v0.9 INT-01: 환경 점검 중에 질문 음성(Qwen3-TTS)도 미리 만든다(TTS가 실시간보다 느림)
+        speech.prewarm([q["text"] for q in qs])
     except Exception:
         db.run("UPDATE applications SET pregen_status='failed' WHERE id=%s", application_id)
 

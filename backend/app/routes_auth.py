@@ -107,6 +107,37 @@ def change_password(body: ChangePw, user=Depends(security.current_user)):
     return {"ok": True}
 
 
+class Withdraw(BaseModel):
+    password: str
+
+
+@router.post("/auth/withdraw")
+def withdraw(body: Withdraw, response: Response, user=Depends(security.current_user)):
+    """회원 탈퇴(PRD v0.9 ACC-10). 지원자만 화면에서 직접 탈퇴한다(기업 담당자는 회사 데이터가 있어 운영자 문의).
+    진행 중 응시 취소 → 정기결제 해지 → 업로드 파일 삭제 → 계정 삭제(지원·응시·이력서·동의·알림은 CASCADE).
+    결제 기록(payments·subscriptions)은 법정 보관(5년)으로 남기되 계정과의 연결(created_by)은 끊는다."""
+    if user["role"] != "applicant":
+        raise HTTPException(403, "기업 담당자 계정 탈퇴는 운영자에게 문의해 주세요.")
+    if not security.verify_pw(user["password_hash"], body.password):
+        raise HTTPException(400, "비밀번호가 올바르지 않습니다.")
+    from . import payments, scheduler
+    for a in db.all_("""SELECT a.id FROM attempts a JOIN applications ap ON ap.id=a.application_id
+                        WHERE ap.user_id=%s AND a.status IN ('interview','coding','interrupted')""", user["id"]):
+        scheduler.finish_attempt(a["id"], "cancelled", "account_withdrawn")
+    try:
+        payments.cancel(user)
+    except payments.PayError:
+        pass   # 정기결제가 없거나 이미 해지됨
+    for f in db.all_("SELECT storage_path FROM files WHERE owner_id=%s", user["id"]):
+        scheduler._unlink(f["storage_path"])
+    with db.tx() as conn:
+        conn.execute("UPDATE subscriptions SET created_by=NULL WHERE created_by=%s", (user["id"],))
+        conn.execute("DELETE FROM users WHERE id=%s", (user["id"],))
+    db.audit(None, "account_withdrawn", "user", user["id"])   # 원문 없이 식별자·시각만(6.1)
+    response.delete_cookie(security.COOKIE, path="/")
+    return {"ok": True}
+
+
 # ---------- public ----------
 @router.get("/job-roles")
 def job_roles():

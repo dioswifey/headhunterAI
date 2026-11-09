@@ -1,6 +1,6 @@
 # headhunterAI API 명세 v0.6
 
-- 엔드포인트 70개 · 원본 `openapi_v0.6.json`(OpenAPI 3) — Swagger UI는 서버 실행 중 `http://localhost:8000/docs`
+- 엔드포인트 79개 · 원본 `openapi_v0.6.json`(OpenAPI 3) — Swagger UI는 서버 실행 중 `http://localhost:8000/docs`
 - 기준 경로 `/api`, 요청·응답 JSON(업로드만 multipart). 인증은 HttpOnly 세션 쿠키 `hh_session`(로그인 시 발급, 2시간 연장)
 - 오류 응답: `{"detail": "한국어 메시지"}` · 401 로그인 필요 · 403 권한 없음 · 404 없음(다른 회사 데이터 포함) · 409 상태 충돌 · 429 횟수 제한 · 503 설정·용량 부족
 - 권한: 담당자 API는 항상 세션 사용자의 회사 범위로 제한, 지원자 API는 본인 데이터만
@@ -15,6 +15,7 @@
 | POST | `/api/auth/logout` | 공개(로그인 선택) | - | - | 세션 삭제 |
 | GET | `/api/auth/me` | 공개(로그인 선택) | - | - | 현재 사용자(로그인 안 했으면 null) |
 | POST | `/api/auth/signup` | 공개 | - | `Signup` {name: string, email: string, password: string, phone: string, age14: boolean, terms: boolean, privacy: boolean} | 지원자 가입(이름·이메일·비밀번호·휴대전화·만 14세·필수 동의). ACC-02 |
+| POST | `/api/auth/withdraw` | 로그인 | - | `Withdraw` {password: string} | 회원 탈퇴(PRD v0.9 ACC-10). 지원자만 화면에서 직접 탈퇴한다(기업 담당자는 회사 데이터가 있어 운영자 문의). |
 
 ## 공개
 
@@ -43,12 +44,14 @@
 | POST | `/api/applications/{app_id}/resume` | 지원자 | app_id(p) | `ResumeConfirm` {data: object, extraction_id?: integer, save_title?: string} | 이력서 확인 완료 스냅샷 저장, 자동값 대비 수정 필드 계산. APP-05, OCR-05 |
 | GET | `/api/attempts/{attempt_id}` | 지원자 | attempt_id(p) | - | 현재 상태·현재 질문·남은 시간. 재접속 시 장애/임의 종료 판정 |
 | POST | `/api/attempts/{attempt_id}/answer` | 지원자 | attempt_id(p) | `Answer` {question_id: integer, text: string} | 답변 저장 → 꼬리질문 판단 → 다음 질문 또는 코딩/완료 전이. INT-02~07 |
+| POST | `/api/attempts/{attempt_id}/answer-audio` | 지원자 | attempt_id(p) | multipart/form-data: question_id: integer, text?: string, audio?: string | v0.9 INT-03: 답변 녹음 → Qwen3-ASR로 글로 바꿔 저장. 음성 파일은 저장하지 않는다. |
 | GET | `/api/attempts/{attempt_id}/coding` | 지원자 | attempt_id(p) | - | 코딩 문제·공개 예제·저장 코드·남은 시간. COD-01 |
 | POST | `/api/attempts/{attempt_id}/coding/submit` | 지원자 | attempt_id(p) | - | 최종 제출 → 응시 완료. COD-04 |
 | POST | `/api/attempts/{attempt_id}/coding/{problem_id}/run` | 지원자 | attempt_id(p), problem_id(p) | `Code` {code: string} | 공개 예제로 실행(샌드박스). COD-05 |
 | POST | `/api/attempts/{attempt_id}/coding/{problem_id}/save` | 지원자 | attempt_id(p), problem_id(p) | `Code` {code: string} | 코드 자동 저장 |
 | POST | `/api/attempts/{attempt_id}/events` | 지원자 | attempt_id(p) | `Event` {type: string, detail?: object} | exit · user_exit · paste_block · offline 이벤트. 5.2, RES-04, COD-07 |
 | POST | `/api/attempts/{attempt_id}/heartbeat` | 지원자 | attempt_id(p) | - | 5초 주기 생존 신호. 5.1 |
+| GET | `/api/attempts/{attempt_id}/questions/{question_id}/audio` | 지원자 | attempt_id(p), question_id(p) | - | v0.9 INT-01: 질문 음성(Qwen3-TTS, 캐시). 실패하면 503 → 화면이 브라우저 내장 음성으로 읽는다. |
 | POST | `/api/attempts/{attempt_id}/resume` | 지원자 | attempt_id(p) | - | RES-02: 이어가기 — 끊긴 질문을 새 답변 시간으로, 코딩은 남은 시간 유지. |
 | GET | `/api/me/applications` | 지원자 | - | - | 내 지원 현황·응시·분석 상태·결과 공개 여부·결정 방식 |
 | GET | `/api/me/notifications` | 로그인 | - | - | 사이트 내 알림 |
@@ -56,6 +59,12 @@
 | GET | `/api/me/resumes` | 지원자 | - | - | 마이페이지 등록 이력서 목록. APP-04 |
 | POST | `/api/me/resumes` | 지원자 | - | `ResumeSave` {title: string, data: object} | 이력서 저장 |
 | DELETE | `/api/me/resumes/{rid}` | 지원자 | rid(p) | - | 이력서 삭제 |
+| GET | `/api/payments/config` | 공개 | - | - | 화면이 결제 버튼을 열지 정할 때 쓰는 공개 정보(키 없음). |
+| GET | `/api/payments/me` | 로그인 | - | - | 내(지원자) 또는 우리 회사(기업 담당자)의 요금제·정기결제·결제 내역. |
+| GET | `/api/payments/naverpay/return` | 공개 | sub(q), state?(q) | - | 네이버페이 등록창 → returnUrl. 1회용 state로 우리 주문을 확인하고, 서버가 등록 완료·첫 결제를 직접 요청한다. |
+| POST | `/api/payments/subscriptions` | 로그인 | - | - | Advanced 정기결제 시작 → 네이버페이 등록창 호출 값(공개 값만). 금액은 서버 요금표에서 정한다. |
+| POST | `/api/payments/subscriptions/cancel` | 로그인 | - | - | - |
+| POST | `/api/payments/{payment_id}/refund` | 운영자 | payment_id(p) | `Refund` {reason?: string} | 운영자 전용 전액 취소(환불 기준 미결 → 운영자 판단, 감사 로그). |
 | GET | `/api/practice/coding` | 지원자 | - | - | - |
 | GET | `/api/practice/coding/{pid}` | 지원자 | pid(p) | - | - |
 | POST | `/api/practice/coding/{pid}/run` | 지원자 | pid(p) | `Code` {code: string} | - |

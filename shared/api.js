@@ -107,5 +107,60 @@ const HH = (() => {
   enhancePasswords(document);
   new MutationObserver(() => enhancePasswords(document)).observe(document.documentElement, { childList: true, subtree: true });
 
-  return { api, get, post, put, del, esc, $, $$, toast, modal, fmtDate, fmtDateTime, fmtYMD, score, ITEM_KO, CAT_KO, ATTEMPT_KO, ANALYSIS_KO, STEP_KO, SECTION_KO, devbar };
+  /* 요금제·결제 화면(PRD v0.9 PAY-07~12, 2026-11-06 사용자 승인: 기존 카드 1개 + 표 + 버튼만, 새 색·장식 없음).
+     지원자 #/billing · 기업 담당자 #/billing 공통. 네이버페이 등록창은 공식 SDK(nsp.pay.naver.com)만 쓴다 */
+  const PAY_STATUS_KO = { active: '이용 중', canceled: '해지됨(기간 끝까지 이용)', past_due: '결제 재시도 중', expired: '종료', failed: '실패', pending: '등록 중' };
+  const PAYMENT_KO = { ready: '진행 중', paid: '결제 완료', failed: '결제 실패', canceled: '취소(환불)' };
+  const RESULT_KO = { ok: ['정기결제가 시작되었습니다. Advanced를 이용할 수 있습니다.', false], invalid: ['이미 처리되었거나 잘못된 결제 요청입니다.', true],
+    UserCancel: ['결제 수단 등록을 취소했습니다.', true], DataExist: ['이미 등록된 네이버페이 자동결제가 있습니다. 네이버페이에서 기존 등록을 해지한 뒤 다시 시도해 주세요.', true] };
+  const wonFmt = (n) => `${Number(n || 0).toLocaleString('ko-KR')}원`;
+  function loadScript(src) {
+    return new Promise((ok, bad) => {
+      if ([...document.scripts].some((s) => s.src === src)) return ok();
+      const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => bad(new Error('네이버페이 화면을 불러오지 못했습니다.'));
+      document.head.appendChild(s);
+    });
+  }
+  async function billing(el, params) {
+    const r = params && params.get('result');
+    if (r) { const [msg, bad] = RESULT_KO[r] || [`결제를 완료하지 못했습니다. (${r})`, true]; toast(msg, bad); history.replaceState(null, '', location.pathname + '#/billing'); }
+    const d = await get('/api/payments/me');
+    const s = d.subscription;
+    const adv = d.plan === 'advanced';
+    const until = s && s.current_period_end ? fmtYMD(s.current_period_end) : '-';
+    el.innerHTML = `<h1>요금제</h1><p class="sub">${d.plan_code === 'company_advanced' ? '회사 단위 요금제입니다. 같은 회사 담당자 모두에게 적용됩니다.' : '내 계정의 요금제입니다.'}</p>
+      <div class="card col" style="margin-top:18px">
+        <div class="between"><b style="font-size:18px">${adv ? 'Advanced' : 'Basic'}</b>${s ? `<span class="pill ${s.status === 'active' ? 'on' : 'dim'}">${esc(PAY_STATUS_KO[s.status] || s.status)}</span>` : '<span class="pill dim">무료</span>'}</div>
+        ${s ? `<div class="sub">월 ${wonFmt(s.amount)} · 네이버페이 자동결제 · 이용 기간 ${until}까지${s.next_charge_at ? ` · 다음 결제 ${fmtYMD(s.next_charge_at)}` : ''}</div>`
+            : `<div class="sub">Advanced는 월 ${wonFmt(d.price)}이며 네이버페이로 매월 자동 결제됩니다. 언제든 해지할 수 있고, 해지해도 결제한 기간 끝까지 이용할 수 있습니다.</div>`}
+        <div class="row">${!d.enabled ? '<button class="btn primary" disabled>결제 준비 중</button>'
+          : s && s.status !== 'canceled' ? '<button class="btn ghost" id="pay-cancel">정기결제 해지</button>'
+          : s ? '' : '<button class="btn primary" id="pay-start">네이버페이로 구독하기</button>'}
+          ${d.mode === 'mock' ? '<span class="small">개발용 가짜 결제 모드 — 실제 결제가 일어나지 않습니다.</span>' : ''}</div>
+        <p class="small">결제를 누르면 자동 갱신(매월 같은 금액 결제)에 동의하는 것으로 봅니다. 카드·계좌 번호는 네이버페이가 처리하며 headhunterAI는 저장하지 않습니다. <a href="/terms" target="_blank" rel="noopener">이용약관</a> 제8조</p>
+      </div>
+      <h2 style="margin-top:26px">결제 내역</h2>
+      ${d.payments && d.payments.length ? `<div class="card" style="padding:0;overflow-x:auto"><table class="tbl"><thead><tr><th>결제일</th><th>이용 기간</th><th>금액</th><th>상태</th></tr></thead><tbody>
+        ${d.payments.map((p) => `<tr><td>${fmtYMD(p.paid_at)}</td><td>${fmtYMD(p.period_start)} ~ ${fmtYMD(p.period_end)}</td><td>${wonFmt(p.amount)}</td><td>${esc(PAYMENT_KO[p.status] || p.status)}${p.fail_code ? ` <span class="small">(${esc(p.fail_code)})</span>` : ''}</td></tr>`).join('')}
+        </tbody></table></div>` : '<p class="sub">결제 내역이 없습니다.</p>'}`;
+    const start = $('#pay-start', el);
+    if (start) start.onclick = async () => {
+      start.disabled = true;
+      try {
+        const o = await post('/api/payments/subscriptions');
+        if (o.mock) { location.href = o.redirect; return; }
+        await loadScript(o.sdk);
+        window.Naver.Pay.create(o.create).open(o.open);   // 등록 후 네이버페이가 서버 returnUrl로 돌려보낸다
+      } catch (e) { toast(e.message, true); start.disabled = false; }
+    };
+    const cancel = $('#pay-cancel', el);
+    if (cancel) cancel.onclick = async () => {
+      const ok = await modal({ title: '정기결제를 해지할까요?', body: `다음 결제부터 멈추고, 이미 결제한 기간(${until}까지)은 계속 Advanced로 이용할 수 있습니다.`,
+        buttons: [{ label: '취소', value: false }, { label: '해지하기', value: true, primary: true }] });
+      if (!ok) return;
+      try { await post('/api/payments/subscriptions/cancel'); toast('정기결제를 해지했습니다.'); billing(el); } catch (e) { toast(e.message, true); }
+    };
+  }
+
+  return { api, get, post, put, del, esc, $, $$, toast, modal, fmtDate, fmtDateTime, fmtYMD, score, ITEM_KO, CAT_KO, ATTEMPT_KO, ANALYSIS_KO, STEP_KO, SECTION_KO, devbar, billing };
 })();

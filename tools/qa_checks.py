@@ -394,6 +394,140 @@ def ev28():
     return (rate is not None and rate >= 0.8), {"value": rate, "n": tries, "model": "qwen3:8b(로컬)", "note": f"블라인드 풀이 일치 {hits}/{tries}(수정 전 시도 포함)"}
 
 
+# ---------------- v0.9: 실행기 보안 · 결제 · 탈퇴 · 개인정보 · 음성 (2026-11-09) ----------------
+@check("UT-33")
+def ut33():
+    from app import coding
+    p = db.one("SELECT * FROM coding_problems WHERE id=(SELECT min(id) FROM coding_problems)")
+    f = p["func_name"]
+    attacks = [
+        "import os\ndef %s(*a):\n    raise Exception(str(os.listdir('.')) + open('cases.json').read()[:300])\n",
+        "import sys\ndef %s(*a):\n    g=sys._getframe(1).f_globals\n    raise Exception(str(g.get('cases')))\n",
+        "import sys\ndef %s(*a):\n    print('LEAK', a); print('LEAK', a, file=sys.stderr)\n",
+    ]
+    leaks = 0
+    for code in attacks:
+        res = coding.sandbox_run(code % f, f, p["tests"], hide_hidden=True)
+        hid = [r for t, r in zip(p["tests"], res.get("results", [])) if not t.get("public")]
+        leaks += sum(1 for r in hid if set(r) - {"ok", "error"} or len(str(r.get("error", ""))) > 40)
+        if "expected" in json.dumps(res):
+            leaks += 1
+    sols = db.all_("SELECT g.solution, p.func_name, p.tests FROM generated_problems g JOIN coding_problems p ON p.id=g.published_problem_id LIMIT 20")
+    bad = 0
+    for g in sols:
+        r = coding.sandbox_run(g["solution"], g["func_name"], g["tests"], wait=40, hide_hidden=True)
+        bad += int(r["status"] != "ok" or sum(1 for x in r["results"] if x.get("ok")) != len(g["tests"]))
+    return leaks == 0 and bad == 0, f"누출 {leaks}건 · 기준 풀이 {len(sols) - bad}/{len(sols)} 통과"
+
+
+@check("UT-34")
+def ut34():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from app import payments
+    d = payments.add_month(datetime(2027, 1, 31, 10, tzinfo=ZoneInfo("Asia/Seoul")))
+    k1, k2 = payments.merchant_user_id("user", 3), payments.merchant_user_id("user", 3)
+    src = open("/srv/app/config.py", encoding="utf-8").read()
+    rule = 'if _pm == "mock" and (os.getenv("RAILWAY_ENVIRONMENT") or not DEV_MODE)' in src
+    ok = (d.month, d.day) == (2, 28) and k1 == k2 and len(k1) == 40 and rule
+    return ok, f"1/31+1개월 = {d.month}/{d.day} · 사용자 키 {len(k1)}자 동일 {k1 == k2} · 배포본 mock 차단 규칙 {rule}"
+
+
+def _new_member(c, tag):
+    e = f"qa{tag}{int(time.time() * 1000)}@example.test"
+    c.post("/api/auth/signup", json={"name": "QA시험", "email": e, "password": "qatest1234!", "phone": "010-0000-0000",
+                                     "age14": True, "terms": True, "privacy": True}).raise_for_status()
+    return e, db.one("SELECT id FROM users WHERE email=%s", e)["id"]
+
+
+def _subscribe(c):
+    o = c.post("/api/payments/subscriptions").json()
+    return o, c.get(o["redirect"].replace(BASE, ""), follow_redirects=False)
+
+
+@check("IT-34")
+def it34():
+    from app import config, payments
+    from app.payments import mock
+    if config.PAYMENTS_MODE != "mock":
+        raise RuntimeError(f"PAYMENTS_MODE={config.PAYMENTS_MODE} (mock에서만 시험)")
+    c = httpx.Client(base_url=BASE, timeout=60)
+    e, uid = _new_member(c, "pay")
+    o, r1 = _subscribe(c)
+    plan1 = c.get("/api/payments/me").json()["plan"]
+    replay = c.get(o["redirect"].replace(BASE, ""), follow_redirects=False).headers.get("location", "")
+    dup = c.post("/api/payments/subscriptions").status_code
+    sid = db.one("SELECT max(id) m FROM subscriptions WHERE owner_type='user' AND owner_id=%s", uid)["m"]
+    end0 = db.one("SELECT current_period_end e FROM subscriptions WHERE id=%s", sid)["e"]
+    db.run("UPDATE subscriptions SET next_charge_at=now() - interval '1 minute' WHERE id=%s", sid)
+    payments.renew_due()
+    end1 = db.one("SELECT current_period_end e FROM subscriptions WHERE id=%s", sid)["e"]
+    cancel = c.post("/api/payments/subscriptions/cancel").json()
+    refund = c.post("/api/payments/1/refund", json={}).status_code
+    c2 = httpx.Client(base_url=BASE, timeout=60)   # 3회 실패 → expired (별도 계정)
+    e2, uid2 = _new_member(c2, "fail")
+    _subscribe(c2)
+    sid2 = db.one("SELECT max(id) m FROM subscriptions WHERE owner_type='user' AND owner_id=%s", uid2)["m"]
+    mock.FAIL_NEXT["charge"] = 5
+    for _ in range(3):
+        db.run("UPDATE subscriptions SET next_charge_at=now() - interval '1 minute' WHERE id=%s", sid2)
+        payments.renew_due()
+    mock.FAIL_NEXT["charge"] = 0
+    st2 = db.one("SELECT status FROM subscriptions WHERE id=%s", sid2)["status"]
+    for cl in (c, c2):   # 시험 계정 정리(탈퇴 — 결제 기록은 남음)
+        cl.post("/api/auth/withdraw", json={"password": "qatest1234!"})
+    ok = ("result=ok" in r1.headers.get("location", "") and plan1 == "advanced" and "result=invalid" in replay and dup == 409
+          and end1 > end0 and cancel["plan"] == "advanced" and cancel["subscription"]["status"] == "canceled" and refund == 403 and st2 == "expired")
+    return ok, (f"첫 결제 {plan1} · 재사용 {replay.split('=')[-1]} · 중복 {dup} · 갱신 {end0:%m/%d}→{end1:%m/%d} · 해지 후 {cancel['plan']} · "
+                f"지원자 환불 {refund} · 3회 실패 {st2}")
+
+
+@check("IT-35")
+def it35():
+    from app import config
+    if config.PAYMENTS_MODE != "mock":
+        raise RuntimeError(f"PAYMENTS_MODE={config.PAYMENTS_MODE} (mock에서만 시험)")
+    c = httpx.Client(base_url=BASE, timeout=60)
+    e, uid = _new_member(c, "wd")
+    _subscribe(c)
+    sid = db.one("SELECT max(id) m FROM subscriptions WHERE owner_type='user' AND owner_id=%s", uid)["m"]
+    wrong = c.post("/api/auth/withdraw", json={"password": "nope"}).status_code
+    ok_w = c.post("/api/auth/withdraw", json={"password": "qatest1234!"}).status_code
+    users = db.one("SELECT count(*) n FROM users WHERE id=%s", uid)["n"]
+    sub = db.one("SELECT status, created_by FROM subscriptions WHERE id=%s", sid)
+    pays = db.one("SELECT count(*) n FROM payments WHERE subscription_id=%s", sid)["n"]
+    aud = db.one("SELECT 1 x FROM audit_logs WHERE action='account_withdrawn' AND target_id=%s", str(uid))
+    rc = httpx.Client(base_url=BASE, timeout=30)
+    rc.post("/api/auth/login", json={"email": "recruiter@headhunter.ai", "password": "recruiter99!", "role": "recruiter"})
+    rec = rc.post("/api/auth/withdraw", json={"password": "x"}).status_code
+    ok = (wrong == 400 and ok_w == 200 and users == 0 and sub["status"] == "canceled" and sub["created_by"] is None
+          and pays == 1 and bool(aud) and rec in (401, 403))
+    return ok, f"틀린 비번 {wrong} · 탈퇴 {ok_w} · 계정 {users} · 구독 {sub['status']}/{sub['created_by']} · 결제 기록 {pays} · 감사 {bool(aud)} · 담당자 {rec}"
+
+
+@check("IT-36")
+def it36():
+    from app import config
+    codes = [httpx.get(BASE + u, timeout=30).status_code for u in ("/privacy", "/terms")]
+    foots = [("legal-links" in httpx.get(BASE + u, timeout=30).text) for u in ("/", "/applicant/", "/admin/")]
+    ok = codes == [200, 200] and all(foots) and config.CONSENT_VERSION.startswith("2026-11-06.v2")
+    return ok, f"/privacy {codes[0]} · /terms {codes[1]} · 하단 링크 {sum(foots)}/3 · 동의 버전 {config.CONSENT_VERSION.split()[0]}"
+
+
+@check("IT-37")
+def it37():
+    from app import config, speech
+    h = speech.health()
+    if not h.get("enabled") or not h.get("tts") or not h.get("asr"):
+        raise RuntimeError(f"음성 서비스 준비 안 됨: {h}")
+    config.TTS_DIR = "/tmp/qa_tts"
+    text = "안녕하세요. 첫 번째 질문입니다."
+    wav = speech.synthesize(text)
+    back = speech.transcribe(wav)
+    norm = lambda x: "".join(ch for ch in x if ch.isalnum())
+    return norm(back) == norm(text), f"wav {len(wav)}바이트 · 되돌린 글 '{back}'"
+
+
 def main(ids):
     for tc in ids or list(CHECKS):
         fn = CHECKS.get(tc)

@@ -33,7 +33,11 @@ LANG = {"ko": "Korean", "en": "English"}
 
 if DEVICE == "cpu":
     torch.set_num_threads(max(1, int(os.getenv("SPEECH_THREADS", str(os.cpu_count() or 2)))))
-DTYPE = torch.float32 if DEVICE == "cpu" else torch.float16
+_DT = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
+_default_dt = "float32" if DEVICE == "cpu" else "float16"
+# GTX 16xx(Turing)는 TTS를 float16으로 돌리면 샘플링에서 NaN → CUDA assert가 난다(2026-11-09 실측) → TTS_DTYPE=float32
+ASR_DTYPE = _DT[os.getenv("ASR_DTYPE", _default_dt)]
+TTS_DTYPE = _DT[os.getenv("TTS_DTYPE", _default_dt)]
 
 app = FastAPI(title="headhunterAI speech")
 _models, _locks, _errors = {}, {"asr": threading.Lock(), "tts": threading.Lock()}, {}
@@ -47,11 +51,11 @@ def _load(kind):
         try:
             if kind == "asr":
                 from qwen_asr import Qwen3ASRModel
-                m = Qwen3ASRModel.from_pretrained(ASR_MODEL, dtype=DTYPE, device_map=DEVICE,
+                m = Qwen3ASRModel.from_pretrained(ASR_MODEL, dtype=ASR_DTYPE, device_map=DEVICE,
                                                   max_inference_batch_size=1, max_new_tokens=512)
             else:
                 from qwen_tts import Qwen3TTSModel
-                m = Qwen3TTSModel.from_pretrained(TTS_MODEL, dtype=DTYPE, device_map=DEVICE)
+                m = Qwen3TTSModel.from_pretrained(TTS_MODEL, dtype=TTS_DTYPE, device_map=DEVICE)
         except Exception as e:  # 모델 내려받기·적재 실패 → 다음 요청 때 다시 시도
             _errors[kind] = f"{type(e).__name__}: {str(e)[:300]}"
             raise

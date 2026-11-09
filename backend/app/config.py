@@ -75,7 +75,7 @@ os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 REPORT_WRITER = os.getenv("REPORT_WRITER", "crewai")  # crewai | template
 
-# 음성 서비스 (v0.9, TRD v0.6 15장) — Qwen3-ASR(STT)·Qwen3-TTS(TTS) 로컬 모델 컨테이너(backend/speech).
+# 음성 서비스 (v0.9, TRD v0.6 14.6) — Qwen3-ASR(STT)·Qwen3-TTS(TTS) 로컬 모델 컨테이너(backend/speech).
 # 비어 있거나 응답이 없으면 STT는 비상 입력란, TTS는 브라우저 내장 음성으로 대체(INT-01)
 SPEECH_URL = os.getenv("SPEECH_URL", "").rstrip("/")
 SPEECH_TOKEN = os.getenv("SPEECH_TOKEN", "")
@@ -83,7 +83,7 @@ STT_TIMEOUT = float(os.getenv("STT_TIMEOUT", "60"))
 TTS_TIMEOUT = float(os.getenv("TTS_TIMEOUT", "90"))
 TTS_DIR = os.getenv("TTS_DIR", "/data/tts")      # 질문 음성 캐시(질문 문장 해시 → wav). 개인정보 아님(질문 문장만)
 
-# 결제 (v0.9, PRD PAY-07~12, TRD v0.6 14장) — 네이버페이 자동결제. 금액은 이 요금표에서만 정한다
+# 결제 (v0.9, PRD PAY-07~12, TRD v0.6 14.5) — 네이버페이 자동결제. 금액은 이 요금표에서만 정한다
 NAVERPAY_CLIENT_ID = os.getenv("NAVERPAY_CLIENT_ID", "").strip()
 NAVERPAY_CLIENT_SECRET = os.getenv("NAVERPAY_CLIENT_SECRET", "").strip()
 NAVERPAY_CHAIN_ID = os.getenv("NAVERPAY_CHAIN_ID", "").strip()
@@ -111,6 +111,6 @@ CODING_MINUTES = 60
 QUESTION_SECONDS = 90
 FOLLOWUP_SECONDS = 60
 MAX_FOLLOWUPS = 4
-CONSENT_VERSION = "2026-10-28.v1"
+CONSENT_VERSION = "2026-11-06.v2"   # v2: 제3자 제공 4요소·자동화된 결정 거부권·음성 삭제·국외 보관 문구 (legal/consent_forms.md)
 
 VERSIONS = {"prompt": "p-2026.11.05b", "rubric": "r-1.0", "ocr": "tesseract-5 " + OCR_LANG}

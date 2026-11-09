@@ -50,7 +50,7 @@ function changePwView() {
 }
 
 /* ───────── shell ───────── */
-const MENU = [['jobs', '공고 관리'], ['applicants', '지원자 목록'], ['shortlist', '다음 전형 대상자'], ['dashboard', '대시보드·통계'], ['alerts', '알림']];
+const MENU = [['jobs', '공고 관리'], ['applicants', '지원자 목록'], ['shortlist', '다음 전형 대상자'], ['dashboard', '대시보드·통계'], ['alerts', '알림'], ['billing', '요금제']];
 
 function shell(active) {
   const menu = me.role === 'operator' ? [...MENU, ['ops', '분석 확인 필요']] : MENU;
@@ -72,6 +72,7 @@ const routes = [
   [/^\/dashboard$/, dashboardView],
   [/^\/alerts$/, alertsView],
   [/^\/ops$/, opsView],
+  [/^\/billing$/, (params) => HH.billing(shell('billing'), params)],   // PRD v0.9 PAY-07~12 (회사 단위 요금제)
 ];
 
 async function router() {

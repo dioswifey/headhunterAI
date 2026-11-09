@@ -25,13 +25,53 @@ async def lifespan(_app):
 
 
 def _ensure_schema():
-    """빈 DB면 schema.sql을 적용한다(Railway Postgres용. 로컬은 initdb가 이미 적용)."""
-    if db.one("SELECT to_regclass('public.companies') AS t")["t"]:
-        return
+    """빈 DB면 schema.sql을 적용한다(Railway Postgres용. 로컬은 initdb가 이미 적용).
+    이미 있는 DB면 schema.sql에 새로 생긴 테이블·인덱스·nullable 컬럼만 더한다(있는 것은 건드리지 않음)."""
     path = Path(config.SCHEMA_PATH)
-    if path.exists():
+    if not path.exists():
+        return
+    sql = path.read_text(encoding="utf-8")
+    if not db.one("SELECT to_regclass('public.companies') AS t")["t"]:
         with db.tx() as conn:
-            conn.execute(path.read_text(encoding="utf-8"))
+            conn.execute(sql)
+        return
+    _add_missing(sql)
+
+
+def _add_missing(sql):
+    import logging
+    import re
+    log = logging.getLogger("schema")
+    body = re.sub(r"--[^\n]*", "", sql)
+    tables = re.findall(r"(CREATE TABLE (\w+) \(.*?\n\);)", body, re.S)
+    exists = lambda t: db.one("SELECT to_regclass(%s) AS t", "public." + t)["t"]  # noqa: E731
+    def ddl(s):
+        with db.tx() as conn:
+            conn.execute(s)
+    created = []
+    for stmt, name in tables:
+        if not exists(name):
+            ddl(stmt)
+            created.append(name)
+    for stmt in re.findall(r"CREATE INDEX ON (\w+) ([^;]*);", body):
+        if stmt[0] in created:
+            ddl(f"CREATE INDEX ON {stmt[0]} {stmt[1]}")
+    for stmt, name in tables:                      # 기존 테이블에 새 컬럼: NULL 허용 컬럼만 자동 추가
+        have = {r["column_name"] for r in db.all_("SELECT column_name FROM information_schema.columns WHERE table_name=%s", name)}
+        for line in stmt.split("\n")[1:-1]:
+            m = re.match(r"\s*([a-z_0-9]+)\s+(.+?),?\s*$", line)
+            if not m or m.group(1) in ("unique", "check", "primary", "constraint", "foreign") or m.group(1) in have:
+                continue
+            if "NOT NULL" in m.group(2).upper() and "DEFAULT" not in m.group(2).upper():
+                log.warning("schema: %s.%s 는 NOT NULL이라 자동 추가하지 않음", name, m.group(1))
+                continue
+            try:
+                ddl(f"ALTER TABLE {name} ADD COLUMN IF NOT EXISTS {m.group(1)} {m.group(2)}")
+                created.append(f"{name}.{m.group(1)}")
+            except Exception as e:  # noqa: BLE001 — 기동은 막지 않고 기록만
+                log.warning("schema: %s.%s 추가 실패: %s", name, m.group(1), e)
+    if created:
+        log.warning("schema: 추가함 %s", created)
 
 
 # 이미 있는 DB(로컬·Railway)에 v0.9 변경을 적용한다. 모두 IF NOT EXISTS라 여러 번 돌아도 같다. 원본은 schema.sql

@@ -87,7 +87,7 @@ function requireLogin(next) {
 
 // ACC-04: 허용된 내부 경로만 복귀
 function safeNext(next) {
-  return next && /^\/(jobs\/\d+(\/apply)?|jobs\/applied|my|apply\/\d+\/[a-z]+|practice\/(sql(\/(s[12]|\d+))?|coding(\/(\d+|junior|senior))?))$/.test(next) ? next : '/my';
+  return next && /^\/(jobs\/\d+(\/apply)?|jobs\/applied|my|billing|apply\/\d+\/[a-z]+|practice\/(sql(\/(s[12]|\d+))?|coding(\/(\d+|junior|senior))?))$/.test(next) ? next : '/my';
 }
 
 const routes = [
@@ -102,6 +102,7 @@ const routes = [
   [/^\/login$/, login],
   [/^\/signup$/, signup],
   [/^\/my$/, mypage],
+  [/^\/billing$/, billingView],
   [/^\/apply\/(\d+)\/consent$/, consentView],
   [/^\/apply\/(\d+)\/resume$/, resumeView],
   [/^\/apply\/(\d+)\/env$/, envView],
@@ -323,8 +324,8 @@ async function signup(params) {
     <div class="field"><label>비밀번호 * (8자 이상)</label><input id="pw" type="password" autocomplete="new-password"></div>
     <div class="field"><label>휴대전화번호 *</label><input id="phone" placeholder="010-0000-0000" autocomplete="tel"></div>
     <label class="check"><input type="checkbox" id="age14"><span>만 14세 이상입니다. <span class="small">(필수)</span></span></label>
-    <label class="check"><input type="checkbox" id="terms"><span>이용약관에 동의합니다. <span class="small">(필수)</span></span></label>
-    <label class="check"><input type="checkbox" id="privacy"><span>회원 서비스 제공을 위한 개인정보 수집·이용(이름·이메일·비밀번호·휴대전화번호, 탈퇴 시까지 보관)에 동의합니다. <span class="small">(필수)</span></span></label>
+    <label class="check"><input type="checkbox" id="terms"><span>이용약관에 동의합니다. <span class="small">(필수)</span> <a class="small" href="/terms" target="_blank" rel="noopener">전문 보기</a></span></label>
+    <label class="check"><input type="checkbox" id="privacy"><span>회원 서비스 제공을 위한 개인정보 수집·이용(이름·이메일·비밀번호·휴대전화번호, 탈퇴 시까지 보관)에 동의합니다. 서비스 서버는 미국(Railway)에 있습니다. <span class="small">(필수)</span> <a class="small" href="/privacy" target="_blank" rel="noopener">전문 보기</a></span></label>
     <button class="btn primary" id="go" style="width:100%;margin-top:10px">가입하기</button>
     <p class="small" style="margin-top:10px">응시 데이터 수집 동의는 공고에 지원할 때 따로 받습니다.</p>
   </div></div>`;
@@ -385,10 +386,35 @@ async function mypage() {
       <div class="card"><h2>알림</h2>${notes.length ? notes.map((n) => `<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>${esc(n.title)}</b><div class="small">${esc(n.body)}</div></div>`).join('') : '<p class="small">새 알림이 없습니다.</p>'}</div>
       <div class="card"><h2>내 이력서</h2><p class="small">지원할 때 불러와 쓸 수 있습니다. 지원에 제출한 이력서는 별도로 보관됩니다.</p>
         ${resumes.length ? resumes.map((r) => `<div class="between" style="padding:8px 0;border-bottom:1px solid var(--line)"><span>${esc(r.title)} <span class="small">${fmtYMD(r.updated_at)}</span></span><button class="btn sm ghost" data-delres="${r.id}">삭제</button></div>`).join('') : '<p class="small">등록한 이력서가 없습니다. 지원 과정에서 저장할 수 있습니다.</p>'}</div>
-    </div></div>`;
+    </div>
+    <p class="small" style="margin-top:28px;text-align:right"><a href="#" id="withdraw" style="color:var(--muted2)">회원 탈퇴</a></p></div>`;
+  $('#withdraw').onclick = (e) => { e.preventDefault(); withdrawFlow(); };
   bindAppsTable(mypage);
   $$('[data-delres]').forEach((b) => (b.onclick = async () => { await del(`/api/me/resumes/${b.dataset.delres}`); mypage(); }));
   if (notes.some((n) => !n.read_at)) post('/api/me/notifications/read');
+}
+
+/* ───────── 요금제·결제 (PRD v0.9 PAY-07~12) ───────── */
+async function billingView(params) {
+  setNav('billing');
+  if (!requireLogin('/billing')) return;
+  view.innerHTML = '<div class="wrap mid" id="billing"></div>';
+  await HH.billing($('#billing'), params);
+}
+
+/* ───────── 회원 탈퇴 (PRD v0.9 ACC-10) ───────── */
+async function withdrawFlow() {
+  const wait = modal({ title: '회원 탈퇴',
+    body: `탈퇴하면 진행 중인 응시는 취소되고, 계정·이력서·지원 기록이 바로 삭제되며 되돌릴 수 없습니다. 정기결제는 해지되고, 결제 기록은 법령에 따라 5년간 보관됩니다.<br><br>
+      <input class="input" type="password" id="wd-pw" placeholder="비밀번호 확인" autocomplete="current-password" style="width:100%">`,
+    buttons: [{ label: '취소', value: false }, { label: '탈퇴하기', value: true, primary: true }] });
+  const pwBox = document.getElementById('wd-pw');   // modal은 닫힐 때 요소를 지우므로 먼저 잡아 둔다
+  if (!(await wait)) return;
+  const pw = pwBox ? pwBox.value : '';
+  try {
+    await post('/api/auth/withdraw', { password: pw });
+    me = null; await loadMe(); toast('탈퇴가 완료되었습니다. 그동안 이용해 주셔서 감사합니다.'); go('#/');
+  } catch (e) { toast(e.message, true); }
 }
 
 /* ───────── 지원 단계 공통 ───────── */
@@ -400,10 +426,10 @@ function stepsBar(now) {
 
 /* ───────── 동의 (APP-03) ───────── */
 const CONSENT_TEXT = [
-  ['data', '응시 데이터 수집·이용', '이력서 원본과 OCR 인식 결과, 답변 음성·텍스트, 카메라 녹화, 코드, 장애·이탈 기록을 1차 평가에 사용합니다.'],
-  ['ai', 'AI 질문 생성·자동 평가', '이력서 내용에 근거해 AI가 질문을 만들고, AI 평가와 정해진 규칙으로 1차 합격·불합격이 자동 산출됩니다. 결과에 대해 설명을 요구할 수 있습니다.'],
-  ['share', '지원 기업에 결과 제공', '평가 결과와 근거를 지원한 기업의 채용 담당자에게 제공합니다.'],
-  ['retention', '보관 기간', '응시 데이터는 결과 공개일부터 7일, 카메라 녹화는 응시 종료부터 3일 보관 후 자동 삭제됩니다.'],
+  ['data', '응시 데이터 수집·이용', '수집 항목: 이력서 원본과 인식 결과, 확인한 이력서 내용, 답변 텍스트, 코드, 응시 기록(시작·종료·화면 이탈·연결 끊김). 목적: 맞춤 질문 생성과 1차 평가. 답변 음성은 AI가 글로 바꾼 직후 삭제하고, 카메라 영상은 화면에 표시만 하며 녹화·저장하지 않습니다.'],
+  ['ai', 'AI 질문 생성·자동화된 결정', '이력서 내용에 근거해 AI(로컬 실행 Qwen 모델)가 질문을 만들고 답변을 평가합니다. 공고가 자동 판정이면 점수와 공고 기준으로 1차 합격·불합격이 사람 검토 없이 정해질 수 있습니다. 이 결정을 거부하거나 설명을 요구할 수 있으며, 요청하면 기업 담당자가 직접 검토합니다.'],
+  ['share', '지원 기업에 개인정보 제공', '제공받는 자: 지원한 기업. 목적: 1차 채용 심사. 항목: 이름·이메일·확인한 이력서 내용·답변 텍스트·코드·평가 점수와 근거·1차 결과. 보유: 결과 공개일부터 7일(서비스 안). 동의하지 않을 수 있으나 그러면 이 공고에 지원할 수 없습니다.'],
+  ['retention', '보관 기간·국외 보관', '응시 데이터는 결과 공개일부터 7일 뒤 자동 삭제됩니다. 서비스 서버가 미국(Railway)에 있어 데이터가 국외에 보관됩니다(개인정보 처리방침 5절).'],
   ['rules', '응시 규칙', '지원 건당 1회 응시, 중단 버튼 없음, 화면 이탈 1회 경고·2회 강제 퇴장(응시 취소).'],
 ];
 
@@ -416,7 +442,7 @@ async function consentView(appId) {
       ${CONSENT_TEXT.map(([k, t, d]) => `<label class="check"><input type="checkbox" data-c="${k}"><span><b>${t}</b> <span class="small">(필수)</span><br><span class="sub">${d}</span></span></label>`).join('<hr style="margin:6px 0">')}
       <hr><label class="check"><input type="checkbox" id="all"><b>모든 항목에 동의합니다</b></label>
     </div>
-    <div class="note" style="margin:14px 0">필수 항목에 모두 동의해야 다음 단계로 갈 수 있습니다. 동의를 철회하면 진행 중인 응시는 취소되고 데이터는 즉시 삭제됩니다. (동의 문구 버전은 기록됩니다)</div>
+    <div class="note" style="margin:14px 0">필수 항목에 모두 동의해야 다음 단계로 갈 수 있습니다. 동의를 철회하면 진행 중인 응시는 취소되고 데이터는 즉시 삭제됩니다. (동의 문구 버전은 기록됩니다) <a href="/privacy" target="_blank" rel="noopener">개인정보 처리방침 전문 보기</a></div>
     <div class="row"><button class="btn primary" id="next" disabled>동의하고 다음</button><a class="btn ghost" href="#/my">나중에 하기</a></div></div>`;
   const boxes = $$('[data-c]');
   const sync = () => { $('#next').disabled = !boxes.every((b) => b.checked); $('#all').checked = boxes.every((b) => b.checked); };
@@ -825,7 +851,8 @@ async function envView(appId) {
 async function interviewView(attemptId) {
   if (!requireLogin()) return;
   $('#top').hidden = true;
-  onLeave(() => { $('#top').hidden = false; });
+  if ($('#legal-foot')) $('#legal-foot').hidden = true;   // 응시 중에는 약관 링크로 화면을 벗어나지 않게 숨김
+  onLeave(() => { $('#top').hidden = false; if ($('#legal-foot')) $('#legal-foot').hidden = false; });
   let st = await get(`/api/attempts/${attemptId}`);
   let active = false;           // 이탈 감시 on/off
   let unloading = false;
@@ -1146,6 +1173,13 @@ async function interviewView(attemptId) {
         const fd = new FormData();
         fd.append('question_id', current.id); fd.append('text', ans.value); fd.append('audio', audio, 'answer.webm');
         st = await HH.api(`/api/attempts/${attemptId}/answer-audio`, { method: 'POST', body: fd });
+        if (st.stt_retry) {   // INT-04: 음성 변환 장애 → 감점 없이 같은 질문 다시
+          await modal({ title: '음성을 글로 바꾸지 못했습니다', body: '시스템 문제로 답변 음성을 인식하지 못했습니다. 감점 없이 같은 질문에 다시 답해 주세요.', buttons: [{ label: '다시 답하기', value: true, primary: true }] });
+          try { await document.documentElement.requestFullscreen(); } catch (_) { /* ignore */ }
+          $('#done').disabled = true; ans.disabled = true; ans.value = '';
+          $('#timer').textContent = current.time_limit;
+          return present(current);
+        }
       } else {
         st = await post(`/api/attempts/${attemptId}/answer`, { question_id: current.id, text: ans.value });
       }

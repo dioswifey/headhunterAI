@@ -398,11 +398,19 @@ async def answer_audio(attempt_id: int, question_id: int = Form(...), text: str 
     if audio is not None:
         raw = await audio.read(20 * 1024 * 1024 + 1)
         if raw and len(raw) <= 20 * 1024 * 1024:
-            try:
-                heard = speech.transcribe(raw)
-            except speech.SpeechError as e:
-                stt_error = str(e)[:200]
+            for _ in range(3):   # INT-04: 변환 2회 재시도
+                try:
+                    heard, stt_error = speech.transcribe(raw), None
+                    break
+                except speech.SpeechError as e:
+                    stt_error = str(e)[:200]
         del raw
+    if stt_error and not typed:
+        # INT-04: 재시도해도 변환 실패 = 시스템 장애 → 저장하지 않고 같은 질문을 다시 답하게 한다(감점 없음)
+        db.run("INSERT INTO attempt_events (attempt_id, type, detail) VALUES (%s,'stt_failed',%s)", attempt_id, db.J({"question_id": q["id"], "error": stt_error, "retry": True}))
+        st = _state(att)
+        st["stt_retry"] = True
+        return st
     full = "\n".join(x for x in (heard, typed) if x)
     source = "voice+typed" if (heard and typed) else ("voice" if heard else ("typed" if typed else None))
     if stt_error:

@@ -1,0 +1,22 @@
+# 음성 서비스를 GPU로 돌리는 선택 설정(v0.9, TRD v0.6 14.6).
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build speech
+# 실측(GTX 1660 SUPER, 2026-11-09): STT 4초 음성 1.8초 · TTS 4.5초 음성 18초. GPU 메모리 약 5.9GB를 써서
+# 6GB 회사 PC에서는 Ollama(qwen3:4b)와 같이 못 올린다 → 12GB 이상(집 PC RTX 4070 Ti)에서 쓴다.
+# GTX 16xx(Turing)는 TTS float16에서 CUDA assert가 나서 TTS_DTYPE=float32.
+services:
+  speech:
+    build:
+      context: ./backend/speech
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cu124
+    environment:
+      SPEECH_DEVICE: cuda:0
+      ASR_DTYPE: float16
+      TTS_DTYPE: float32
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
