@@ -19,9 +19,20 @@ async def lifespan(_app):
     seed.seed()
     seed.ensure_demo_companies()
     seed.sync_recruiter_names()
+    _load_banks()
     scheduler.start()
     yield
     db.pool.close()
+
+
+def _load_banks():
+    """코딩·SQL 문제은행·질문 은행(DB·Redis)을 backend/db/seed 파일에서 채운다(없는 것만, 2026-11-09).
+    끄려면 BANK_SEED=0. 실패해도 서비스는 뜬다."""
+    import os
+    if os.getenv("BANK_SEED", "1") == "0":
+        return
+    from . import bank_seed
+    print("[bank_seed]", bank_seed.apply_all(), flush=True)
 
 
 def _ensure_schema():

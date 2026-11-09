@@ -47,7 +47,9 @@ SOURCES = {
     "ai_ax": [("csv_aidev", os.path.join(QB, "ai-engineering-interview-questions-main", "data",
                                           "ai-engineering-interview-questions.csv")),
               ("xlsx", os.path.join(QB, "questionbank.xlsx"))],
-    "common": [("xlsx", os.path.join(QB, "questionbank.xlsx"))],
+    # 인성 = questionbank/character_assessment/*.md (2026-11-09). xlsx common 시트의 인성 8행은 md로 옮겼으므로 md판만 적재(중복 방지)
+    "common": [("character_md", os.path.join(QB, "character_assessment")),
+               ("xlsx", os.path.join(QB, "questionbank.xlsx"))],
     "backend": [("xlsx", os.path.join(QB, "questionbank.xlsx"))],
     "data_sci": [("xlsx", os.path.join(QB, "questionbank.xlsx"))],
 }
@@ -102,14 +104,41 @@ def _load_xlsx(path, sheet):
     return docs
 
 
+def _load_character_md(path):
+    """인성 질문 은행 md (questions.load_character_bank 형식). 좋은 답변 신호 → model_answer, 파고들 지점 → follow_up."""
+    from .. import questions
+    docs = []
+    for it in questions.load_character_bank(path):
+        doc_id = f"common:{it['char_id']}"
+        meta = {
+            "doc_id": doc_id, "role_code": "common", "category": "personality", "lang": "ko",
+            "sub_role": "character_assessment", "sub_role_name": "", "competency": it["competency"],
+            "difficulty": it["level"], "question": it["text"], "intent": it["intent"],
+            "model_answer": it["signals"], "red_flags": "", "follow_up": it["probes"],
+            "expected_keywords": "", "dup_group": it["dup_group"], "source": "직접 작성",
+            "source_file": f"{_rel(path)}/{it['file']}",
+        }
+        docs.append(Document(id=doc_id, page_content=it["text"], metadata=meta))
+    return docs
+
+
 def _load_sources(inp):
     roles = inp.get("roles") or list(SOURCES)
     docs, seen = [], set()
     for role in roles:
+        has_char = False
         for kind, path in SOURCES.get(role, []):
             if not os.path.exists(path):
                 continue
-            part = _load_csv_aidev(path) if kind == "csv_aidev" else _load_xlsx(path, role)
+            if kind == "csv_aidev":
+                part = _load_csv_aidev(path)
+            elif kind == "character_md":
+                part = _load_character_md(path)
+                has_char = has_char or bool(part)
+            else:
+                part = _load_xlsx(path, role)
+                if has_char:                     # 인성 원본 = character_assessment md(같은 문항을 옮김) → xlsx 사본은 중복이라 적재하지 않음. 인성은 md판으로 Redis에 있다
+                    part = [d for d in part if d.metadata["category"] != "personality"]
             for d in part:
                 if d.id not in seen:
                     seen.add(d.id)

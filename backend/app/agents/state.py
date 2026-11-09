@@ -88,7 +88,7 @@ class QuestionGenerator(BaseModel):
     retrieved: list[BankHit] = Field(default_factory=list)
     drafts: list[QuestionDraft] = Field(default_factory=list)
 
-    # 출력 (finalize) — 10문항: 인성 2 → 이력서 2 → 직무 4 → 기업 2
+    # 출력 (finalize) — 8문항: 인성 2 → 이력서 3 → 직무 2 → 기업 1 (questions.PLAN, 2026-11-09)
     final_questions: list[QuestionDraft] = Field(default_factory=list)
 
     # 면접 루프 (노드 9~13) — PRD INT-06: 질문당 1개, 전체 최대 4개

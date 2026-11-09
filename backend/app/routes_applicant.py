@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from . import coding, config, db, evaluation, llm, ocr, questions, report_mail, scheduler, security, speech
+from .agents import question_graph
 
 router = APIRouter(prefix="/api")
 KST = ZoneInfo("Asia/Seoul")
@@ -329,43 +330,6 @@ def attempt_state(attempt_id: int, user=Depends(security.applicant)):
     return _state(att)
 
 
-PRE_SCHEMA = {"type": "object", "properties": {
-    "question_topic": {"type": "string"}, "answer_topic": {"type": "string"}, "addresses_question": {"type": "boolean"},
-    "logic": {"type": "integer", "minimum": 1, "maximum": 5}, "relevance": {"type": "integer", "minimum": 1, "maximum": 5},
-    "inconsistent_with_resume": {"type": "boolean"}, "generic_only": {"type": "boolean"}, "followup_question": {"type": "string"}},
-    "required": ["question_topic", "answer_topic", "addresses_question", "logic", "relevance", "inconsistent_with_resume", "generic_only", "followup_question"]}
-PRE_SYSTEM = """너는 1차 면접 진행 중 답변을 빠르게 선평가하는 면접관이다. 아래 순서로 판단한다.
-1. question_topic: 질문이 묻는 핵심을 10자 안팎으로 쓴다.
-2. answer_topic: 답변이 실제로 말한 핵심을 10자 안팎으로 쓴다.
-3. addresses_question: 답변이 질문의 핵심을 직접 다루면 true, 다른 주제를 말하면 false.
-4. relevance(1~5): addresses_question이 false면 반드시 1~2점. logic(1~5): 주장-근거-결론의 일관성.
-5. inconsistent_with_resume: 근거 이력서 항목이 주어졌고 답변 내용이 그것과 명백히 다를 때만 true.
-6. generic_only: 구체적인 사례·수치·경험 없이 일반론만 말했을 때 true.
-7. followup_question: 질문의 원래 의도를 다시 겨냥하되 답변에 나온 내용을 짚어 더 구체적으로 묻는 한국어 질문 한 문장(60초 안에 답할 범위).
-거짓말 여부를 판단하거나 추궁하지 않는다. 나이·가족·학교 서열 등 인적 사정은 묻지 않는다."""
-
-
-def _maybe_followup(att, q, answer):
-    """INT-06: 질문당 1개, 전체 4개, 5초 안에 판단 못 하면 생략."""
-    if q["parent_id"] is not None or att["followups_used"] >= config.MAX_FOLLOWUPS:
-        return None
-    if evaluation.NO_CONTENT.match(answer) or len(answer.strip()) < 5:
-        return None  # INT-07
-    ref = ""
-    if q["resume_ref"] and q["resume_ref"].get("quote"):
-        ref = f"\n근거 이력서 항목: {q['resume_ref']['quote']}"
-    try:
-        r = llm.chat_json(PRE_SYSTEM, f"질문: {q['text']}{ref}\n답변: {answer[:1500]}", PRE_SCHEMA, timeout=config.FOLLOWUP_TIMEOUT)
-    except llm.LLMError:
-        return None
-    trigger = (not r["addresses_question"]) or r["logic"] <= 2 or r["relevance"] <= 2 or r["inconsistent_with_resume"] or r["generic_only"]
-    fq = (r.get("followup_question") or "").strip()
-    if not trigger or not fq or questions.BLOCKLIST.search(fq) or len(fq) > 150:
-        return None
-    reason = "논리성·관련성 2점 이하" if (not r["addresses_question"] or r["logic"] <= 2 or r["relevance"] <= 2) else ("이력서와 다름" if r["inconsistent_with_resume"] else "일반론")
-    return fq, reason
-
-
 class Answer(BaseModel):
     question_id: int
     text: str
@@ -433,26 +397,9 @@ def question_audio(attempt_id: int, question_id: int, user=Depends(security.appl
 
 
 def _save_answer(att, q, text, source, user):
-    attempt_id = att["id"]
-    db.run("UPDATE attempt_questions SET answer_text=%s, answer_status=%s, answer_source=%s, answered_at=now() WHERE id=%s",
-           text or None, "answered" if text else "no_answer", source, q["id"])
-    if text:
-        fu = _maybe_followup(att, q, text)
-        if fu:
-            db.run("""INSERT INTO attempt_questions (attempt_id, seq, parent_id, category, eval_items, text, gen_method, time_limit)
-                      VALUES (%s,%s,%s,'followup',%s,%s,'llm',%s)""", attempt_id, q["seq"], q["id"], q["eval_items"], fu[0], config.FOLLOWUP_SECONDS)
-            db.run("UPDATE attempt_questions SET prescore=%s WHERE id=%s", db.J({"followup_reason": fu[1]}), q["id"])
-            db.run("UPDATE attempts SET followups_used=followups_used+1 WHERE id=%s", attempt_id)
-            speech.prewarm([fu[0]])
-    if not _current_question(attempt_id):  # 기본 10문항 + 꼬리질문 모두 끝남
-        crit = att["criteria_snapshot"]
-        if crit["coding_enabled"]:
-            coding.assign_problems(attempt_id)
-            db.run(f"""UPDATE attempts SET status='coding', phase='coding', coding_deadline=now() + interval '{config.CODING_MINUTES} minutes'
-                       WHERE id=%s""", attempt_id)
-        else:
-            scheduler.finish_attempt(attempt_id, "completed", "interview_done")
-    return _state(_own_attempt(attempt_id, user))
+    """그래프 1-B 면접 한 걸음(LangGraph, ADLC v0.5 6.1-B): record_answer → judge_followup(A3) → make_followup? → next_question."""
+    question_graph.answer_step(att, q, text, source)
+    return _state(_own_attempt(att["id"], user))
 
 
 @router.post("/attempts/{attempt_id}/heartbeat")

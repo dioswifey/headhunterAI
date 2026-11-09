@@ -57,6 +57,30 @@ def normalize(fields, to):
             s = KO_PARTICLE_SPACE.sub(r"\1\2", s)
         out[k] = s
     return out
+def blank_empty(out, src, to):
+    """원문이 빈 칸은 번역도 빈 칸(코드가 강제). 모델이 빈 intent에 문장을 지어내던 문제(2026-11-09)."""
+    return {k: ("" if k.rsplit("_", 1)[0] in FIELDS and not (src.get(k.rsplit("_", 1)[0]) or "").strip() else v)
+            for k, v in out.items()}
+
+
+# 원문 의문사가 번역에서 사라지면 질문 뜻이 바뀐다('How do you…?' → '…하시겠습니까?' 예/아니오 질문)
+WH_EN_KO = [
+    (re.compile(r"^\s*how\b", re.I), re.compile(r"어떻게|어떤|방법|방식|얼마나|몇"), "원문 'How'의 뜻(어떻게·어떤 방식)이 빠졌다. 예/아니오 질문으로 바꾸지 말 것"),
+    (re.compile(r"^\s*what\b", re.I), re.compile(r"무엇|어떤|무슨|뭐"), "원문 'What'의 뜻(무엇·어떤)이 빠졌다"),
+    (re.compile(r"^\s*why\b", re.I), re.compile(r"왜|이유|까닭"), "원문 'Why'의 뜻(왜·이유)이 빠졌다"),
+    (re.compile(r"^\s*which\b", re.I), re.compile(r"어떤|어느|무엇"), "원문 'Which'의 뜻(어떤·어느)이 빠졌다"),
+    (re.compile(r"^\s*when\b", re.I), re.compile(r"언제|때|시점|경우"), "원문 'When'의 뜻(언제·때)이 빠졌다"),
+]
+
+
+def check_wh(fields, to, src):
+    """영→한 질문에서 의문사 보존 검사(규칙)."""
+    if to != "ko":
+        return []
+    q_src, q_out = (src.get("question") or ""), (fields.get("question_ko") or "")
+    return [f"question_ko: {msg}" for rx_src, rx_ko, msg in WH_EN_KO if rx_src.search(q_src) and q_out and not rx_ko.search(q_out)]
+
+
 EN_AWKWARD = [
     (re.compile(r"\bexplain about\b", re.I), "'explain about' is unnatural; use 'explain'"),
     (re.compile(r"\byou\s+(?:yourself\s+)?(?:have\s+)?experienced\s+experience\b", re.I), "redundant 'experienced experience'"),
@@ -127,7 +151,7 @@ def check(fields, to, src):
             if HANGUL_RUN.search(s):
                 issues.append(f"{f}_{to} still contains Korean text")
             issues += [f"{f}_{to}: {msg}" for rx, msg in EN_AWKWARD if rx.search(s)]
-    return issues
+    return issues + check_wh(fields, to, src)
 
 
 def _schema(to, fluency=False):
@@ -175,8 +199,8 @@ def _run_translate(x):
             "\n\n[이전 번역의 문제 — 고쳐서 다시 번역 / Fix these issues]\n- " + "\n- ".join(issues)
             + "\n[이전 번역 / previous]\n" + json.dumps(out, ensure_ascii=False))
         try:
-            out = normalize(llm.chat_json(system, user + extra, _schema(to), timeout=90, temperature=0.2,
-                                          model=config.TRANSLATE_MODEL), to)
+            out = blank_empty(normalize(llm.chat_json(system, user + extra, _schema(to), timeout=90, temperature=0.2,
+                                                      model=config.TRANSLATE_MODEL), to), x["fields"], to)
             issues = check(out, to, x["fields"])
         except llm.LLMError:
             issues = ["llm error"]
@@ -201,7 +225,7 @@ def _run_fluency(x):
         return {"final": tr["draft"], "changed": False, "notes": "fluency skill failed", "issues": tr["issues"]}
     keys = [f"{f}_{to}" for f in FIELDS]
     # 다듬기 스킬이 비워 둔 칸은 번역 초안으로 채운다(다듬을 것이 없었던 칸)
-    revised = normalize({k: (out.get(k) or "").strip() or tr["draft"].get(k, "") for k in keys}, to)
+    revised = blank_empty(normalize({k: (out.get(k) or "").strip() or tr["draft"].get(k, "") for k in keys}, to), x["fields"], to)
     rev_issues = check(revised, to, x["fields"])
     if not rev_issues:
         return {"final": revised, "changed": bool(out.get("changed")) and revised != tr["draft"],

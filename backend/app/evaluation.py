@@ -154,53 +154,10 @@ def code_feedback(attempt_id):
 
 
 def analyze(attempt_id):
-    att = db.one("""SELECT a.*, ap.resume_snapshot, ap.job_id FROM attempts a JOIN applications ap ON ap.id=a.application_id
-                    WHERE a.id=%s""", attempt_id)
-    if db.one("SELECT 1 FROM evaluations WHERE attempt_id=%s", attempt_id):
-        return  # 중복 방지
-    criteria = att["criteria_snapshot"]
-    versions = {"model": llm.model_version(), **config.VERSIONS}
-    events = db.all_("SELECT type, count(*) n FROM attempt_events WHERE attempt_id=%s GROUP BY type", attempt_id)
-    if att["status"] == "cancelled":  # EVL-05: 부정행위 취소 → 평가 없이 불합격
-        pub = {"result": "fail", "status": "응시 취소", "reason": "화면 이탈 2회로 응시가 취소되었습니다.", "strengths": [], "improvements": []}
-        db.run("""INSERT INTO evaluations (attempt_id, item_scores, interview_score, coding_score, total_score, result, reason,
-                  criteria_snapshot, versions, public_feedback, summary, final_result, decided_at)
-                  VALUES (%s,%s,0,NULL,0,'fail','응시 취소(부정행위)',%s,%s,%s,%s,%s,%s)""",
-               attempt_id, db.J({it: 0 for it in ITEMS}), db.J(criteria), db.J(versions), db.J(pub), "화면 이탈 2회로 응시 취소",
-               *_auto_decision(criteria, "fail"))
-        return
-    blocks = question_blocks(attempt_id)
-    scores_by_q, item_points = {}, {}
-    for b in blocks:
-        sc = evaluate_block(b, att["resume_snapshot"])
-        scores_by_q[b["q"]["id"]] = sc
-        for it, v in sc.items():
-            item_points.setdefault(it, []).append(v["score"])
-    coding_score = coding.grade(attempt_id) if criteria["coding_enabled"] else None
-    if criteria["coding_enabled"] and coding_score is None:
-        coding_score = 0.0
-    item_scores, interview, total, result = compute(item_points, criteria, coding_score)
-    summ = summarize(blocks, scores_by_q, item_scores)
-    cfb = code_feedback(attempt_id) if criteria["coding_enabled"] else None
-    status_ko = {"completed": "응시 완료", "terminated": "응시 종료(지원자 종료)"}.get(att["status"], att["status"])
-    pub = {"result": result, "status": status_ko, "strengths": summ["strengths"][:3], "improvements": summ["improvements"][:3],
-           "notice": "이 피드백은 AI가 생성했으며, 근거가 된 답변 내용에 대해 설명을 요청할 수 있습니다."}
-    with db.tx() as conn:
-        for qid, sc in scores_by_q.items():
-            for it, v in sc.items():
-                conn.execute("""INSERT INTO question_scores (question_id, eval_item, score, quote, verified, rationale)
-                                VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (question_id, eval_item) DO UPDATE
-                                SET score=EXCLUDED.score, quote=EXCLUDED.quote, verified=EXCLUDED.verified, rationale=EXCLUDED.rationale""",
-                             (qid, it, v["score"], v["quote"], v["verified"], v["rationale"]))
-        conn.execute("""INSERT INTO evaluations (attempt_id, item_scores, interview_score, coding_score, total_score, result, reason,
-                        criteria_snapshot, versions, strengths, improvements, summary, code_feedback, public_feedback,
-                        final_result, decided_at)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
-                     (attempt_id, db.J(item_scores), interview, coding_score, total, result,
-                      f"종합 총점 {total} {'≥' if result == 'pass' else '<'} 합격 기준 {criteria['pass_score']}",
-                      db.J(criteria), db.J({**versions, "events": {e['type']: e['n'] for e in events}}),
-                      db.J(summ["strengths"][:3]), db.J(summ["improvements"][:3]), summ["summary"], cfb, db.J(pub),
-                      *_auto_decision(criteria, result)))
+    """그래프 2 평가·합불(LangGraph, ADLC v0.5 6.3): load → evaluate_blocks → compute → summarize → decide → save.
+    노드 코드는 backend/app/agents/evaluation_graph.py, 점수·판정 계산은 이 파일의 compute·_auto_decision."""
+    from .agents import evaluation_graph
+    evaluation_graph.run(attempt_id)
 
 
 def decision_mode(criteria):

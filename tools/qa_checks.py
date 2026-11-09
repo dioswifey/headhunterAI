@@ -510,7 +510,7 @@ def it36():
     from app import config
     codes = [httpx.get(BASE + u, timeout=30).status_code for u in ("/privacy", "/terms")]
     foots = [("legal-links" in httpx.get(BASE + u, timeout=30).text) for u in ("/", "/applicant/", "/admin/")]
-    ok = codes == [200, 200] and all(foots) and config.CONSENT_VERSION.startswith("2026-11-06.v2")
+    ok = codes == [200, 200] and all(foots) and config.CONSENT_VERSION.startswith("2026-11-09.v3")
     return ok, f"/privacy {codes[0]} · /terms {codes[1]} · 하단 링크 {sum(foots)}/3 · 동의 버전 {config.CONSENT_VERSION.split()[0]}"
 
 
@@ -526,6 +526,106 @@ def it37():
     back = speech.transcribe(wav)
     norm = lambda x: "".join(ch for ch in x if ch.isalnum())
     return norm(back) == norm(text), f"wav {len(wav)}바이트 · 되돌린 글 '{back}'"
+
+
+
+# ---------------- LangGraph 그래프 1·2 (2026-11-09) ----------------
+@check("UT-35")
+def ut35():
+    from app import questions
+    from app.agents import evaluation_graph as E, question_graph as G
+    n1 = [x for x in G.GENERATION.get_graph().nodes if not x.startswith("__")]
+    n2 = [x for x in G.INTERVIEW_STEP.get_graph().nodes if not x.startswith("__")]
+    n3 = [x for x in E.GRAPH.get_graph().nodes if not x.startswith("__")]
+    ok_nodes = (n1 == ["start", "extract_keywords", "evaluate_trust", "retrieve", "generate", "evaluate_philosophy", "evaluate_answerability", "finalize"]
+                and n2 == ["record_answer", "judge_followup", "make_followup", "next_question"]
+                and n3 == ["load", "save_cancelled", "evaluate_blocks", "compute", "summarize", "decide", "save"])
+    app = db.one("SELECT * FROM applications ORDER BY id DESC LIMIT 1")
+    new, _ = G.generate_set(app, use_llm=False)
+    old = questions.build_set(app, use_llm=False)
+    kind = lambda qs: [q["gen_method"].split(":")[0] for q in qs]          # 인성 md 문항은 무작위라 출처 종류만 비교
+    same = [q["category"] for q in new] == [q["category"] for q in old] and kind(new) == kind(old)
+    return ok_nodes and len(new) == sum(n for _, n in questions.PLAN) == 8 and same, f"노드 {len(n1)}·{len(n2)}·{len(n3)} · 문항 {len(new)} · build_set과 형식 같음 {same}"
+
+
+@check("UT-36")
+def ut36():
+    import re as _re
+    from app import llm
+    from app.agents import question_chain as QC, question_graph as G
+    job = db.one("""SELECT j.*, c.name company_name, r.name role_name FROM jobs j JOIN companies c ON c.id=j.company_id
+                    JOIN job_roles r ON r.code=j.role_code WHERE j.role_code='ai_ax' ORDER BY j.id LIMIT 1""")
+    v = llm.embed([QC.QUERY_INSTRUCT + QC._query({"job": job, "resume_keywords": ["RAG", "Python"]})])[0]
+    used, got = set(), {}
+    from app import questions as Q
+    need = dict(Q.PLAN)
+    for cat, n in (("job", need["job"]), ("personality", need["personality"]), ("company", need["company"])):
+        got[cat] = G._pick_redis(v, "ai_ax", cat, n, used) or []
+        used |= {b["dup_group"] for b in got[cat]}
+    ids = [b["doc_id"] for bs in got.values() for b in bs]
+    ok_role = all(i.startswith("ai_ax:") for i in [b["doc_id"] for b in got["job"]]) and         all(i.split(":")[0] in ("common", "ai_ax") for i in ids)
+    ok_ko = all(_re.search(r"[가-힣]", b["text"]) for bs in got.values() for b in bs)
+    groups = [b["dup_group"] for bs in got.values() for b in bs]
+    ok_char = all(b["doc_id"].startswith("common:CA-") for b in got["personality"])     # 인성 = character_assessment md판
+    ok = all(len(got[c]) == need[c] for c in got) and ok_char and ok_role and ok_ko and len(groups) == len(set(groups))
+    return ok, f"직무 {len(got['job'])}·인성 {len(got['personality'])}·기업 {len(got['company'])} · 인성 md판 {ok_char} · 직무 필터 {ok_role} · 한국어 {ok_ko}"
+
+
+@check("UT-37")
+def ut37():
+    from app import questions as Q
+    from app.agents import translation_agent as T
+    bank = Q.load_character_bank()
+    ok_bank = len(bank) >= 8 and all(b["competency"] and b["dup_group"] and b["intent"] for b in bank)
+    ok_block = (not Q.BLOCKLIST.search("우선순위를 어떻게 정했는지")) and bool(Q.BLOCKLIST.search("학교 순위"))
+    ok_one = (not Q.one_sentence("설명해 주세요. 수행한 적이 있습니다.")) and Q.one_sentence("v1.2에서 무엇을 바꿨는지 설명해 주세요.")
+    blank = T.blank_empty({"question_ko": "질문", "intent_ko": "지어낸 의도", "follow_up_ko": ""}, {"question": "q", "intent": "", "follow_up": ""}, "ko")
+    ok_blank = blank["intent_ko"] == "" and blank["question_ko"] == "질문"
+    ok_wh = bool(T.check_wh({"question_ko": "솔루션을 이양하시겠습니까?"}, "ko", {"question": "How do you hand over a solution?"})) and not T.check_wh({"question_ko": "솔루션을 어떻게 넘겨주시겠습니까?"}, "ko", {"question": "How do you hand over a solution?"})
+    pairs = Q.resume_pairs([{"label": "a"}, {"label": "b"}])
+    ok_pairs = len(pairs) == Q.RESUME_N == 3 and pairs[2][1] != 0
+    ok = ok_bank and ok_block and ok_one and ok_blank and ok_wh and ok_pairs
+    return ok, f"인성 은행 {len(bank)}문항 {ok_bank} · 우선순위 허용 {ok_block} · 한 문장 {ok_one} · 빈 칸 유지 {ok_blank} · 의문사 검사 {ok_wh} · 이력서 짝 {ok_pairs}"
+
+
+@check("IT-38")
+def it38():
+    from app.agents import question_graph as G
+    app = db.one("SELECT ap.* FROM applications ap JOIN users u ON u.id=ap.user_id WHERE u.email='applicant@headhunter.ai' AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.application_id=ap.id) LIMIT 1")
+    if not app:
+        raise RuntimeError("응시 기록이 없는 테스트 지원자 지원 건이 없음")
+    crit = db.one("SELECT * FROM eval_criteria WHERE job_id=%s", app["job_id"])
+    snap = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in crit.items()}
+    snap.update(coding_enabled=False, decision_mode="auto")
+    aid = db.one("""INSERT INTO attempts (application_id, status, phase, criteria_version, criteria_snapshot, started_at, last_heartbeat)
+                    VALUES (%s,'interview','interview',%s,%s,now(),now()) RETURNING id""", app["id"], crit["version"], db.J(snap))["id"]
+    try:
+        for i, t in enumerate(["최근에 맡은 프로젝트에서 데이터 품질 문제를 해결한 경험을 설명해 주세요.", "모델 성능이 떨어졌을 때 원인을 찾는 순서를 설명해 주세요."], 1):
+            db.run("INSERT INTO attempt_questions (attempt_id, seq, category, eval_items, text, gen_method, time_limit) VALUES (%s,%s,'job',%s,%s,'db',90)",
+                   aid, i, ["expertise", "logic", "relevance", "delivery"], t)
+        for a in ["데이터 품질은 중요하다고 생각합니다. 항상 꼼꼼히 확인하는 것이 좋습니다.",
+                  "결측치가 12% 있던 센서 데이터를 보간하고 이상치를 IQR로 걸러 정확도를 0.81에서 0.86으로 올렸습니다.",
+                  "먼저 입력 데이터 분포가 학습 때와 달라졌는지 보고, 다음으로 라벨 품질, 마지막으로 모델 버전 변경을 확인합니다."]:
+            q = G.current_question(aid)
+            if q:
+                G.answer_step(db.one("SELECT * FROM attempts WHERE id=%s", aid), q, a, "typed")
+        att = db.one("SELECT status, followups_used FROM attempts WHERE id=%s", aid)
+        for _ in range(60):
+            e = db.one("SELECT result, versions FROM evaluations WHERE attempt_id=%s", aid)
+            if e:
+                break
+            time.sleep(5)
+        else:
+            from app import evaluation
+            evaluation.analyze(aid)
+            e = db.one("SELECT result, versions FROM evaluations WHERE attempt_id=%s", aid)
+        rows = db.one("SELECT count(*) n FROM question_scores s JOIN attempt_questions q ON q.id=s.question_id WHERE q.attempt_id=%s", aid)["n"]
+        ok = att["status"] == "completed" and att["followups_used"] == 1 and e and e["versions"].get("graph") == "evaluation_graph-1" and rows == 8
+        return ok, f"상태 {att['status']} · 꼬리질문 {att['followups_used']} · 판정 {e and e['result']} · 점수 행 {rows}"
+    finally:
+        db.run("DELETE FROM analysis_jobs WHERE attempt_id=%s", aid)
+        db.run("DELETE FROM attempts WHERE id=%s", aid)
+        db.run("UPDATE applications SET step=%s WHERE id=%s", app["step"], app["id"])
 
 
 def main(ids):

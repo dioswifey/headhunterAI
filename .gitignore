@@ -9,3 +9,9 @@ __pycache__/
 
 # QA 에이전트 임시 결과
 tools/.last_ab.json
+
+# LibreOffice lock files
+.~lock.*#
+
+# 팀원 참고 코퍼스(ADLC/followup/README: git에 올리지 않음, 나중에 삭제)
+ADLC/followup/corpus_v3_1106n/

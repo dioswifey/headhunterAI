@@ -59,7 +59,7 @@ const T = {
           ] },
           { h: '진행 순서', cards: [
             { h: '1. 이력서 확인', p: '이력서를 올리면 내용을 읽어 정리하고, 직접 확인한 내용만 씁니다.' },
-            { h: '2. AI 면접', p: '질문 10개와 꼬리질문에 답합니다. 기본 질문 90초, 꼬리질문 60초.' },
+            { h: '2. AI 면접', p: '질문 8개와 꼬리질문에 답합니다. 기본 질문 90초, 꼬리질문 60초.' },
             { h: '3. 리포트 받기', p: '분석이 끝나면 버튼 한 번으로 정량 리포트를 이메일로 받습니다. 합격 여부와는 별개입니다.' },
             { h: '4. 연습하고 다시', p: '연습 과제와 코딩 연습으로 약한 항목을 보완합니다.' },
           ] },
@@ -72,7 +72,7 @@ const T = {
         status: '',
         sections: [
           { h: '제공하는 것', cards: [
-            { h: '공고 맞춤 AI 면접', p: '인성 2 · 이력서 기반 2 · 직무 4 · 기업 2, 10문항. 직무·기업 질문은 공고의 회사 소개와 주요 업무에 맞춰 우리 회사가 낸 질문처럼 바뀝니다.' },
+            { h: '공고 맞춤 AI 면접', p: '인성 2 · 이력서 기반 3 · 직무 2 · 기업 1, 8문항. 모든 질문은 질문 은행에서 공고와 이력서로 검색해 고른 뒤, 공고의 회사 소개·주요 업무와 지원자 이력서에 맞춰 다시 씁니다.' },
             { h: '근거 있는 평가', p: 'AI는 항목별 0~5점과 답변에서 그대로 인용한 근거만 냅니다. 합산과 합격·불합격은 공고에 설정한 가중치와 합격선으로 계산합니다.' },
             { h: '코딩테스트', p: '공고마다 사용 여부와 반영 비중을 정합니다. 지금은 Python 기본 문제를 제공하고, 유형·언어를 고르는 맞춤 코딩테스트는 준비 중입니다.' },
             { h: '합불 결정 방식 선택', p: '자동: AI 판정을 바로 확정. 반자동: 담당자가 \'허용\' 또는 \'판정 변경\'을 한 번 눌러 확정. 점수는 어느 쪽도 바뀌지 않습니다.' },
@@ -111,7 +111,20 @@ const T = {
     aboutTitle: ['면접의 첫 단계를', '더 투명하게'],
     aboutLead: 'headhunterAI는 1차 면접을 AI로 진행하되, 판단 과정을 지원자와 기업이 모두 이해할 수 있게 만드는 서비스입니다. 중소·중견 기업 그룹, 스타트업 창업자, 인원이 적은 HR팀이 headhunterAI로 초기 지원자 선별의 힘든 일을 덜어 냅니다.',
     aboutWhyH: '만든 이유',
-    aboutWhy: '1차 면접은 지원자가 많을수록 기준이 흔들리기 쉽고, 지원자는 왜 떨어졌는지 알기 어렵습니다. 같은 구조의 질문, 답변에 근거한 평가, 정해진 규칙에 따른 판정으로 이 단계를 정리하고자 합니다.',
+    aboutWhy: [
+      '면접은 지난 100년 동안 크게 바뀌지 않았지만, 지금은 빠르게 바뀌고 있습니다. 미국 기업의 절반 이상이 채용에 AI 도구를 쓰고, Fortune 500 기업에서는 94~98%에 이릅니다. 반면 인원이 적은 HR팀에게 1차 면접은 여전히 손이 많이 가는 일입니다. 공석 하나를 채우는 데 연봉의 3~4배가 든다고 보는 기업도 많습니다.',
+      '사람의 평가도 생각보다 흔들립니다. 미국 기술직 지원자 3,296명을 대상으로 한 현장 실험(Avery 외, 2026)에서 전문 채용 담당자의 점수는 평가한 시간대에 따라 달라졌고, 첫 질문의 답변에 끌려 나머지 답변도 비슷하게 매겼으며, 점수를 가운데로 몰아 주는 경향이 있었습니다. 같은 면접을 AI가 평가했을 때는 이런 패턴이 나타나지 않았고, 12개월 뒤 실제 취업 성과를 사람 점수나 이력서 지표보다 두 배 이상 잘 예측했습니다.',
+      '하지만 같은 연구는 경고도 남겼습니다. 면접관 없이 혼자 답하는 비대면 면접은 다음 단계로 넘어가는 지원자를 약 53% 줄였고, 우수한 지원자도 예외가 아니었습니다. 원인은 기술 자체가 아니라 "공정하지 않을 것 같다", "경쟁이 지나치게 넓을 것 같다"는 인식이었고, 면접이 구조화되어 있고 공정하게 설계되었다는 것을 분명히 알리면 이 이탈을 줄일 수 있다고 연구진은 제안합니다.',
+      'headhunterAI는 이 두 결과를 함께 담으려고 만들었습니다. AI 평가의 일관성은 살리고, 지원자가 과정을 믿지 못해 떠나는 일은 줄이는 것. 그래서 질문 구성과 응시 규칙을 미리 알리고, 점수에는 답변 속 근거를 붙이고, 합불은 정해진 규칙이 결정하게 했습니다.',
+    ],
+    aboutChangeH: '만들고 싶은 변화',
+    aboutChange: [
+      '작은 팀도 큰 기업과 같은 기준으로: 같은 구조의 질문 8개와 같은 평가 기준을 모든 지원자에게 적용해, 평가하는 시간이나 순서에 따라 결과가 달라지지 않게 합니다. HR 인원이 적은 기업도 1차 선별을 일관되게 운영할 수 있습니다.',
+      '지원자가 떠나지 않는 AI 면접: 질문 구성(인성·이력서·직무·기업), 꼬리질문 개수, 답변 시간을 응시 전에 보여 주고, 합불과 별개로 항목별 점수 리포트를 받을 수 있게 합니다. 과정이 보이면 공정하지 않다는 인식으로 이탈하는 일을 줄일 수 있다고 봅니다.',
+      '판단은 끝까지 사람과 규칙이: AI는 점수와 인용만 내고, 반자동 공고는 담당자가 확인해야 결과가 공개됩니다. 나이·가족·학벌 같은 질문은 차단하고, 지원자가 확인한 이력서 내용만 씁니다.',
+      '준비할 기회도 함께: 기업만 AI를 쓰는 것이 아니라 지원자도 무제한 코딩 연습과 리포트로 같은 단계를 미리 준비하고 돌아볼 수 있게 합니다.',
+    ],
+    aboutSource: '출처: Avery, M., Ip, E., Leibbrandt, A., Vecci, J. (2026). "A Brave New World of Hiring: A Natural Field Experiment on How Asynchronous Interviews and AI Assessment Reshape Recruitment." CESifo Working Paper No. 12573 (SSRN 6482825). 미국 기술직 지원자 대상 연구이며, 기업 AI 도입률·공석 비용은 이 논문이 인용한 Brookings(2025)·Fuller 외(2021)·Navarra(2022) 자료입니다.',
     aboutPrinciplesH: '일하는 방식',
     aboutPrinciples: [
       { ic: '1', h: 'AI는 점수와 근거만', p: 'AI는 항목별 점수와 답변 인용을 내고, 합산·합불·상태 변경은 코드의 규칙이 처리합니다.' },
@@ -199,7 +212,7 @@ const T = {
           ] },
           { h: 'How it works', cards: [
             { h: '1. Confirm your résumé', p: 'Upload it, we organise the content, and only what you confirm is used.' },
-            { h: '2. AI interview', p: 'Answer 10 questions plus follow-ups: 90 seconds each, 60 for follow-ups.' },
+            { h: '2. AI interview', p: 'Answer 8 questions plus follow-ups: 90 seconds each, 60 for follow-ups.' },
             { h: '3. Get the report', p: 'When analysis is done, one click sends the quantitative report to your email. It is separate from the pass/fail result.' },
             { h: '4. Practise and retry', p: 'Work on weaker items with the practice tasks and coding practice.' },
           ] },
@@ -212,7 +225,7 @@ const T = {
         status: '',
         sections: [
           { h: 'What you get', cards: [
-            { h: 'AI interviews fitted to your post', p: '10 questions: 2 personality · 2 résumé · 4 role · 2 company. Role and company questions are rewritten from your company intro and duties, as if your team wrote them.' },
+            { h: 'AI interviews fitted to your post', p: '8 questions: 2 personality · 3 résumé · 2 role · 1 company. Every question is retrieved from our question bank using the job post and résumé, then rewritten to fit your company intro, duties and the applicant\'s résumé.' },
             { h: 'Evidence-based evaluation', p: 'The AI gives 0–5 scores per item with quotes taken verbatim from answers. Totals and pass/fail use the weights and pass mark set on the post.' },
             { h: 'Coding test', p: 'Turn it on per post and set its weight. A basic Python test is available today; custom tests by type and language are coming soon.' },
             { h: 'Choose how decisions are made', p: "Automatic: the AI decision is final right away. Semi-automatic: a recruiter finalises it with one click on 'Approve' or 'Change decision'. Scores never change." },
@@ -251,7 +264,20 @@ const T = {
     aboutTitle: ['Making the first interview', 'more transparent'],
     aboutLead: 'headhunterAI runs first-round interviews with AI while keeping the reasoning understandable for both applicants and companies. Small and mid-sized corporate groups, startup founders, and lean HR teams use headhunterAI to handle the heavy lifting of early-stage applicant screening.',
     aboutWhyH: 'Why we built it',
-    aboutWhy: 'With many applicants, first-round standards drift, and applicants rarely learn why they were turned down. We structure this step with the same question format, evaluation grounded in answers, and decisions made by fixed rules.',
+    aboutWhy: [
+      'Job interviews barely changed for a century, and now they are changing fast. More than half of U.S. firms use AI tools in hiring, rising to 94–98% among Fortune 500 companies. For lean HR teams, though, the first interview round is still heavy manual work, and many employers estimate that filling a vacancy costs three to four times the position\'s salary.',
+      'Human judgment is also less steady than it looks. In a field experiment with 3,296 U.S. tech job applicants (Avery et al., 2026), professional recruiters\' scores shifted with the time of day, were anchored by the answer to the first question, and were compressed toward the middle. When AI evaluated the same interviews, these patterns did not appear, and its scores predicted job success 12 months later at least twice as well as human scores or CV-based metrics.',
+      'The same study also carries a warning. One-way asynchronous interviews cut application continuation by about 53%, including among the most qualified applicants. The cause was not the technology itself but the perception that the process was unfair and overly competitive, and the authors suggest employers can reduce this drop-off by clearly signalling that interviews are structured and designed to be fair.',
+      'We built headhunterAI to take both findings seriously: keep the consistency of AI evaluation, and stop applicants from walking away because they cannot trust the process. That is why we show the question structure and interview rules up front, attach evidence from the answer to every score, and let fixed rules decide pass or fail.',
+    ],
+    aboutChangeH: 'The change we want to lead',
+    aboutChange: [
+      'Big-company standards for small teams: every applicant gets the same eight structured questions and the same criteria, so results do not depend on when or in what order they were reviewed. Even companies with a small HR team can run a consistent first round.',
+      'AI interviews applicants do not abandon: the question mix (personality, résumé, role, company), follow-up limit and answer time are shown before the interview, and applicants can receive a per-item score report separate from pass/fail. A visible process should reduce drop-off driven by perceived unfairness.',
+      'People and rules keep the final say: the AI only produces scores and quotes, and semi-automatic posts publish results only after a recruiter confirms them. Questions about age, family or school background are blocked, and only résumé content the applicant has confirmed is used.',
+      'A chance to prepare, too: AI is not only on the employer\'s side. Applicants can practise with unlimited coding problems and review their reports to prepare for the same step.',
+    ],
+    aboutSource: 'Source: Avery, M., Ip, E., Leibbrandt, A., Vecci, J. (2026). "A Brave New World of Hiring: A Natural Field Experiment on How Asynchronous Interviews and AI Assessment Reshape Recruitment." CESifo Working Paper No. 12573 (SSRN 6482825). The study covers U.S. tech job applicants; employer AI adoption and vacancy cost figures are from Brookings (2025), Fuller et al. (2021) and Navarra (2022) as cited in the paper.',
     aboutPrinciplesH: 'How we work',
     aboutPrinciples: [
       { ic: '1', h: 'AI scores, rules decide', p: 'The AI provides per-item scores and quotes; totals, pass/fail and status changes are handled by rules in code.' },
@@ -363,7 +389,9 @@ function service(id) {
 function about() {
   const L = t();
   return `<div class="wrap">${head(L.aboutTitle, L.aboutLead)}
-    <section class="sec"><h2>${esc(L.aboutWhyH)}</h2><p style="max-width:760px;color:var(--muted)">${esc(L.aboutWhy)}</p></section>
+    <section class="sec"><h2>${esc(L.aboutWhyH)}</h2>${L.aboutWhy.map(p => `<p style="max-width:760px;color:var(--muted)">${esc(p)}</p>`).join('')}</section>
+    <section class="sec"><h2>${esc(L.aboutChangeH)}</h2>${L.aboutChange.map(p => `<p style="max-width:760px;color:var(--muted)">${esc(p)}</p>`).join('')}
+      <p style="max-width:760px;color:var(--muted2);font-size:13px;margin-top:18px">${esc(L.aboutSource)}</p></section>
     <section class="sec"><h2>${esc(L.aboutPrinciplesH)}</h2>${cards(L.aboutPrinciples)}</section>
     <section class="sec"><h2>${esc(L.aboutTechH)}</h2>${cards(L.aboutTech)}</section>
   </div>`;
