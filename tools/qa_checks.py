@@ -588,6 +588,17 @@ def ut37():
     return ok, f"인성 은행 {len(bank)}문항 {ok_bank} · 우선순위 허용 {ok_block} · 한 문장 {ok_one} · 빈 칸 유지 {ok_blank} · 의문사 검사 {ok_wh} · 이력서 짝 {ok_pairs}"
 
 
+
+@check("UT-38")
+def ut38():
+    from app import bank_seed as S
+    files = sorted(p.name for p in S.SEED_DIR.glob("*")) if S.SEED_DIR.exists() else []
+    need = ["bank_coding_problems.sql", "bank_question_bank.sql", "bank_sql_problems.sql", S.REDIS_FILE]
+    ok_files = all(f in files for f in need)
+    again = S.apply_sql() if ok_files else {}
+    ok_idem = ok_files and all(v == 0 for v in again.values())          # 로컬 DB에는 이미 다 있음 → 새로 넣는 행 0
+    return ok_files and ok_idem, f"파일 {len([f for f in need if f in files])}/4 · 다시 적용 시 새 행 {sum(again.values()) if again else '-'}"
+
 @check("IT-38")
 def it38():
     from app.agents import question_graph as G
