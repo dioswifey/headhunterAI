@@ -1348,7 +1348,7 @@ const SQL_SUBJECTS = [
   { key: 's2', no: 2, name: '제2과목', ko: 'SQL 기본과 활용' },
 ];
 const SQL_KIND_KO = { concept: '개념', result: '실행 결과', sql_pick: 'SQL 고르기' };
-const sqlTable = (name, t) => `<div class="tbl-wrap" style="margin:6px 0">${name ? `<div class="small mono" style="margin-bottom:4px">${esc(name)}</div>` : ''}<table class="tbl"><thead><tr>${t.columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+const sqlTable = (name, t) => `<div class="tbl-wrap" style="margin:18px 0">${name ? `<div class="small mono" style="margin-bottom:4px">${esc(name)}</div>` : ''}<table class="tbl"><thead><tr>${t.columns.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>
   <tbody>${t.rows.length ? t.rows.map((r) => `<tr>${r.map((v) => `<td class="mono">${v === null ? '<span class="small">NULL</span>' : esc(v)}</td>`).join('')}</tr>`).join('') : `<tr><td colspan="${t.columns.length}" class="small">결과 없음(0행)</td></tr>`}</tbody></table></div>`;
 
 async function practiceSql(sKey) {
@@ -1379,7 +1379,7 @@ async function practiceSqlProblem(id) {
   if (!requireLogin(`/practice/sql/${id}`)) return;
   const p = await get(`/api/practice/sql/${id}`);
   const sub = SQL_SUBJECTS.find((x) => x.no === p.subject);
-  const choice = (c) => c.type === 'table' ? sqlTable('', c) : c.type === 'sql' ? `<div class="out mono" style="min-height:0;margin:0">${esc(c.sql)}</div>` : `<span>${esc(c.text)}</span>`;
+  const choice = (c) => c.type === 'table' ? sqlTable('', c) : c.type === 'sql' ? `<div class="out mono sql-choice" style="min-height:0;margin:0">${esc(c.sql)}</div>` : `<span>${esc(c.text)}</span>`;
   view.innerHTML = `<div class="wrap sql-q" style="max-width:960px">
     <div class="between" style="margin-bottom:14px"><a class="btn sm ghost" href="#/practice/sql/${sub.key}">← ${sub.name} 문제 목록</a>
       <span class="row"><span class="pill neon">SQL</span><span class="pill dim">${sub.name} · ${esc(p.item)}</span></span></div>
