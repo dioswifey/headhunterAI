@@ -68,10 +68,13 @@ CREATE TABLE eval_criteria (
   w_delivery       INT NOT NULL DEFAULT 10,
   w_fit            INT NOT NULL DEFAULT 15,
   coding_enabled   BOOLEAN NOT NULL DEFAULT true,
-  coding_ratio     INT NOT NULL DEFAULT 30 CHECK (coding_ratio BETWEEN 10 AND 90 AND coding_ratio % 10 = 0),
+  -- 코딩테스트 게이트(v0.10, DEC-06~09): AI 면접 점수와 더 이상 가중 평균하지 않는다(coding_ratio 폐지).
+  -- none = 게이트 없음(코테 미사용 포함, 면접 점수만으로 판정) / hard = 코딩 60점 미달 시 면접 점수 무관 불합격
+  -- soft = 60점 미달이어도 면접 점수 85점 이상이면 합격. 임계값 60·85는 고정값(config.CODING_GATE_SCORE·CODING_GATE_SOFT_OVERRIDE), 공고별 입력 아님
+  coding_gate_mode TEXT NOT NULL DEFAULT 'none' CHECK (coding_gate_mode IN ('none','hard','soft')),
   pass_score       INT NOT NULL DEFAULT 70 CHECK (pass_score BETWEEN 0 AND 100),
-  -- 합불 결정 방식 (v0.6): auto = AI 판정을 바로 확정·공개, semi = 담당자가 AI 판정을 확인한 뒤 확정
-  decision_mode    TEXT NOT NULL DEFAULT 'auto' CHECK (decision_mode IN ('auto','semi')),
+  -- 합불 결정 방식: auto = AI 판정을 바로 확정·공개, hybrid(v0.6 'semi'에서 v0.10 개명) = 담당자가 AI 판정을 확인한 뒤 확정
+  decision_mode    TEXT NOT NULL DEFAULT 'auto' CHECK (decision_mode IN ('auto','hybrid')),
   locked_at        TIMESTAMPTZ,
   CHECK (w_expertise + w_logic + w_relevance + w_delivery + w_fit = 100),
   CHECK (LEAST(w_expertise, w_logic, w_relevance, w_delivery, w_fit) >= 5)

@@ -145,13 +145,17 @@ function criteriaForm(c, locked) {
     <div class="between"><span class="small">평가 항목과 루브릭(0~5점)은 고정입니다.</span><b id="wsum"></b></div>
     <hr style="margin:4px 0">
     <label class="check"><input type="checkbox" id="coding_enabled" ${c.coding_enabled ? 'checked' : ''} ${dis}><span><b>코딩테스트 사용</b><br><span class="small">Python 2문항(기초 1·응용 1), 60분. 문제는 문제 은행에서 자동 출제됩니다.</span></span></label>
-    <div class="row"><span style="width:150px">반영 비중</span><select id="coding_ratio" ${dis}>${[10, 20, 30, 40, 50, 60, 70, 80, 90].map((r) => `<option value="${r}" ${c.coding_ratio === r ? 'selected' : ''}>AI 면접 ${100 - r} : 코딩테스트 ${r}</option>`).join('')}</select></div>
-    <div class="row"><span style="width:150px">1차 합격 기준</span><input class="input" id="pass_score" type="number" min="0" max="100" value="${c.pass_score}" ${dis} style="max-width:110px"> 점 이상</div>
+    <div class="row"><span style="width:150px">1차 합격 기준</span><input class="input" id="pass_score" type="number" min="0" max="100" value="${c.pass_score}" ${dis} style="max-width:110px"> 점 이상 <span class="small">(AI 면접 점수만으로 판정, 코딩테스트는 아래 게이트로 별도 반영)</span></div>
+    <hr style="margin:4px 0">
+    <h3>코딩테스트 게이트 <span class="small">(AI 면접 점수와 섞지 않고 별도 적용)</span></h3>
+    <label class="check"><input type="radio" name="coding_gate_mode" value="none" ${(c.coding_gate_mode || 'none') === 'none' ? 'checked' : ''} ${dis}><span><b>게이트 없음</b><br><span class="small">코딩테스트 결과가 합불에 영향을 주지 않습니다(코딩테스트 미사용 공고 포함).</span></span></label>
+    <label class="check"><input type="radio" name="coding_gate_mode" value="hard" ${c.coding_gate_mode === 'hard' ? 'checked' : ''} ${dis}><span><b>하드</b><br><span class="small">코딩테스트 점수가 60점 미만이면 AI 면접 점수와 무관하게 불합격입니다.</span></span></label>
+    <label class="check"><input type="radio" name="coding_gate_mode" value="soft" ${c.coding_gate_mode === 'soft' ? 'checked' : ''} ${dis}><span><b>소프트</b><br><span class="small">60점 미만이어도 AI 면접 점수가 85점 이상이면 합격 처리됩니다.</span></span></label>
     <hr style="margin:4px 0">
     <h3>합불 결정 방식</h3>
-    <label class="check"><input type="radio" name="decision_mode" value="auto" ${(c.decision_mode || 'auto') === 'auto' ? 'checked' : ''} ${dis}><span><b>자동</b><br><span class="small">AI 판정(합격 기준 대비 종합 총점)을 바로 확정합니다. 지원자는 분석이 끝나면 바로 결과를 봅니다.</span></span></label>
-    <label class="check"><input type="radio" name="decision_mode" value="semi" ${c.decision_mode === 'semi' ? 'checked' : ''} ${dis}><span><b>반자동</b><br><span class="small">담당자가 AI 판정을 보고 '허용' 또는 '판정 변경'을 한 번 누르면 확정됩니다. 확정 전까지 지원자에게 결과가 공개되지 않습니다.</span></span></label>
-    ${locked ? '<div class="note">해당 공고의 첫 응시가 시작되어 가중치·반영 비중·합격 기준·코딩테스트 사용 여부·합불 결정 방식을 바꿀 수 없습니다. 결과에는 적용 기준 버전이 기록됩니다.</div>'
+    <label class="check"><input type="radio" name="decision_mode" value="auto" ${(c.decision_mode || 'auto') === 'auto' ? 'checked' : ''} ${dis}><span><b>자동</b><br><span class="small">AI 판정을 바로 확정합니다. 지원자는 분석이 끝나면 바로 결과를 보고, 점수 리포트 메일도 받을 수 있습니다.</span></span></label>
+    <label class="check"><input type="radio" name="decision_mode" value="hybrid" ${c.decision_mode === 'hybrid' ? 'checked' : ''} ${dis}><span><b>하이브리드</b><br><span class="small">담당자가 AI 판정을 보고 '허용' 또는 '판정 변경'을 한 번 누르면 확정됩니다. 확정과 동시에 지원자에게 합불 통보 메일이 자동 발송됩니다.</span></span></label>
+    ${locked ? '<div class="note">해당 공고의 첫 응시가 시작되어 가중치·합격 기준·코딩테스트 사용 여부·게이트·합불 결정 방식을 바꿀 수 없습니다. 결과에는 적용 기준 버전이 기록됩니다.</div>'
       : '<button class="btn" id="save-crit">평가 기준 저장</button>'}
   </div>`;
 }
@@ -159,7 +163,7 @@ function criteriaForm(c, locked) {
 async function jobEdit(id) {
   const main = shell('jobs');
   const j = id ? await get(`/api/admin/jobs/${id}`) : null;
-  const c = j ? j.criteria : { version: 1, w_expertise: 30, w_logic: 25, w_relevance: 20, w_delivery: 10, w_fit: 15, coding_enabled: true, coding_ratio: 30, pass_score: 70, decision_mode: 'auto' };
+  const c = j ? j.criteria : { version: 1, w_expertise: 30, w_logic: 25, w_relevance: 20, w_delivery: 10, w_fit: 15, coding_enabled: true, coding_gate_mode: 'none', pass_score: 70, decision_mode: 'auto' };
   const locked = !!(j && j.criteria.locked_at);
   main.innerHTML = `<div class="between"><div><a class="btn sm ghost" href="#/jobs">← 공고 목록</a><h1 style="margin-top:10px">${j ? esc(j.title) : '새 공고'}</h1>
     ${j ? `<span class="pill ${JOB_STATUS[j.status][1]}">${JOB_STATUS[j.status][0]}</span> <span class="small">지원자 ${j.applicants}명</span>` : ''}</div>
@@ -173,14 +177,14 @@ async function jobEdit(id) {
   const syncW = () => { ITEMS.forEach((it) => ($(`[data-wv="${it}"]`).textContent = $(`[data-w="${it}"]`).value + '%')); const s = sumW(); $('#wsum').innerHTML = `합계 <span class="${s === 100 ? 'neon' : ''}">${s}%</span>`; };
   $$('[data-w]').forEach((r) => (r.oninput = syncW));
   syncW();
-  const coding = () => $('#coding_ratio').disabled = locked || !$('#coding_enabled').checked;
+  const coding = () => $$('[name="coding_gate_mode"]').forEach((r) => (r.disabled = locked || !$('#coding_enabled').checked));
   $('#coding_enabled').onchange = coding; coding();
 
   const body = () => Object.fromEntries(['title', 'role_code', 'company_intro', 'duties', 'requirements', 'preferred', 'employment_type', 'location', 'headcount', 'open_date', 'close_date']
     .map((k) => [k, k === 'headcount' ? +$('#' + k).value : $('#' + k).value]));
   const critBody = () => ({ ...Object.fromEntries(ITEMS.map((it) => [WKEY[it], +$(`[data-w="${it}"]`).value])),
-    coding_enabled: $('#coding_enabled').checked, coding_ratio: +$('#coding_ratio').value, pass_score: +$('#pass_score').value,
-    decision_mode: ($('[name="decision_mode"]:checked') || {}).value || 'auto' });
+    coding_enabled: $('#coding_enabled').checked, coding_gate_mode: ($('[name="coding_gate_mode"]:checked') || {}).value || 'none',
+    pass_score: +$('#pass_score').value, decision_mode: ($('[name="decision_mode"]:checked') || {}).value || 'auto' });
   const showWarn = (w) => {
     $('#warn').innerHTML = w && w.length ? `<div class="note"><b>차별 소지 표현 확인</b> — 게시는 가능하지만 검토를 권장합니다: ${w.map((x) => `<span class="warn-u">${esc(x.text)}</span>`).join(', ')}</div>` : '';
   };
@@ -260,6 +264,7 @@ async function aiDraft() {
 
 /* ───────── 지원자 목록 (ADM-01) ───────── */
 const RESULT_KO = { pass: '1차 합격', fail: '1차 불합격' };
+const CODING_GATE_KO = { none: '게이트 없음(합불 미반영)', hard: '하드 게이트(60점 미만 무조건 불합격)', soft: '소프트 게이트(면접 85점 이상이면 보완)' };
 function resultPill(r, pending) {
   if (pending) return '<span class="pill neon">확인 대기</span>';
   return r ? `<span class="pill ${r === 'pass' ? 'on' : ''}">${RESULT_KO[r]}</span>` : '<span class="small">산출 전</span>';
@@ -351,11 +356,10 @@ async function detailView(id) {
   main.innerHTML = `<div><a class="btn sm ghost" href="#/applicants">← 지원자 목록</a></div>
     <div class="between"><div><h1>${esc(d.name)}</h1><div class="sub">${esc(d.job_title)} · ${esc(d.email)} · ${esc(d.phone || '')}</div></div>
       <div class="row">${d.attempt_status ? `<span class="pill">${esc(ATTEMPT_KO[d.attempt_status])}</span>` : ''}${d.analysis_status ? `<span class="pill dim">${ANALYSIS_KO[d.analysis_status]}</span>` : ''}</div></div>
-    ${e ? `<div class="grid4">
+    ${e ? `<div class="grid3">
       ${decisionCard(d, e)}
-      <div class="card"><div class="small">종합 총점</div><div class="big">${score(e.total_score)}</div><div class="small">합격 기준 ${crit.pass_score}점</div></div>
-      <div class="card"><div class="small">AI 면접 점수</div><div class="big">${score(e.interview_score)}</div>${crit.coding_enabled ? `<div class="small">반영 ${100 - crit.coding_ratio}%</div>` : ''}</div>
-      <div class="card"><div class="small">코딩테스트 점수</div><div class="big">${crit.coding_enabled ? score(e.coding_score) : '-'}</div>${crit.coding_enabled ? `<div class="small">반영 ${crit.coding_ratio}% · 통과율×100</div>` : '<div class="small">미사용 공고</div>'}</div>
+      <div class="card"><div class="small">AI 면접 점수</div><div class="big">${score(e.interview_score)}</div><div class="small">합격 기준 ${crit.pass_score}점</div></div>
+      <div class="card"><div class="small">코딩테스트 점수</div><div class="big">${crit.coding_enabled ? score(e.coding_score) : '-'}</div><div class="small">${crit.coding_enabled ? CODING_GATE_KO[crit.coding_gate_mode] : '미사용 공고'}</div></div>
     </div>
     <div class="grid2" style="align-items:start">
       <div class="card"><h2>항목별 점수</h2>${ITEMS.map((it) => `<div class="row" style="margin:6px 0"><span style="width:140px">${ITEM_KO[it]} <span class="small">${crit[WKEY[it]]}%</span></span><div style="flex:1">${bar(e.item_scores[it])}</div><b style="width:48px;text-align:right">${score(e.item_scores[it])}</b></div>`).join('')}
@@ -386,19 +390,19 @@ async function detailView(id) {
   $('#add-memo').onclick = async () => { try { await post(`/api/admin/applicants/${id}/memos`, { body: $('#memo').value }); router(); } catch (err) { toast(err.message, true); } };
 }
 
-/* 합불 확정 카드: 자동 = AI 판정 그대로 확정 표시, 반자동 = 확인 대기면 확정/변경 버튼 */
+/* 합불 확정 카드: 자동 = AI 판정 그대로 확정 표시, 하이브리드 = 확인 대기면 확정/변경 버튼 */
 function decisionCard(d, e) {
   const fin = e.final_result;
-  const semi = d.decision_mode === 'semi';
+  const hybrid = d.decision_mode === 'hybrid';
   const changed = fin && fin !== e.result;
-  const head = fin ? (semi ? (changed ? '1차 결과 (담당자가 판정 변경)' : '1차 결과 (담당자 허용)') : '1차 결과 (AI 자동 확정)') : '1차 결과 · 담당자 확인 대기';
+  const head = fin ? (hybrid ? (changed ? '1차 결과 (담당자가 판정 변경)' : '1차 결과 (담당자 허용)') : '1차 결과 (AI 자동 확정)') : '1차 결과 · 담당자 확인 대기';
   const shown = fin || e.result;
   return `<div class="card ${shown === 'pass' ? 'hl' : ''}"><div class="small">${head}</div>
     <div class="big" style="${shown === 'pass' ? '' : 'color:var(--white)'}">${fin ? '' : 'AI '}${RESULT_KO[shown]}</div>
     <div class="small">${esc(e.reason || '')}</div>
     ${changed ? `<div class="small" style="margin-top:6px">AI 판정 ${RESULT_KO[e.result]} → 담당자 ${RESULT_KO[fin]}</div>` : ''}
-    ${fin && semi && e.decided_at ? `<div class="small">확정 ${fmtDateTime(e.decided_at)}</div>` : ''}
-    ${!fin && semi ? `<div class="row" style="margin-top:10px"><button class="btn sm primary" id="dec-ok">허용</button><button class="btn sm" id="dec-change">판정 변경 (${RESULT_KO[e.result === 'pass' ? 'fail' : 'pass']}로)</button></div>` : ''}</div>`;
+    ${fin && hybrid && e.decided_at ? `<div class="small">확정 ${fmtDateTime(e.decided_at)} · 합불 통보 메일 발송됨</div>` : ''}
+    ${!fin && hybrid ? `<div class="row" style="margin-top:10px"><button class="btn sm primary" id="dec-ok">허용</button><button class="btn sm" id="dec-change">판정 변경 (${RESULT_KO[e.result === 'pass' ? 'fail' : 'pass']}로)</button></div>` : ''}</div>`;
 }
 
 function bindDecision(id, e) {

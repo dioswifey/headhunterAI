@@ -352,7 +352,7 @@ function appAction(a) {
   if (a.attempt_status === 'interview' || a.attempt_status === 'coding') return `<a class="btn sm" href="#/interview/${a.attempt_id}">응시 화면으로</a>`;
   if (a.result_open) return `<a class="btn sm primary" href="#/result/${a.id}">1차 결과 보기</a>`;
   if (a.analysis_status !== 'done') return `<a class="btn sm" href="#/result/${a.id}">AI 분석 중</a>`;
-  return `<a class="btn sm" href="#/result/${a.id}">${a.decision_mode === 'semi' ? '담당자 확인 중' : '리포트 보기'}</a>`;
+  return `<a class="btn sm" href="#/result/${a.id}">${a.decision_mode === 'hybrid' ? '담당자 확인 중' : '리포트 보기'}</a>`;
 }
 
 function appsTableHtml(apps) {
@@ -1296,29 +1296,30 @@ async function interviewView(attemptId) {
 }
 
 /* ───────── 완료·결과 ───────── */
-/* 완료 화면·결과 화면 공통: 분석 상태 → (자동 확정 공고) 합불 → 리포트 메일 상태 + '결과 리포트 이메일로 받기' */
+/* 완료 화면·결과 화면 공통: 분석 상태 → (자동 확정 공고) 합불 → 리포트 메일 상태 + '결과 리포트 이메일로 받기'(auto 전용, EML-09) */
 function reportBox(appId, box, opt = {}) {
   if (!box) return;
   let timer = null;
   const paint = (r) => {
     if (!document.body.contains(box)) { clearInterval(timer); return; }
     const analyzing = !r.evaluated;
+    const auto = r.decision_mode === 'auto';
     const res = opt.noResult ? '' : r.result ? `<div class="between"><span>1차 결과</span><b class="${r.result === 'pass' ? 'neon' : ''}">${r.result === 'pass' ? '1차 합격' : '1차 불합격'}</b></div>`
-      : (!analyzing && r.decision_mode === 'semi' ? '<p class="small">1차 결과는 기업 담당자가 확인한 뒤 공개됩니다. 공개되면 알림으로 알려 드립니다.</p>' : '');
+      : (!analyzing && !auto ? '<p class="small">1차 결과는 기업 담당자가 확인한 뒤 확정되며, 확정되면 합불 결과를 이메일로 안내드립니다.</p>' : '');
     const em = r.email || {};
-    const mail = analyzing ? '<p class="small">AI 분석 중입니다. 보통 몇 분 안에 끝납니다.</p>'
+    const mail = !auto ? '' : analyzing ? '<p class="small">AI 분석 중입니다. 보통 몇 분 안에 끝납니다.</p>'
       : em.status === 'sent' ? `<p class="small">정량 리포트를 ${esc(em.to)}(으)로 보냈습니다.</p>`
         : em.status === 'failed' ? '<p class="small">리포트 메일을 보내지 못했습니다. 아래 버튼으로 다시 받아 보세요.</p>'
           : r.email_enabled ? '<p class="small">합불과 별도로, 항목별 점수와 개선점을 담은 정량 리포트를 이메일로 받을 수 있습니다.</p>'
             : '<p class="small">이메일 발송이 아직 설정되지 않았습니다.</p>';
-    box.innerHTML = `${res}${mail}${!analyzing && r.email_enabled ? '<div><button class="btn" id="mail-me">결과 리포트 이메일로 받기</button></div>' : ''}`;
+    box.innerHTML = `${res}${mail}${auto && !analyzing && r.email_enabled ? '<div><button class="btn" id="mail-me">결과 리포트 이메일로 받기</button></div>' : ''}`;
     const b = $('#mail-me', box);
     if (b) b.onclick = async () => {
       b.disabled = true;
       try { const x = await post(`/api/applications/${appId}/report/email`); toast(`${x.to}(으)로 리포트를 보냈습니다.`); load(); }
       catch (e) { toast(e.message, true); b.disabled = false; }
     };
-    if (!analyzing && (r.result || r.decision_mode === 'semi')) clearInterval(timer);
+    if (!analyzing && (r.result || !auto)) clearInterval(timer);
   };
   const load = async () => { try { paint(await get(`/api/applications/${appId}/report`)); } catch (_) { clearInterval(timer); } };
   load();
@@ -1476,7 +1477,7 @@ async function resultView(appId) {
   setNav('my');
   const r = await get(`/api/applications/${appId}/result`);
   if (!r.published) {
-    const why = r.decision_mode === 'semi' && r.analysis_status === 'done' ? '기업 담당자가 AI 판정을 확인한 뒤 공개됩니다.' : 'AI 분석이 끝나면 공개됩니다.';
+    const why = r.decision_mode === 'hybrid' && r.analysis_status === 'done' ? '기업 담당자가 AI 판정을 확인한 뒤 공개되며, 확정되면 합불 결과를 이메일로도 안내드립니다.' : 'AI 분석이 끝나면 공개됩니다.';
     view.innerHTML = `<div class="wrap narrow"><div class="card col"><h1>결과 공개 전입니다</h1><p>${why}</p><div id="report-box" class="col"></div><a class="btn" href="#/my">마이페이지로</a></div></div>`;
     reportBox(appId, $('#report-box'));
     return;

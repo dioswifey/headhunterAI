@@ -35,7 +35,7 @@ class EvalState(TypedDict, total=False):
     result: str                     # AI(코드) 판정 pass|fail
     summary: dict
     code_feedback: str | None
-    final_result: str | None        # decide 결과 (semi는 None)
+    final_result: str | None        # decide 결과 (hybrid는 None)
     decided_at: Any
 
 
@@ -91,7 +91,7 @@ def summarize(s: EvalState) -> EvalState:
 
 
 def decide(s: EvalState) -> EvalState:
-    """코드만: auto = AI 판정을 바로 확정, semi = 담당자 확인 대기(final_result NULL)."""
+    """코드만: auto = AI 판정을 바로 확정, hybrid = 담당자 확인 대기(final_result NULL)."""
     final, at = ev._auto_decision(s["criteria"], s["result"])
     return {"final_result": final, "decided_at": at}
 

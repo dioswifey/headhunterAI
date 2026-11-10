@@ -577,7 +577,7 @@ def _result_row(app_id):
 
 @router.get("/applications/{app_id}/result")
 def result(app_id: int, user=Depends(security.applicant)):
-    """v0.6: 합불은 확정(final_result)되면 바로 공개. auto = 평가 직후, semi = 담당자 확인 후. 점수는 리포트 메일·화면 공통 정량값."""
+    """합불은 확정(final_result)되면 바로 공개. auto = 평가 직후, hybrid = 담당자 확인 후. 점수는 리포트 메일·화면 공통 정량값."""
     _own_app(app_id, user)
     row = _result_row(app_id)
     if not row:
@@ -603,11 +603,14 @@ def report_status(app_id: int, user=Depends(security.applicant)):
 
 @router.post("/applications/{app_id}/report/email")
 def report_email(app_id: int, user=Depends(security.applicant)):
-    """'결과 리포트 이메일로 받기' — 평가가 끝난 건만, 60초 간격 · 응시당 최대 5회."""
+    """'결과 리포트 이메일로 받기' — EML-09: auto 공고에서만. 평가가 끝난 건만, 60초 간격 · 응시당 최대 5회.
+    hybrid 공고는 이 버튼 대신 담당자 확정 시 decision_mail(EML-07)이 합불만 자동 발송한다."""
     _own_app(app_id, user)
     row = _result_row(app_id)
     if not row or not row["public_feedback"]:
         raise HTTPException(409, "AI 분석이 끝나면 리포트를 받을 수 있습니다.")
+    if row["decision_mode"] != "auto":
+        raise HTTPException(409, "이 공고는 담당자 확인 후 결과를 이메일로 안내받습니다.")
     if row["status"] == "cancelled":
         raise HTTPException(409, "응시가 취소된 건은 리포트가 없습니다.")
     if not report_mail.mailer.enabled():

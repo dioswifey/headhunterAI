@@ -74,7 +74,7 @@ def housekeeping():
         finish_attempt(r["id"], "completed", "resume_deadline_passed")
     # JOB-01: 마감일 경과 공고 자동 마감
     db.run("UPDATE jobs SET status='closed', updated_at=now() WHERE status='published' AND close_date < (now() AT TIME ZONE 'Asia/Seoul')::date")
-    # 결과 공개 알림 (v0.6): 합불이 확정되면(auto = 평가 직후, semi = 담당자 확인 후) 알린다
+    # 결과 공개 알림 (v0.6): 합불이 확정되면(auto = 평가 직후, hybrid = 담당자 확인 후) 알린다
     for r in db.all_("""SELECT a.id, ap.user_id, j.title FROM attempts a JOIN applications ap ON ap.id=a.application_id
                         JOIN jobs j ON j.id=ap.job_id JOIN evaluations e ON e.attempt_id=a.id
                         WHERE e.final_result IS NOT NULL AND NOT a.publish_notified"""):

@@ -105,18 +105,22 @@ def evaluate_block(block, snapshot):
 
 
 def compute(item_points, criteria, coding_score):
-    """EVL-03~05. item_points: {item: [0..5 scores]}"""
+    """EVL-03~05, DEC-06~09. item_points: {item: [0..5 scores]}.
+    AI 면접 점수와 코딩테스트 점수는 섞지 않고 각각 독립 채점한다. 합불은 면접 점수 단독으로 pass_score와 비교한 뒤,
+    coding_gate_mode(hard/soft)가 있으면 그 위에 override한다(coding_gate_score·soft_override는 config 고정값)."""
     item_scores = {}
     for it in ITEMS:
         pts = item_points.get(it, [])
         item_scores[it] = round(sum(pts) / len(pts) / 5 * 100, 2) if pts else 0.0
     interview = round(sum(item_scores[it] * criteria[WEIGHT_COL[it]] / 100 for it in ITEMS), 2)
-    if criteria["coding_enabled"]:
-        r = criteria["coding_ratio"] / 100
-        total = round(interview * (1 - r) + (coding_score or 0) * r, 2)
-    else:
-        total = interview
-    result = "pass" if total >= criteria["pass_score"] else "fail"
+    result = "pass" if interview >= criteria["pass_score"] else "fail"
+    gate = criteria.get("coding_gate_mode", "none")
+    if criteria["coding_enabled"] and gate != "none" and coding_score is not None and coding_score < config.CODING_GATE_SCORE:
+        if gate == "hard":
+            result = "fail"
+        elif gate == "soft":
+            result = "pass" if interview >= config.CODING_GATE_SOFT_OVERRIDE else "fail"
+    total = interview
     return item_scores, interview, total, result
 
 
@@ -165,7 +169,7 @@ def decision_mode(criteria):
 
 
 def _auto_decision(criteria, result):
-    """auto: AI(코드) 판정을 바로 확정. semi: 담당자 확인 전까지 final_result=NULL."""
+    """auto: AI(코드) 판정을 바로 확정. hybrid: 담당자 확인 전까지 final_result=NULL."""
     if decision_mode(criteria) == "auto":
         return result, datetime.now(timezone.utc)
     return None, None

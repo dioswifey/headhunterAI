@@ -168,7 +168,7 @@ class CriteriaIn(BaseModel):
     w_delivery: int
     w_fit: int
     coding_enabled: bool
-    coding_ratio: int
+    coding_gate_mode: str = "none"
     pass_score: int
     decision_mode: str = "auto"
 
@@ -182,15 +182,15 @@ def set_criteria(job_id: int, body: CriteriaIn, user=Depends(security.recruiter)
     ws = [body.w_expertise, body.w_logic, body.w_relevance, body.w_delivery, body.w_fit]
     if sum(ws) != 100 or min(ws) < 5 or any(w % 5 for w in ws):
         raise HTTPException(400, "가중치는 5% 단위, 각 5% 이상, 합계 100%여야 합니다.")
-    if body.coding_ratio % 10 or not 10 <= body.coding_ratio <= 90:
-        raise HTTPException(400, "코딩테스트 반영 비중은 10% 단위(10~90%)로 설정해 주세요.")
+    if body.coding_gate_mode not in ("none", "hard", "soft"):
+        raise HTTPException(400, "코딩테스트 게이트는 없음·하드·소프트 중에서 선택할 수 있습니다.")
     if not 0 <= body.pass_score <= 100:
         raise HTTPException(400, "합격 기준은 0~100점입니다.")
-    if body.decision_mode not in ("auto", "semi"):
-        raise HTTPException(400, "합불 결정 방식은 자동 또는 반자동만 선택할 수 있습니다.")
+    if body.decision_mode not in ("auto", "hybrid"):
+        raise HTTPException(400, "합불 결정 방식은 자동 또는 하이브리드만 선택할 수 있습니다.")
     db.run("""UPDATE eval_criteria SET w_expertise=%s, w_logic=%s, w_relevance=%s, w_delivery=%s, w_fit=%s,
-              coding_enabled=%s, coding_ratio=%s, pass_score=%s, decision_mode=%s, version=version+1 WHERE job_id=%s""",
-           *ws, body.coding_enabled, body.coding_ratio, body.pass_score, body.decision_mode, job_id)
+              coding_enabled=%s, coding_gate_mode=%s, pass_score=%s, decision_mode=%s, version=version+1 WHERE job_id=%s""",
+           *ws, body.coding_enabled, body.coding_gate_mode, body.pass_score, body.decision_mode, job_id)
     db.audit(user["id"], "criteria_change", "job", job_id)
     return db.one("SELECT * FROM eval_criteria WHERE job_id=%s", job_id)
 
@@ -277,14 +277,15 @@ class DecisionIn(BaseModel):
 
 @router.post("/applicants/{app_id}/decision")
 def decide(app_id: int, body: DecisionIn, user=Depends(security.recruiter)):
-    """반자동(semi) 공고: 담당자는 '허용'(그대로 확정) 또는 '판정 변경'만 한다(원클릭). 점수는 바꾸지 않고 AI 판정(result)은 그대로 남는다."""
+    """hybrid 공고: 담당자는 '허용'(그대로 확정) 또는 '판정 변경'만 한다(원클릭). 점수는 바꾸지 않고 AI 판정(result)은 그대로 남는다.
+    확정 성공 시 EML-07: decision_mail로 합불 통보 메일을 비동기 발송한다(베스트에포트, 실패해도 확정 자체는 유지)."""
     base = _company_application(app_id, user)
     if not base["attempt_id"]:
         raise HTTPException(404, "응시 기록이 없습니다.")
     e = db.one("SELECT result, final_result FROM evaluations WHERE attempt_id=%s", base["attempt_id"])
     if not e:
         raise HTTPException(409, "AI 분석이 끝난 뒤 확정할 수 있습니다.")
-    if base["decision_mode"] != "semi":
+    if base["decision_mode"] != "hybrid":
         raise HTTPException(409, "자동 확정 공고는 담당자 확인 단계가 없습니다.")
     if e["final_result"]:
         raise HTTPException(409, "이미 확정된 결과입니다.")
@@ -297,6 +298,8 @@ def decide(app_id: int, body: DecisionIn, user=Depends(security.recruiter)):
     db.run("""UPDATE evaluations SET final_result=%s, decided_by=%s, decided_at=now(), decision_note=%s
               WHERE attempt_id=%s AND final_result IS NULL""", final, user["id"], note, base["attempt_id"])
     db.audit(user["id"], "decision_" + body.action, "application", app_id)
+    from . import decision_mail
+    decision_mail.send_async(base["attempt_id"])
     return {"ok": True, "result": final}
 
 
