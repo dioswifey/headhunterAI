@@ -154,7 +154,7 @@ def _pick_redis(vector, role_code, cat, n, used):
 
 def retrieve(s: GenState) -> GenState:
     """질문 은행에서 카테고리별 문항(QST-01). 이력서 대체 시 직무 문항을 더 뽑는다.
-    1순위 = Redis 질문 은행(questionbank/ 원본 → 번역 에이전트 → Redis, 이력서 키워드·공고로 벡터 검색).
+    1순위 = Redis 질문 은행(questionbank/vectorDB/ 원본 → 번역 에이전트 → Redis, 이력서 키워드·공고로 벡터 검색).
     Redis·임베딩 실패, 모델 미사용, 해당 카테고리 문항 부족이면 그 카테고리만 DB 질문 은행(적게 쓴 순·dup_group 중복 제거)."""
     used, picks, src = set(), {}, {}
     need = dict(Q.PLAN)

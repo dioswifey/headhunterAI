@@ -27,7 +27,7 @@ import httpx
 
 from .. import config
 
-DIR = os.path.join(os.getenv("QUESTIONBANK_DIR", "/questionbank"), "sql_taxonomy")
+DIR = os.path.join(os.getenv("QUESTIONBANK_DIR", "/questionbank"), "coding_sql_practice", "sql_taxonomy")
 STATS_PATH = os.path.join(DIR, "sqld_stats.json")
 
 OFFICIAL = {

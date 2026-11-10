@@ -541,6 +541,10 @@ function originalPane(x) {
 }
 
 const STAGE_KO = { text: '텍스트 추출 중', ocr: '문자 인식(OCR) 중', structure: '항목 정리 중(AI)', done: '완료' };
+const givenName = (name) => (name && name.length > 1 ? name.slice(1) : name || '');
+const stageLabel = (stage) => (stage === 'structure' && me && me.name)
+  ? `headhunterAI가 ${esc(givenName(me.name))}님의 이력서를 꼼꼼히 읽어보고 있습니다. 잠시만 기다려주세요.`
+  : (STAGE_KO[stage] || '처리 중');
 
 async function resumeView(appId) {
   if (!requireLogin()) return;
@@ -584,7 +588,7 @@ function pollExtraction(id, state) {
     if (stopped) return;
     const x = await get(`/api/resume/extractions/${id}`);
     if (x.status === 'processing') {
-      $('#progress').innerHTML = `<div class="card"><div class="between"><b><span class="spinner"></span> ${STAGE_KO[x.stage] || '처리 중'}</b><span class="small">${x.progress}%</span></div>
+      $('#progress').innerHTML = `<div class="card"><div class="between"><b><span class="spinner"></span> ${stageLabel(x.stage)}</b><span class="small">${x.progress}%</span></div>
         <div class="bar" style="margin-top:10px"><i style="width:${x.progress}%"></i></div>
         <p class="small" style="margin-top:8px">텍스트 추출 → 문자 인식 → 항목 정리 순서로 진행됩니다. 모든 처리는 사내 서버에서만 이뤄집니다.</p>
         <div class="row" style="margin-top:10px"><button class="btn sm" id="skip-wait">기다리지 않고 다음 단계로</button>
@@ -652,17 +656,13 @@ async function envView(appId) {
       </div>
       <div class="col">
         <div class="card hl"><h2>시작 전 안내</h2>
-          <dl class="kv"><dt>진행 방식</dt><dd>AI 면접${coding ? ' → 코딩테스트(Python, 2문항 60분)' : ''}</dd>
-          <dt>질문 수</dt><dd>기본 질문 8개(인성 2·이력서 기반 3·직무 2·기업 1) + 꼬리질문 최대 4개</dd>
-          <dt>답변 시간</dt><dd>기본 질문 90초, 꼬리질문 60초. 질문 음성이 끝나면 3-2-1 후 시작</dd>
-          <dt>예상 소요</dt><dd>약 ${25 + (coding ? 60 : 0)}분</dd>
-          <dt>중단</dt><dd>중단·일시정지 버튼이 없습니다. 시작하면 끝까지 진행합니다.</dd>
-          <dt>장애</dt><dd>네트워크·기기 장애로 끊기면 다시 접속해 끊긴 질문부터 이어갑니다. 탭 닫기·새로고침은 응시 종료로 처리됩니다.</dd>
-          <dt>화면 이탈</dt><dd>다른 탭·창으로 전환, 2초 이상 포커스 이탈, 전체 화면 해제 시 1회 경고, 2회째 응시가 취소됩니다.</dd></dl>
+          <dl class="kv"><dt>진행 방식</dt><dd>AI 면접${coding ? ' + 코딩테스트(Python, 3문항 60분)' : ''}</dd>
+          <dt>답변 시간</dt><dd>1분 이상입니다. 질문 음성이 끝나면 3-2-1 후 시작합니다.</dd>
+          <dt>예상 소요</dt><dd>약 ${25 + (coding ? 25 : 0)}분</dd>
+          <dt>주의</dt><dd>중단·일시정지 버튼이 없어 시작하면 끝까지 진행됩니다. 탭 닫기·새로고침은 바로 응시 종료, 다른 탭·창 전환이나 전체 화면 해제(2초 이상)는 1회 경고 후 2회째에 응시가 취소됩니다. 네트워크·기기 장애로 끊기면 재접속해 끊긴 질문부터 이어갈 수 있습니다.</dd></dl>
           <label class="check" style="margin-top:10px"><input type="checkbox" id="rules"><b>위 응시 규칙을 확인했습니다</b></label>
           <p class="small" id="pregen">맞춤 질문은 점검을 통과하면 준비를 시작합니다.</p>
-          <div class="note">질문은 AI 음성으로 읽어 드리고, 답변은 말씀하시면 AI가 글로 바꿔 저장합니다(답변 음성 파일은 저장하지 않습니다). 음성 인식이 되지 않을 때만 화면의 비상 입력란을 쓰세요.</div>
-          <button class="btn primary lg" id="start" disabled style="width:100%;margin-top:12px">전체 화면으로 면접 시작</button>
+          <button class="btn primary lg" id="start" disabled style="width:100%;margin-top:12px">headhunterAI 면접 시작하기</button>
           <p class="small" id="start-why" style="margin-top:8px"></p>
         </div>
       </div>
@@ -905,10 +905,13 @@ async function interviewView(attemptId) {
   const onFs = () => { if (!document.fullscreenElement) reportExit('fullscreen_exit'); };
   const onOffline = () => { active = false; clearInterval(qTimer); showDisconnected(); };
   const onOnline = async () => { st = await get(`/api/attempts/${attemptId}`); render(); };
-  document.addEventListener('visibilitychange', onVis);
-  window.addEventListener('blur', onBlur);
-  window.addEventListener('focus', onFocus);
-  document.addEventListener('fullscreenchange', onFs);
+  // 테스트 계정(시드 이지원)만 화면 이탈 감지를 꺼서 결과 확인 중 자유롭게 다른 창을 볼 수 있게 한다(실제 지원자는 규칙 그대로)
+  if (!isTestApplicant()) {
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('fullscreenchange', onFs);
+  }
   window.addEventListener('offline', onOffline);
   window.addEventListener('online', onOnline);
   onLeave(() => {
@@ -1076,7 +1079,7 @@ async function interviewView(attemptId) {
     current = q;
     view.innerHTML = `<div class="wrap" style="max-width:1000px">
       <div class="between" style="margin-bottom:14px"><span class="logo">headhunter<span class="accent">AI</span></span>
-        <span class="row"><span class="pill neon">${q.seq} / ${st.total}${q.followup ? ' · 꼬리질문' : ''}</span><span class="pill dim">${HH.CAT_KO[q.category] || ''}</span>
+        <span class="row"><span class="pill neon">${q.seq} / ${st.total}${q.followup ? ' · 꼬리질문' : ''}</span>
         ${st.exit_count ? `<span class="pill">화면 이탈 ${st.exit_count}회</span>` : ''}</span></div>
       <div class="stage">
         <div class="between" style="align-items:flex-start;gap:20px">
@@ -1166,8 +1169,7 @@ async function interviewView(attemptId) {
     $('#done').disabled = true; ans.disabled = true;
     if (wave) wave.listen(false);
     const audio = await stopRecording(false);
-    $('#phase').innerHTML = audio ? '<span class="spinner"></span> 답변 음성을 글로 바꾸고 다음 질문을 준비하고 있습니다…'
-      : '<span class="spinner"></span> 답변을 저장하고 다음 질문을 준비하고 있습니다…';
+    $('#phase').innerHTML = '<span class="spinner"></span> 다음 문제로 넘어가겠습니다. 잠시만 기다려주세요…';
     try {
       if (audio) {
         const fd = new FormData();
@@ -1213,7 +1215,7 @@ async function interviewView(attemptId) {
     remaining = data.remaining;
     view.innerHTML = `<div class="wrap" style="max-width:1200px">
       <div class="between" style="margin-bottom:14px"><span class="logo">headhunter<span class="accent">AI</span></span>
-        <span class="row"><span class="pill neon">코딩테스트 · Python 3</span><span class="pill" id="saved">자동 저장 대기</span><div class="timer" id="ctimer" style="width:76px;height:76px;font-size:18px">--:--</div></span></div>
+        <span class="row"><span class="pill neon">코딩테스트</span><span class="tabs lang-switch" role="group" aria-label="풀이 언어"><button type="button" class="on">Python 3</button><button type="button" disabled title="C언어는 준비 중입니다">C · 준비 중</button><button type="button" disabled title="SQL은 준비 중입니다">SQL · 준비 중</button></span><span class="pill" id="saved">자동 저장 대기</span><div class="timer" id="ctimer" style="width:76px;height:76px;font-size:18px">--:--</div></span></div>
       <div class="tabs" id="tabs">${data.problems.map((p, i) => `<button data-i="${i}">${i + 1}. ${esc(p.title)} <span class="small">(${p.level === 'basic' ? '기초' : '응용'})</span></button>`).join('')}</div>
       <div class="grid2" style="margin-top:14px;align-items:start;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr)">
         <div class="card col" id="pdesc"></div>

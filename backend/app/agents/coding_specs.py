@@ -38,13 +38,13 @@ SPECS = [
 
 
 # ---------------- 프로그래머스 framework 기반 명세 (2026-11-05 사용자 지시) ----------------
-# 수집한 프로그래머스 566문항의 **유형 통계(개수·분포)만** 쓴다(questionbank/coding_taxonomy/programmers_taxonomy.json).
+# 수집한 프로그래머스 566문항의 **유형 통계(개수·분포)만** 쓴다(questionbank/coding_sql_practice/coding_taxonomy/programmers_taxonomy.json).
 # 레벨(Lv.0~1 = junior, Lv.2+ = senior) · 그 레벨의 개념 분포 · 입출력 구조 분포에서 뽑아 명세를 만들고,
 # AI는 이 틀 안에서만 문제를 쓴다. 프로그래머스 문제의 문장·예시·테스트는 쓰지 않는다(권한 확인 전).
 import json as _json
 import random as _random
 
-TAXONOMY = "/questionbank/coding_taxonomy/programmers_taxonomy.json"
+TAXONOMY = "/questionbank/coding_sql_practice/coding_taxonomy/programmers_taxonomy.json"
 JUNIOR_LV, SENIOR_LV = ("Lv.0", "Lv.1"), ("Lv.2", "Lv.3", "Lv.4", "Lv.5")
 CONCEPT_INFO = {   # 개념 → (학습 목표, 목표 복잡도). 일반 CS 설명으로 직접 씀
     "기초 문법(조건·반복)": ("조건문과 반복문으로 규칙에 따라 값을 세거나 바꾼다", "시간 O(n), 공간 O(1)"),

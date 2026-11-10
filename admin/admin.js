@@ -144,7 +144,7 @@ function criteriaForm(c, locked) {
     ${ITEMS.map((it) => `<div class="row"><span style="width:150px">${ITEM_KO[it]}</span><input type="range" min="5" max="80" step="5" data-w="${it}" value="${c[WKEY[it]]}" ${dis} style="flex:1"><b class="neon" style="width:46px;text-align:right" data-wv="${it}">${c[WKEY[it]]}%</b></div>`).join('')}
     <div class="between"><span class="small">평가 항목과 루브릭(0~5점)은 고정입니다.</span><b id="wsum"></b></div>
     <hr style="margin:4px 0">
-    <label class="check"><input type="checkbox" id="coding_enabled" ${c.coding_enabled ? 'checked' : ''} ${dis}><span><b>코딩테스트 사용</b><br><span class="small">Python 2문항(기초 1·응용 1), 60분. 문제는 문제 은행에서 자동 출제됩니다.</span></span></label>
+    <label class="check"><input type="checkbox" id="coding_enabled" ${c.coding_enabled ? 'checked' : ''} ${dis}><span><b>코딩테스트 사용</b><br><span class="small">Python 3문항(기초 2·응용 1), 60분. 문제는 문제 은행에서 자동 출제됩니다.</span></span></label>
     <div class="row"><span style="width:150px">1차 합격 기준</span><input class="input" id="pass_score" type="number" min="0" max="100" value="${c.pass_score}" ${dis} style="max-width:110px"> 점 이상 <span class="small">(AI 면접 점수만으로 판정, 코딩테스트는 아래 게이트로 별도 반영)</span></div>
     <hr style="margin:4px 0">
     <h3>코딩테스트 게이트 <span class="small">(AI 면접 점수와 섞지 않고 별도 적용)</span></h3>

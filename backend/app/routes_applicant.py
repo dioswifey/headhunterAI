@@ -308,7 +308,7 @@ def _state(att):
         if q:
             st["question"] = {"id": q["id"], "seq": q["seq"], "text": q["text"], "time_limit": q["time_limit"],
                               "followup": q["parent_id"] is not None, "category": q["category"]}
-        st["total"] = 10
+        st["total"] = questions.BASE_TOTAL
     if att["phase"] == "coding":
         if att["status"] == "interrupted":
             st["remaining"] = att["coding_remaining"]

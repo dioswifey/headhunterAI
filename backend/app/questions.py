@@ -2,7 +2,7 @@
 
 기본 질문 8개 (2026-11-09 사용자 지시, 이전 10개):
   인성 2 → 이력서 기반 3 → 직무 이해도 2 → 기업 1
-  - 인성: questionbank/character_assessment/*.md → 인성 다듬기 에이전트(직무·이력서에 맞게 상황만 바꿈)
+  - 인성: questionbank/regularDB/character_assessment/*.md → 인성 다듬기 에이전트(직무·이력서에 맞게 상황만 바꿈)
   - 이력서 기반: 확인 완료 이력서(OCR) 항목 + 질문 은행 참고 문항 → 합치는 생성 에이전트
   - 직무 이해도: 질문 은행 문항 + 공고 + 이력서 키워드 세 가지를 섞어 다시 씀
   - 기업: 질문 은행 문항을 회사 맞춤으로(contextualize)
@@ -22,6 +22,7 @@ EVAL_ITEMS = {
 }
 PLAN = [("personality", 2), ("resume", 3), ("job", 2), ("company", 1)]
 RESUME_N = dict(PLAN)["resume"]
+BASE_TOTAL = sum(n for _, n in PLAN)
 
 AI_TERMS = ["ai", "ml", "머신러닝", "딥러닝", "llm", "rag", "nlp", "자연어", "비전", "vision", "yolo", "cnn", "transformer",
             "pytorch", "tensorflow", "huggingface", "모델", "추천", "데이터", "python", "파이썬", "mlops", "학습", "분류", "예측",
@@ -139,8 +140,8 @@ def resume_keywords(snapshot, limit=12):
     return [t for t in out if not BLOCKLIST.search(t)][:limit]
 
 
-# ---------- 인성 질문 은행 (questionbank/character_assessment/*.md, 2026-11-09) ----------
-CHAR_DIR = os.path.join(config.QUESTIONBANK_DIR, "character_assessment")
+# ---------- 인성 질문 은행 (questionbank/regularDB/character_assessment/*.md, 2026-11-09 생성 · 2026-11-10 원본은 questionbank/ 바로 밑 확정) ----------
+CHAR_DIR = os.path.join(config.QUESTIONBANK_DIR, "regularDB", "character_assessment")
 _CHAR_FIELDS = {"질문": "text", "의도": "intent", "좋은 답변 신호": "signals", "파고들 지점": "probes",
                 "맞춤 범위": "scope", "바꾸면 안 되는 것": "keep"}
 

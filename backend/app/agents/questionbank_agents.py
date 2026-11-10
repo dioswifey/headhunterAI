@@ -42,16 +42,17 @@ from .. import config, llm, vectorstore
 from . import translation_agent
 
 QB = config.QUESTIONBANK_DIR
+# 원본 전부 regularDB/ 밑(2026-11-10 사용자 확정: regularDB = 일반 원본 문서 전부, vectorDB = 임베딩 산출물만)
 SOURCES = {
     # 직무 코드 → 원본 목록. 직무·파일을 늘리면 여기에 한 줄 추가한다
-    "ai_ax": [("csv_aidev", os.path.join(QB, "ai-engineering-interview-questions-main", "data",
+    "ai_ax": [("csv_aidev", os.path.join(QB, "regularDB", "AI_engineer_questions", "data",
                                           "ai-engineering-interview-questions.csv")),
-              ("xlsx", os.path.join(QB, "questionbank.xlsx"))],
-    # 인성 = questionbank/character_assessment/*.md (2026-11-09). xlsx common 시트의 인성 8행은 md로 옮겼으므로 md판만 적재(중복 방지)
-    "common": [("character_md", os.path.join(QB, "character_assessment")),
-               ("xlsx", os.path.join(QB, "questionbank.xlsx"))],
-    "backend": [("xlsx", os.path.join(QB, "questionbank.xlsx"))],
-    "data_sci": [("xlsx", os.path.join(QB, "questionbank.xlsx"))],
+              ("xlsx", os.path.join(QB, "regularDB", "questionbank.xlsx"))],
+    # 인성 = questionbank/regularDB/character_assessment/*.md (2026-11-09). xlsx common 시트의 인성 8행은 md로 옮겼으므로 md판만 적재(중복 방지)
+    "common": [("character_md", os.path.join(QB, "regularDB", "character_assessment")),
+               ("xlsx", os.path.join(QB, "regularDB", "questionbank.xlsx"))],
+    "backend": [("xlsx", os.path.join(QB, "regularDB", "questionbank.xlsx"))],
+    "data_sci": [("xlsx", os.path.join(QB, "regularDB", "questionbank.xlsx"))],
 }
 
 

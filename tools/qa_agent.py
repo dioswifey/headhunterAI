@@ -72,7 +72,7 @@ REGISTRY = {
           "langgraph 설치", "그래프 노드 목록 / 지원 1건 generate_set(use_llm=False)", "노드가 ADLC 6.1·6.1-B·6.3과 같음, 8문항(인성 2·이력서 3·직무 2·기업 1)·카테고리 순서·출처 종류가 build_set과 같음", "결정적", "스크립트", "로컬", "P1"),
         R("UT-36", "LangGraph", "backend/app/agents/question_graph.py _pick_redis · retrieve", "기본 질문을 Redis 질문 은행(번역본)에서 직무별로 뽑기", "QST-01, LNG-01", "—", "Redis qb_idx",
           "Redis 질문 은행 적재 · 임베딩 모델", "AI/AX 공고 검색어로 직무 2·인성 2·기업 1 검색(questions.PLAN)", "직무 문항은 ai_ax만, 인성은 character_assessment md판(common:CA-), 모두 번역됨(한국어 문장), 중복 그룹 없음", "확률적", "스크립트", "로컬", "P1"),
-        R("UT-37", "질문 생성", "questions.py load_character_bank·one_sentence·BLOCKLIST·resume_pairs · agents/translation_agent.py blank_empty·check_wh", "인성 md 은행 · 질문 규칙 · 번역 빈 칸·의문사 보존 (2026-11-09)", "QST-01, RSQ-03, LNG-01", "—", "questionbank/character_assessment",
+        R("UT-37", "질문 생성", "questions.py load_character_bank·one_sentence·BLOCKLIST·resume_pairs · agents/translation_agent.py blank_empty·check_wh", "인성 md 은행 · 질문 규칙 · 번역 빈 칸·의문사 보존 (2026-11-09)", "QST-01, RSQ-03, LNG-01", "—", "questionbank/vectorDB/character_assessment",
           "—", "md 읽기 / '우선순위'·'학교 순위' / 두 문장 질문 / 빈 intent 번역 / How 질문 번역 / 이력서 후보 2개", "8문항 이상·필수 칸 있음, 우선순위 허용·학교 순위 차단, 두 문장 실패, 빈 칸은 빈 칸, 의문사 누락 지적, 이력서 질문 3개(같은 항목은 다른 관점)", "결정적", "스크립트", "로컬", "P1"),
         R("UT-38", "배포", "backend/app/bank_seed.py · backend/db/seed/", "문제·질문 은행 배포 파일(코딩·SQL·DB 질문 은행 SQL + Redis 질문 은행) 적재", "PRC-07, PRC-09, QST-01", "—", "coding_problems · sql_problems · question_bank · Redis qb_idx",
           "seed 파일 커밋", "seed 폴더 파일 확인 / 로컬 DB에 apply_sql 다시 실행", "파일 4개 있음, 이미 있는 DB에는 새 행 0(중복 없음). 빈 DB·빈 Redis 적재는 2026-11-09 수동 확인(79·60·29·235)", "결정적", "스크립트", "로컬", "P1"),

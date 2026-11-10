@@ -37,7 +37,7 @@ MAX_REPAIRS = 3
 LICENSE = "self-generated (headhunterAI 코딩 문제 생성 에이전트, 외부 문제 미사용)"
 S = lambda n: {"type": "string", "maxLength": n}   # noqa: E731
 GEN_SCHEMA = {"type": "object", "properties": {
-    "title": S(60), "statement": S(1600), "io_spec": S(900),
+    "title": S(60), "statement": S(900), "io_spec": S(900),
     "constraints": {"type": "array", "items": S(160), "minItems": 2, "maxItems": 10},
     "func_name": S(40), "params": {"type": "array", "items": S(30), "minItems": 1, "maxItems": 3},
     "solution": S(2500), "solution_explanation": S(900), "time_complexity": S(40), "space_complexity": S(40),

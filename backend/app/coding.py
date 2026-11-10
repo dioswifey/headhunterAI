@@ -8,12 +8,14 @@ from . import config, db
 
 
 def assign_problems(attempt_id):
-    """COD-02: basic 1 + applied 1."""
-    for level in ("basic", "applied"):
-        p = db.one("SELECT id FROM coding_problems WHERE level=%s ORDER BY random() LIMIT 1", level)
-        starter = db.one("SELECT starter FROM coding_problems WHERE id=%s", p["id"])["starter"]
+    """COD-02: basic 2 + applied 1 (2026-11-10 2문항→3문항, CLAUDE.md 참고)."""
+    chosen = [-1]
+    for level in ("basic", "basic", "applied"):
+        p = db.one("SELECT id, starter FROM coding_problems WHERE level=%s AND id != ALL(%s) ORDER BY random() LIMIT 1",
+                    level, chosen)
+        chosen.append(p["id"])
         db.run("INSERT INTO coding_submissions (attempt_id, problem_id, code) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
-               attempt_id, p["id"], starter)
+               attempt_id, p["id"], p["starter"])
 
 
 def _payload(tests, hide_hidden):

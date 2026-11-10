@@ -189,7 +189,7 @@ def job_detail(job_id: int):
     if not j:
         raise HTTPException(404, "공고를 찾을 수 없습니다.")
     j["result_date"] = publish_date(j["close_date"])
-    j["expected_minutes"] = 25 + (60 if j["coding_enabled"] else 0)
+    j["expected_minutes"] = 25 + (25 if j["coding_enabled"] else 0)
     return j
 
 
