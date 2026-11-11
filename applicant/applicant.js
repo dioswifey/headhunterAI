@@ -1215,7 +1215,7 @@ async function interviewView(attemptId) {
     remaining = data.remaining;
     view.innerHTML = `<div class="wrap" style="max-width:1200px">
       <div class="between" style="margin-bottom:14px"><span class="logo">headhunter<span class="accent">AI</span></span>
-        <span class="row"><span class="pill neon">코딩테스트</span><span class="tabs lang-switch" role="group" aria-label="풀이 언어"><button type="button" class="on">Python 3</button><button type="button" disabled title="C언어는 준비 중입니다">C · 준비 중</button><button type="button" disabled title="SQL은 준비 중입니다">SQL · 준비 중</button></span><span class="pill" id="saved">자동 저장 대기</span><div class="timer" id="ctimer" style="width:76px;height:76px;font-size:18px">--:--</div></span></div>
+        <span class="row"><span class="pill neon">코딩테스트</span><span class="tabs lang-switch" role="group" aria-label="풀이 언어" id="langsw"><button type="button" class="on" data-lang="python">Python 3</button><button type="button" data-lang="c" title="C언어는 준비 중입니다">C · 준비 중</button><button type="button" data-lang="sql" title="SQL은 준비 중입니다">SQL · 준비 중</button></span><span class="pill" id="saved">자동 저장 대기</span><div class="timer" id="ctimer" style="width:76px;height:76px;font-size:18px">--:--</div></span></div>
       <div class="tabs" id="tabs">${data.problems.map((p, i) => `<button data-i="${i}">${i + 1}. ${esc(p.title)} <span class="small">(${p.level === 'basic' ? '기초' : '응용'})</span></button>`).join('')}</div>
       <div class="grid2" style="margin-top:14px;align-items:start;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr)">
         <div class="card col" id="pdesc"></div>
@@ -1236,6 +1236,12 @@ async function interviewView(attemptId) {
     };
     $$('#tabs button').forEach((b) => (b.onclick = () => show(+b.dataset.i)));
     show(0);
+    // 언어는 고를 수 있게 두되 실제로 채점되는 언어는 Python 3만 (2026-11-11 사용자 지시)
+    const pickLang = (b) => {
+      if (b.dataset.lang !== 'python') toast('현재 Python 3만 지원합니다.', true);
+      $$('#langsw button').forEach((x) => x.classList.toggle('on', x.dataset.lang === 'python'));
+    };
+    $$('#langsw button').forEach((b) => (b.onclick = () => pickLang(b)));
     code.addEventListener('input', () => dirty.add(data.problems[idx].problem_id));
     code.addEventListener('keydown', (e) => {
       if (e.key === 'Tab') { e.preventDefault(); const s = code.selectionStart; code.setRangeText('    ', s, code.selectionEnd, 'end'); dirty.add(data.problems[idx].problem_id); }
