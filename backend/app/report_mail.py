@@ -11,7 +11,7 @@ import traceback
 from datetime import timezone
 from zoneinfo import ZoneInfo
 
-from . import config, db, mailer
+from . import config, db, mailer, report_guard
 from .evaluation import ITEM_KO, ITEMS
 
 KST = ZoneInfo("Asia/Seoul")
@@ -39,6 +39,14 @@ def _facts(r):
 
 
 def _template_coach(items, strengths, improvements):
+    if report_guard.is_tie(dict(items)):   # 동점: '가장 높고 가장 낮은 항목' 문장을 쓰지 않는다
+        coaching = ("이번 면접에서는 항목 간 점수 차이가 없어 특정 항목이 두드러지지 않았습니다. "
+                    "항목별 비교보다 질문 의도에 맞춰 실제 경험과 근거를 들어 답하는 연습부터 해 보세요.")
+        actions = ["자주 나오는 질문 3개를 골라 '결론 → 근거 → 사례' 순서로 1분 안에 답하는 연습을 해 보세요."]
+        if improvements:
+            actions.append(f"개선점 '{improvements[0][:60]}'을(를) 보완할 실제 경험 사례를 하나 정리해 두세요.")
+        actions.append("답변을 녹음해 다시 듣고, 핵심 문장이 첫 10초 안에 나오는지 확인해 보세요.")
+        return {"coaching": coaching, "actions": actions[:3]}
     best = max(items, key=lambda kv: kv[1])
     worst = min(items, key=lambda kv: kv[1])
     coaching = (f"이번 면접에서는 {best[0]} 항목이 {best[1]:.0f}점으로 가장 높았고, {worst[0]} 항목이 {worst[1]:.0f}점으로 가장 낮았습니다. "
@@ -54,7 +62,7 @@ def _coach(r, items, facts):
     cached = (r["public_feedback"] or {}).get("coaching")
     if cached:
         return cached, cached.get("writer", "template")
-    out, writer = None, "template"
+    out, writer, reject = None, "template", None
     if config.REPORT_WRITER == "crewai":
         try:
             from .crew import report_coach
@@ -62,10 +70,14 @@ def _coach(r, items, facts):
                                       "interview_score": float(r["interview_score"]), "coding": facts["coding"],
                                       "strengths": r["strengths"], "improvements": r["improvements"]})
             writer = "crewai" if out else "template"
-        except Exception:
+            reject = None if out else report_coach.LAST_REJECT
+        except Exception as e:
             traceback.print_exc()
+            reject = f"exception:{type(e).__name__}"
     out = out or _template_coach(items, r["strengths"] or [], r["improvements"] or [])
     out["writer"] = writer
+    if reject:
+        out["reject"] = reject      # 템플릿 대체 사유 코드만(원문 없음) — 리포트 품질 측정 M-42 원인 추적
     db.run("UPDATE evaluations SET public_feedback = public_feedback || %s WHERE attempt_id=%s", db.J({"coaching": out}), r["attempt_id"])
     return out, writer
 

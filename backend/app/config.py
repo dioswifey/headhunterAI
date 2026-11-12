@@ -118,4 +118,4 @@ MAX_FOLLOWUPS = 4
 QGRAPH_REVIEW = os.getenv("QGRAPH_REVIEW", "1") == "1"   # 그래프 1 A5·A6 모델 검수(0이면 규칙만)
 CONSENT_VERSION = "2026-11-09.v3"   # v2: 제3자 제공 4요소·자동화된 결정 거부권·음성 삭제·국외 보관 문구 · v3: LangSmith 국외 이전(PRD V9-14)
 
-VERSIONS = {"prompt": "p-2026.11.10", "rubric": "r-1.0", "ocr": "tesseract-5 " + OCR_LANG}
+VERSIONS = {"prompt": "p-2026.11.12", "rubric": "r-1.0", "ocr": "tesseract-5 " + OCR_LANG}

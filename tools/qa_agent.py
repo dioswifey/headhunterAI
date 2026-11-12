@@ -24,7 +24,7 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-QA = os.environ.get("QA_DOC_DIR") or os.path.join(ROOT, "QA_doc")   # 시험할 때만 복사본 폴더로 바꿈
+QA = os.environ.get("QA_DOC_DIR") or os.path.join(ROOT, "documents", "03_QA_doc")   # 2026-11 폴더 이동(documents/03_QA_doc).   # 시험할 때만 복사본 폴더로 바꿈
 TC_FILE = os.path.join(QA, "headhunterAI_테스트케이스.xlsx")
 PLAN_FILE = os.path.join(QA, "headhunterAI_QA_테스트계획서.xlsx")
 QA_MD = os.path.join(QA, "QA.md")
@@ -154,6 +154,13 @@ DEFECTS = [
     R("QA-25", "낮음", "P3", "수집", "SQL 유형 통계", "SQLD양파·네이버 블로그·카페·dataq.or.kr이 robots.txt로 자동 수집 금지(SQLD양파는 요청 후 403)", "사이트 정책", "수집하지 않음 — 공식 범위 + 네이버 검색 API(키 필요) 통계로 대체", "agents/sql_scope.py", "보류", "2026-11-06", "", "NAVER_CLIENT_ID·SECRET 발급 후 collect-stats", ""),
     R("QA-26", "보통", "P2", "지원자 관리", "사용자 보고", "지원자 목록에서 분석 미완료 지원자는 체크박스가 비활성이라 선택·삭제 불가", "체크박스를 비교 전용으로만 씀", "모든 행 선택 + 전체 선택 + 선택 삭제·목록 전체 삭제(확인 창), 비교는 분석 완료 2~3명만", "admin/admin.js, routes_admin.py", "통과", "2026-11-06", "2026-11-06", "IT-31, E2E-22", ""),
 ]
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import qa_evalplan as EP  # noqa: E402  — PRD v0.13 평가 플랜·운영 지표(M-31~54, EV-29~63, QA-27~30)
+
+REGISTRY["단위테스트"] += EP.REG_UT
+REGISTRY["통합테스트"] += EP.REG_IT
+DEFECTS += EP.DEFECTS
+
 METRICS = [  # 계획서 4_AI품질지표: 지표 ID, AI 역할, 지표, 단위, 목표, 방향, 정의·계산, 데이터셋·표본
     ("M-19", "A10·A11 코딩 문제은행", "검증 통과율", "비율", 0.8, "이상", "verified ÷ 생성 기록(현재 모델)", "EV-17"),
     ("M-20", "A10·A11 코딩 문제은행", "첫 시도 통과율", "비율", 0.6, "이상", "attempts=1로 verified ÷ 생성 기록", "EV-18"),
@@ -185,11 +192,11 @@ def sh(cmd, timeout=900):
     return p.returncode, p.stdout, p.stderr
 
 
-def run_container_checks():
+def run_container_checks(no_gpu=False):
     code, _, err = sh(["docker", "cp", os.path.join(ROOT, "tools", "qa_checks.py"), f"{API}:/srv/qa_checks.py"])
     if code:
         return {}, f"컨테이너 검사 불가: {err.strip()[:150]}"
-    code, out, err = sh(["docker", "exec", "-w", "/srv", API, "python", "qa_checks.py"])
+    code, out, err = sh(["docker", "exec", "-e", f"QA_NO_GPU={'1' if no_gpu else '0'}", "-w", "/srv", API, "python", "qa_checks.py"])
     sh(["docker", "exec", API, "rm", "-f", "/srv/qa_checks.py"])
     res = {}
     for line in out.splitlines():
@@ -289,7 +296,7 @@ def _fmt(actual):
     return actual if isinstance(actual, str) else (actual.get("note") or json.dumps(actual, ensure_ascii=False))
 
 
-def record(results, gaps, changed, started, secs):
+def record(results, gaps, changed, started, secs, eval_runs=None):
     import openpyxl
     from openpyxl.utils import get_column_letter
     wb = openpyxl.load_workbook(TC_FILE)
@@ -380,6 +387,9 @@ def record(results, gaps, changed, started, secs):
         t.cell(i, 6).value = "충족" if f == 0 and p > 0 else ("결함 있음" if f else "미검증")
     for col, w in zip("ABCDEF", (16, 60, 7, 10, 14, 10)):
         t.column_dimensions[col].width = w
+    EP.apply_cases(wb, eval_runs or {}, TODAY)                     # AI평가 EV-29~63 (+ 평가 결과 파일이 있으면 실제 결과)
+    EP.trace_block(t, 5 + len(trace) + 2, wb)                 # 추적표 하단 AC ↔ EV ↔ M
+    EP.add_run_rows(wb, eval_runs or {}, started, commit.strip())   # 평가 결과 파일별 RUN
     # 6) 계획서: 지표·시나리오·리스크
     ws = plan["4_AI품질지표"]
     footer = next(r for r in range(5, ws.max_row + 1) if ws.cell(r, 1).value == "달성")
@@ -408,6 +418,7 @@ def record(results, gaps, changed, started, secs):
         ws.cell(rows_by["지표 수"], 2).value = f'=COUNTA(A5:A{data_end})'
     if "측정률" in rows_by and all(k in rows_by for k in ("달성", "미달", "지표 수")):   # 행을 끼워 넣으면 옛 행 번호가 남으므로 다시 씀
         ws.cell(rows_by["측정률"], 2).value = f'=IFERROR((B{rows_by["달성"]}+B{rows_by["미달"]})/B{rows_by["지표 수"]},0)'
+    EP.apply_plan(plan, eval_runs or {}, TODAY)                    # M-31~54 · 평가 플랜 블록 · S-14~20 · R-16~22
     for row in SCENARIOS:
         upsert(plan["3_시나리오"], list(row))
     for risk_id, *rest in RISKS:
@@ -654,6 +665,7 @@ def main(argv=None):
     sub = p.add_subparsers(dest="cmd")
     r = sub.add_parser("run")
     r.add_argument("--dry-run", action="store_true")
+    r.add_argument("--no-gpu", action="store_true", help="임베딩·LLM·음성 검사 생략(다른 평가와 GPU 경합 방지)")
     sub.add_parser("gaps")
     ab = sub.add_parser("ab", help="코딩 문제은행 모델 A/B 채점 + 엑셀 기록")
     ab.add_argument("model_a")
@@ -679,8 +691,10 @@ def main(argv=None):
         return
     started = dt.datetime.now(KST).strftime("%Y-%m-%d %H:%M")
     t0 = time.time()
-    results, err = run_container_checks()
+    results, err = run_container_checks(getattr(a, "no_gpu", False))
     results.update(static_checks())
+    host, runs = EP.host_checks(ROOT, QA)
+    results.update(host)
     secs = round(time.time() - t0, 1)
     ok = sum(v["status"] == "통과" for v in results.values())
     print(f"[QA] 검사 {len(results)}건 · 통과 {ok} · 실패 {sum(v['status'] == '실패' for v in results.values())} · "
@@ -696,7 +710,7 @@ def main(argv=None):
         print(f"[QA] 엑셀 기록 안 함 — 다른 프로그램에서 열려 있음: {', '.join(lk)} (닫고 다시 실행)")
         sys.exit(2)
     gaps = coverage_gaps(openpyxl.load_workbook(TC_FILE))
-    rid, added, updated = record(results, gaps, changed_files(), started, secs)
+    rid, added, updated = record(results, gaps, changed_files(), started, secs, runs)
     md = update_qa_md()
     print(f"[QA] {rid} 기록 · 케이스 추가 {len(added)} · 갱신 {len(updated)} · QA.md 결함 추가 {md or '없음'}")
     print(f"[QA] 테스트 없는 모듈 {len(gaps)}개: {', '.join(gaps) or '없음'}")

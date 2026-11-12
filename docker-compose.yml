@@ -102,6 +102,7 @@ services:
       - ./questionbank/coding_sql_practice/sql_taxonomy:/questionbank/coding_sql_practice/sql_taxonomy   # SQLD 유형 통계(쓰기)
       - ./questionbank/vectorDB:/questionbank/vectorDB   # Chroma 영속 저장(쓰기) — 임베딩 산출물 전용(2026-11-10)
       - ./internal_documents/internal_documents:/internal_documents:ro   # 사내문서 RAG 원본 80개(읽기 전용, A13 적재용, 2026-11-11)
+      - ./job_posting_resources:/job_posting_resources:ro   # 수집 공고 원문(그래프 3 job_posting_graph 입력, 읽기 전용, 2026-11-12)
       - ./backend/app/prompts/skills:/srv/app/prompts/skills:ro   # 번역 에이전트 스킬: 파일을 넣거나 고치면 다음 실행부터 자동 사용
 
   redis:

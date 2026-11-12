@@ -66,6 +66,7 @@ def parse_doc(path):
     """문서 1개 → {doc_id, doc_type, tier, topic, disclosure, status, doc_title, sections[], hash}."""
     with open(path, "rb") as f:
         raw = f.read()
+    raw = raw.replace(b"\r\n", b"\n")   # git core.autocrlf PC(CRLF)와 LF PC의 해시를 같게 — 안 하면 sync가 80개 전부 재임베딩
     text = raw.decode("utf-8")
     doc_hash = hashlib.sha256(raw).hexdigest()
 

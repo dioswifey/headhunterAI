@@ -45,12 +45,12 @@ from pathlib import Path
 import openpyxl
 
 ROOT = Path(__file__).resolve().parent.parent
-QA = ROOT / "QA_doc"
+QA = ROOT / "documents" / "03_QA_doc"   # 2026-11 폴더 이동
 FILES = {"PLAN": QA / "headhunterAI_QA_테스트계획서.xlsx", "CASES": QA / "headhunterAI_테스트케이스.xlsx", "WBS": QA / "headhunterAI_QA_WBS.xlsx"}
 CASE_SHEETS = ("단위테스트", "통합테스트", "E2E테스트", "AI평가", "결함관리")
 SKIP_SHEETS = ("변경이력", "_agent")
 HEADER_ROW, FIRST_ROW = 4, 5
-DOC_DIRS = {"PRD": ROOT / "PRD" / "PRD_prompt", "TRD": ROOT / "TRD" / "TRD_prompt", "ADLC": ROOT / "ADLC"}
+DOC_DIRS = {"PRD": ROOT / "documents" / "01_PRD" / "PRD_prompt", "TRD": ROOT / "documents" / "02_TRD" / "TRD_prompt", "ADLC": ROOT / "ADLC"}
 CODE_PATHS = ["backend", "deploy", "docker-compose.yml"]
 KST = dt.timezone(dt.timedelta(hours=9))
 DEFAULT_POLICY = {"min_interval_hours": 12, "new_ids": 3, "status_changes": 3, "code_churn": 400, "stale_days": 7}

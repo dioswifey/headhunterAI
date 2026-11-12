@@ -97,7 +97,9 @@ def contextualize(q, job, intent=""):
     nq = (out.get("question") or "").strip()
     squash = re.sub(r"\s+", "", info)
     facts_ok = all(re.sub(r"\s+", "", f) in squash for f in out.get("company_facts", []) if f and f.strip())
-    if not (10 <= len(nq) <= 160) or not one_sentence(nq) or BLOCKLIST.search(nq) or not facts_ok:
+    # 2026-11-12 RAG 평가(M-32): 모델이 밝힌 company_facts만 대조하면 질문 속 지어낸 수치('정확도 85%')가 통과한다
+    # → 직무 질문과 같은 토큰 검사(영문·숫자 토큰은 은행 원문·공고·회사 정보에 있어야 함)
+    if not (10 <= len(nq) <= 160) or not one_sentence(nq) or BLOCKLIST.search(nq) or not facts_ok or not _tokens_ok(nq, q, job, {}):
         return q
     return nq
 
@@ -322,9 +324,10 @@ def make_resume_question(cand, angle, snapshot, bank=None, role_name=""):
         except llm.LLMError:
             break
         q = out["question"].strip()
-        if q and not BLOCKLIST.search(q) and grounded(q, out.get("cited_terms", []), snapshot):
+        # 2026-11-12 RAG 평가: 한 문장 검사 추가(두 문장 질문이 그대로 나가던 경로)
+        if q and one_sentence(q) and not BLOCKLIST.search(q) and grounded(q, out.get("cited_terms", []), snapshot):
             q, _ = fit_scope(q, config.QUESTION_SECONDS, "직무 전문성·구체성")
-            if not BLOCKLIST.search(q):
+            if not BLOCKLIST.search(q) and one_sentence(q):
                 if bank:
                     ref["bank_used"] = bool(out.get("used_bank"))
                 return {"text": q, "resume_ref": ref, "gen_method": "llm"}

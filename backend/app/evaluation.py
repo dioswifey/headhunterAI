@@ -5,7 +5,7 @@ LLM only scores items 0~5 with quotes; every number after that is computed here.
 import re
 from datetime import datetime, timedelta, timezone
 
-from . import coding, config, db, llm
+from . import coding, config, db, llm, report_guard
 
 ITEMS = ["expertise", "logic", "relevance", "delivery", "fit"]
 ITEM_KO = {"expertise": "직무 전문성", "logic": "논리성", "relevance": "내용 관련성·구체성", "delivery": "전달력", "fit": "조직 적합성"}
@@ -124,7 +124,33 @@ def compute(item_points, criteria, coding_score):
     return item_scores, interview, total, result
 
 
+SUMMARY_GEN_SCHEMA = {"type": "object", "properties": {
+    "strengths": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+    "strength_items": {"type": "array", "items": {"type": "string", "enum": ITEMS}, "maxItems": 3},
+    "improvements": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+    "improvement_items": {"type": "array", "items": {"type": "string", "enum": ITEMS}, "maxItems": 3},
+    "summary": {"type": "string"}}, "required": ["strengths", "strength_items", "improvements", "improvement_items", "summary"]}
+SUMMARY_SYSTEM = ("너는 채용 1차 면접 결과를 정리하는 평가자다. 아래 채점 결과와 답변에 실제로 있는 내용만 근거로, 강점과 개선점을 각각 1~3개(중요도 순), "
+                  "총평 2문장을 한국어로 쓴다. 강점은 반드시 '강점 후보 항목'에서만, 개선점은 반드시 '개선점 후보 항목'에서만 고르고, "
+                  "각 문장이 어느 항목인지 strength_items·improvement_items에 같은 순서로 적는다. 답변에 없는 경험·수치를 지어내지 않는다. "
+                  "따옴표는 답변 원문을 글자 그대로 옮길 때만 쓴다. 합격·불합격 여부와 인적 특성은 언급하지 않는다.")
+
+
+def _summary_problem(res, top, bottom, allowed):
+    """요약 결과 검사 → 사유 코드(문제 없으면 None). report_guard 규칙 + 점수-서술 일치(상위·하위 2개 항목)."""
+    s, si = res.get("strengths") or [], res.get("strength_items") or []
+    i, ii = res.get("improvements") or [], res.get("improvement_items") or []
+    if not s or not i or not (res.get("summary") or "").strip():
+        return "empty"
+    if len(si) != len(s) or len(ii) != len(i):
+        return "item_label_mismatch"
+    if any(x not in top for x in si) or any(x not in bottom for x in ii):
+        return "score_inconsistent"
+    return report_guard.check_text(s + i + [res["summary"]], allowed)
+
+
 def summarize(blocks, scores_by_q, item_scores):
+    """A4 요약. 검사(금지어·지어낸 수치·점수-서술 일치)에 걸리면 1회 다시 만들고, 그래도 걸리면 항목 점수 기준 대체 문구."""
     lines = []
     for b in blocks:
         q = b["q"]
@@ -132,14 +158,35 @@ def summarize(blocks, scores_by_q, item_scores):
         lines.append(f"[{q['seq']}] {q['text']}\n답변: {(q['answer_text'] or '(미응답)')[:400]}\n점수: " +
                      ", ".join(f"{ITEM_KO[k]} {v['score']}" for k, v in sc.items()))
     items = ", ".join(f"{ITEM_KO[k]} {v}" for k, v in item_scores.items())
-    try:
-        return llm.chat_json(
-            "너는 채용 1차 면접 결과를 정리하는 평가자다. 아래 채점 결과와 답변에 실제로 있는 내용만 근거로, 강점과 개선점을 각각 1~3개(중요도 순), 총평 2문장을 한국어로 쓴다. 답변에 없는 경험을 지어내지 않는다. 인적 특성은 언급하지 않는다.",
-            f"항목 점수(100점 환산): {items}\n\n" + "\n\n".join(lines)[:9000], SUMMARY_SCHEMA, temperature=0.2)
-    except llm.LLMError:
-        best = sorted(item_scores.items(), key=lambda kv: -kv[1])
-        return {"strengths": [f"{ITEM_KO[best[0][0]]} 항목에서 상대적으로 높은 평가를 받았습니다."],
-                "improvements": [f"{ITEM_KO[best[-1][0]]} 항목을 보완하면 좋겠습니다."], "summary": "자동 요약 생성에 실패해 항목 점수 기준으로 정리했습니다."}
+    top, bottom = report_guard.top_bottom(item_scores)
+    tie = report_guard.is_tie(item_scores)
+    if tie:   # 동점: 항목 비교로 강점·개선점을 가를 수 없다 → 답변 내용 기반으로 쓰고 '항목 간 차이 없음'을 적게 한다
+        top = bottom = set(item_scores)
+        cand = ("항목 간 점수 차이가 없다(동점). 강점·개선점을 항목 점수 비교로 쓰지 말고, 답변 내용에서 실제로 보인 점만 근거로 쓴다. "
+                "답변에서 뚜렷한 강점을 찾기 어려우면 강점에 그 사실을 한 문장으로 쓴다. 개선점은 답변 내용에 근거한 구체적인 보완 방향으로 쓴다. "
+                "총평에 '항목 간 점수 차이가 없다'는 점을 넣는다. 항목 라벨은 문장 내용에 가장 가까운 항목을 고른다.")
+    else:
+        cand = (f"강점 후보 항목: {', '.join(f'{it}({ITEM_KO[it]})' for it in ITEMS if it in top)}\n"
+                f"개선점 후보 항목: {', '.join(f'{it}({ITEM_KO[it]})' for it in ITEMS if it in bottom)}")
+    user = f"항목 점수(100점 환산): {items}\n{cand}\n\n" + "\n\n".join(lines)[:9000]
+    answers = "\n".join(a["answer_text"] or "" for b in blocks for a in [b["q"]] + b["followups"])
+    allowed = report_guard.number_tokens(user, *item_scores.values())
+    for _ in range(2):
+        try:
+            res = llm.chat_json(SUMMARY_SYSTEM, user, SUMMARY_GEN_SCHEMA, temperature=0.2)
+        except llm.LLMError:
+            continue
+        if _summary_problem(res, top, bottom, allowed) is None:
+            fix = lambda t: report_guard.strip_bad_quotes(t, answers)  # noqa: E731 — 원문에 없는 '인용'은 따옴표만 없앤다
+            return {"strengths": [fix(t) for t in res["strengths"]], "improvements": [fix(t) for t in res["improvements"]],
+                    "summary": fix(res["summary"])}
+    if tie:
+        return {"strengths": ["항목 간 점수 차이가 없어 특정 강점을 꼽기 어려웠습니다."],
+                "improvements": ["질문 의도에 맞춰 실제 경험과 근거를 들어 답변을 구체적으로 보완하면 좋겠습니다."],
+                "summary": "자동 요약 생성에 실패해 항목 점수 기준으로 정리했습니다. 항목 간 점수 차이가 없어 항목 비교 대신 답변 구체화를 권합니다."}
+    best = sorted(item_scores.items(), key=lambda kv: -kv[1])
+    return {"strengths": [f"{ITEM_KO[best[0][0]]} 항목에서 상대적으로 높은 평가를 받았습니다."],
+            "improvements": [f"{ITEM_KO[best[-1][0]]} 항목을 보완하면 좋겠습니다."], "summary": "자동 요약 생성에 실패해 항목 점수 기준으로 정리했습니다."}
 
 
 CODE_FB_SCHEMA = {"type": "object", "properties": {"feedback": {"type": "string"}}, "required": ["feedback"]}

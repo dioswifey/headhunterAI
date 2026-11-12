@@ -141,10 +141,10 @@ def ut25():
 
 @check("UT-26")
 def ut26():
-    from app.agents.coding_specs import framework_specs
+    from app.agents.coding_specs import TAXONOMY, framework_specs
     sp = framework_specs(10, seed=11)
     jr = sum(s["difficulty"] == "basic" for s in sp)
-    st = json.load(open("/questionbank/coding_taxonomy/programmers_taxonomy.json", encoding="utf-8"))
+    st = json.load(open(TAXONOMY, encoding="utf-8"))   # QA-31: 옛 경로 하드코딩 대신 제품 상수(questionbank/coding_sql_practice/…)
     fams = {k for k, v in st["structure_families"].items() if v >= 10 and k != "예제 없음"}
     ok = len(sp) == 10 and jr == 6 and all(s["structure"] in fams for s in sp)
     return ok, f"명세 {len(sp)}개 · Junior {jr} / Senior {10 - jr} · 구조 모두 10회 이상 나온 구조 {all(s['structure'] in fams for s in sp)}"
@@ -639,10 +639,112 @@ def it38():
         db.run("UPDATE applications SET step=%s WHERE id=%s", app["step"], app["id"])
 
 
+# ---------------- v0.13 평가 플랜 (PRD 6.3.8~6.3.9) — GPU·모델 호출 없는 구조·규칙 검사 ----------------
+GRAPH_SPEC = {   # ADLC v0.7 6.1 · 6.1-B · 6.3 (그래프 노드 · 엣지, 조건 엣지는 True)
+    "GENERATION": {"nodes": ["start", "extract_keywords", "evaluate_trust", "retrieve", "generate", "evaluate_philosophy",
+                             "evaluate_answerability", "finalize"],
+                   "edges": {("__start__", "start", False), ("start", "extract_keywords", False), ("extract_keywords", "evaluate_trust", False),
+                             ("evaluate_trust", "retrieve", False), ("retrieve", "generate", False), ("generate", "evaluate_philosophy", False),
+                             ("evaluate_philosophy", "evaluate_answerability", False), ("evaluate_answerability", "finalize", False),
+                             ("finalize", "__end__", False)}},
+    "INTERVIEW_STEP": {"nodes": ["record_answer", "judge_followup", "make_followup", "next_question"],
+                       "edges": {("__start__", "record_answer", False), ("record_answer", "judge_followup", False),
+                                 ("judge_followup", "make_followup", True), ("judge_followup", "next_question", True),
+                                 ("make_followup", "next_question", False), ("next_question", "__end__", False)}},
+    "EVALUATION": {"nodes": ["load", "save_cancelled", "evaluate_blocks", "compute", "summarize", "decide", "save"],
+                   "edges": {("__start__", "load", False), ("load", "__end__", True), ("load", "save_cancelled", True),
+                             ("load", "evaluate_blocks", True), ("save_cancelled", "__end__", False), ("evaluate_blocks", "compute", False),
+                             ("compute", "summarize", False), ("summarize", "decide", False), ("decide", "save", False), ("save", "__end__", False)}},
+}
+
+
+@check("UT-39")
+def ut39():
+    from app.agents import evaluation_graph as E, question_graph as G
+    graphs = {"GENERATION": G.GENERATION, "INTERVIEW_STEP": G.INTERVIEW_STEP, "EVALUATION": E.GRAPH}
+    bad = []
+    for name, g in graphs.items():
+        gg = g.get_graph()
+        nodes = [x for x in gg.nodes if not x.startswith("__")]
+        edges = {(e.source, e.target, bool(e.conditional)) for e in gg.edges}
+        spec = GRAPH_SPEC[name]
+        if nodes != spec["nodes"]:
+            bad.append(f"{name} 노드 {nodes}")
+        if edges != spec["edges"]:
+            bad.append(f"{name} 엣지 차이 +{sorted(edges - spec['edges'])} -{sorted(spec['edges'] - edges)}")
+    n = {k: len(v["nodes"]) for k, v in GRAPH_SPEC.items()}
+    e = {k: len(v["edges"]) for k, v in GRAPH_SPEC.items()}
+    return not bad, ("; ".join(bad)[:300] if bad else f"1-A 노드 {n['GENERATION']}·엣지 {e['GENERATION']} / 1-B {n['INTERVIEW_STEP']}·{e['INTERVIEW_STEP']}"
+                     f"(조건 2) / 2 {n['EVALUATION']}·{e['EVALUATION']}(조건 3) — 문서와 같음")
+
+
+@check("IT-39")
+def it39():
+    from app import internal_store as S
+    pub = S.collection(S.PUBLIC).get(include=["metadatas"])["metadatas"] or []
+    res = S.collection(S.RESTRICTED).get(include=["metadatas"])["metadatas"] or []
+    docs = {m.get("doc_id") for m in pub + res if m}
+    mix_pub = sum(1 for m in pub if (m or {}).get("disclosure") != "public")
+    mix_res = sum(1 for m in res if (m or {}).get("disclosure") == "public")
+    ok = len(docs) == 80 and len(pub) + len(res) == 2270 and len(pub) == 394 and len(res) == 1876 and mix_pub == 0 and mix_res == 0
+    return ok, (f"문서 {len(docs)} · 조각 {len(pub) + len(res)}(public {len(pub)} · restricted {len(res)}) · "
+                f"혼입 public칸 비공개 {mix_pub} · restricted칸 공개 {mix_res}")
+
+
+@check("UT-40")
+def ut40():
+    from app import questions as Q
+    plan_ok = Q.PLAN == [("personality", 2), ("resume", 3), ("job", 2), ("company", 1)]
+    expected = [c for c, n in Q.PLAN for _ in range(n)]
+    rows = db.all_("""SELECT a.id, array_agg(q.category ORDER BY q.seq) cats FROM attempts a
+                      JOIN attempt_questions q ON q.attempt_id=a.id AND q.parent_id IS NULL GROUP BY a.id""")
+    eight = [r for r in rows if len(r["cats"]) == 8]
+    bad = [r["id"] for r in eight if list(r["cats"]) != expected]
+    return plan_ok and not bad, (f"PLAN 인성 2·이력서 3·직무 2·기업 1 = {plan_ok} · DB 8문항 응시 {len(eight)}건 중 순서 위반 {len(bad)}"
+                                 + ("" if eight else " (DB 응시 없음 — 표본 분포는 EV-35/M-37 평가 결과로 확인)"))
+
+
+BLOCK_SAMPLES = ["실례지만 나이가 어떻게 되시나요?", "결혼 계획이 있으신가요?", "부모님은 어떤 일을 하시나요?", "종교가 있으신가요?",
+                 "고향이 어디인가요?", "병역은 마치셨나요?", "출신 학교가 어디인가요?", "자녀 계획이 있나요?"]
+ALLOW_SAMPLES = ["업무 우선순위를 정하는 기준을 설명해 주세요.", "RAG 검색 품질을 어떻게 측정했는지 설명해 주세요.",
+                 "장애가 났을 때 원인을 찾은 순서를 설명해 주세요."]
+
+
+@check("UT-41")
+def ut41():
+    from app import questions as Q
+    from app.agents import question_graph as G
+    miss = [s for s in BLOCK_SAMPLES if not (Q.BLOCKLIST.search(s) or G.PERSONAL.search(s))]
+    false_hit = [s for s in ALLOW_SAMPLES if Q.BLOCKLIST.search(s)]
+    return not miss and not false_hit, f"금지 {len(BLOCK_SAMPLES) - len(miss)}/{len(BLOCK_SAMPLES)} 차단 · 허용 오탐 {len(false_hit)}" + (f" · 놓침 {miss}" if miss else "")
+
+
+REPORT_BAD = ["이 답변이면 1차 합격 가능성이 높습니다.", "불합격 사유를 보완하세요.", "합불에는 영향이 없습니다.",
+              "나이에 비해 경험이 많습니다.", "학벌보다 실력을 보여 주세요.", "성별과 무관하게 좋은 답변입니다."]
+REPORT_OK = ["구체적인 수치를 들어 성과를 설명하면 더 설득력이 생깁니다.", "STAR 구조로 상황과 결과를 나눠 말해 보세요."]
+
+
+@check("UT-42")
+def ut42():
+    from app.crew import report_coach as RC
+    miss = [s for s in REPORT_BAD if not RC.FORBIDDEN.search(s)]
+    false_hit = [s for s in REPORT_OK if RC.FORBIDDEN.search(s)]
+    return not miss and not false_hit, f"금지 문장 {len(REPORT_BAD) - len(miss)}/{len(REPORT_BAD)} 차단 · 정상 문장 오탐 {len(false_hit)}" + (f" · 놓침 {miss}" if miss else "")
+
+
+GPU_CHECKS = {"UT-35", "UT-36", "IT-37", "IT-38"}   # 임베딩·로컬 LLM·음성 모델을 부르는 검사 — QA_NO_GPU=1이면 건너뜀(다른 평가와 GPU 경합 방지, R-17)
+
+
 def main(ids):
+    import os
+    no_gpu = os.environ.get("QA_NO_GPU") == "1"
     for tc in ids or list(CHECKS):
         fn = CHECKS.get(tc)
         if not fn:
+            continue
+        if no_gpu and tc in GPU_CHECKS:
+            print(json.dumps({"id": tc, "status": "보류", "actual": "GPU 검사 생략(QA_NO_GPU=1) — 평가 실행과 GPU 경합 방지", "ms": 0},
+                             ensure_ascii=False), flush=True)
             continue
         t = time.time()
         try:

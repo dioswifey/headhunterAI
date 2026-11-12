@@ -139,7 +139,8 @@ def _pick_redis(vector, role_code, cat, n, used):
              "subcategory": h.get("intent_ko") or h.get("competency") or "", "dup_group": h.get("dup_group") or "",
              "competency": h.get("competency") or "", "sim": h.get("sim")}
         g = b["dup_group"] or b["competency"] or b["doc_id"]
-        if not b["text"] or g in seen or Q.BLOCKLIST.search(b["text"]):
+        # 2026-11-12 RAG 평가: 두 문장짜리 은행 문항(영문 번역 문항 등)은 다시 쓰기가 실패하면 원문 그대로 나가므로 후보에서 뺀다
+        if not b["text"] or g in seen or Q.BLOCKLIST.search(b["text"]) or not Q.one_sentence(b["text"]):
             continue
         seen.add(g)
         b["dup_group"] = g
@@ -323,9 +324,12 @@ def evaluate_philosophy(s: GenState) -> GenState:
             d["text"] = text
         else:
             stats["reverted"] += 1
-            d["text"] = d["orig"]
-            if d["category"] == "resume" and d.get("gen_method") == "llm":
-                d["gen_method"] = "template"
+            if Q.one_sentence(d["orig"]) or not (Q.one_sentence(d["text"]) and _rule_ok(d, d["text"], s["snapshot"])):
+                d["text"] = d["orig"]
+                if d["category"] == "resume" and d.get("gen_method") == "llm":
+                    d["gen_method"] = "template"
+            # else: 2026-11-12 RAG 평가 — 원문이 두 문장(번역 문항 등)이면 원문으로 되돌리지 않고,
+            #       규칙(길이·차단 목록·근거)과 한 문장을 통과한 A2 초안을 그대로 둔다
         d["philosophy"] = "pass" if ok else "reverted"
         drafts.append(d)
     return {"drafts": drafts, "log": s["log"] + ["evaluate_philosophy: " + " · ".join(f"{k} {v}" for k, v in stats.items())]}
