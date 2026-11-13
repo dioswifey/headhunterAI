@@ -20,6 +20,8 @@ MIN_SIM = 0.55             # 하한 (실측 후 확정)
 MAX_PER_DOC = 2            # 문서당 최대 조각
 TOP_N = 4                  # 최종 조각 수
 MAX_CHARS = 2000           # 컨텍스트 합계 상한
+# 하드 필터 status (2026-11-13 사용자 결정: resolved 추가 — 해결된 장애 회고 공개판 등. open은 계속 제외)
+ALLOWED_STATUS = ("active", "done", "resolved")
 
 # 재순위 가산점 (하드 필터 아님)
 PREFERRED_TYPES = {"jd": 0.04, "talent": 0.04, "project": 0.04,
@@ -59,10 +61,13 @@ def _strip_code(body, meta):
     return CODE_RE.sub("[코드 생략]", body) if meta.get("has_code") else body
 
 
-def search(vector, role_code=None, level_band=None, k=K, min_sim=MIN_SIM):
-    """반환: {context, refs, hits}. 근거가 없으면 context="" (호출 쪽이 공고 정보만으로 생성)."""
+def search(vector, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid_terms=None):
+    """반환: {context, refs, hits}. 근거가 없으면 context="" (호출 쪽이 공고 정보만으로 생성).
+
+    forbid_terms(2026-11-13, 6.13.6 ⑧): 전 문서 금지 용어 사전 `idoc:forbid`(`agents.internal_forbid.load_terms`).
+    주면 조각 자신의 forbid_terms에 더해 이 용어가 본문에 있는 조각도 버린다. None이면 기존 동작(평가 도구 호환)."""
     where = {"$and": [{"disclosure": {"$eq": "public"}},
-                      {"status": {"$in": ["active", "done"]}}]}
+                      {"status": {"$in": list(ALLOWED_STATUS)}}]}
     try:
         hits = internal_store.query_public(vector, k=k, where=where)
     except Exception:
@@ -70,6 +75,9 @@ def search(vector, role_code=None, level_band=None, k=K, min_sim=MIN_SIM):
 
     hits = [h for h in hits if h["sim"] >= min_sim]
     hits = [h for h in hits if not _forbidden(h["document"], h["metadata"])]
+    if forbid_terms:
+        from . import internal_forbid
+        hits = [h for h in hits if not internal_forbid.find_terms(h["document"], forbid_terms)]
     hits = _rerank(hits, role_code, level_band)
 
     picked, per_doc, total = [], {}, 0

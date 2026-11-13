@@ -1,24 +1,34 @@
 """그래프 1 — 질문 생성 + 면접 루프 (ADLC v0.5 6.1 · 6.1-B, LangGraph).
 
 A. 질문 생성 그래프 GENERATION (환경 점검 중 questions.pregenerate가 부름, 결과 → applications.pregen_questions)
-   start → extract_keywords → evaluate_trust(A5, ⟲1) → retrieve → generate(A2) → evaluate_philosophy(A6, ⟲2)
-         → evaluate_answerability(A7) → finalize → END
-B. 면접 한 걸음 그래프 INTERVIEW_STEP (답변이 들어올 때마다 routes_applicant._save_answer가 부름)
-   record_answer → judge_followup(A3) ─(꼬리질문)→ make_followup → next_question → END
-                                      └(없음)──────────────────→ next_question → END
-   답변은 HTTP 요청마다 따로 오므로 루프의 '대기'(ask_question)는 화면이 맡고, 그래프는 답변 1개마다 한 번 돈다.
-   State는 매번 DB(attempt_questions·attempts)에서 다시 만든다 → 체크포인터를 쓰지 않는다(ADLC 6.1-B 승인 필요 항목 회피).
+   start → extract_keywords → evaluate_trust(A5, ⟲1) → retrieve(RAG ① 질문 은행) → retrieve_internal(4-B, RAG ② 사내문서)
+         → generate(A2 · 기업 문항은 근거가 있으면 A15) → evaluate_philosophy(A6, ⟲2) → evaluate_answerability(A7)
+         → guard_disclosure(7-B, A16 누출 관문) → finalize → END
+   (4-B·7-B·A15·A16 = ADLC v0.7 6.13.6~6.14, 2026-11-13 구현. 끄기 = INTERNAL_DOCS_RAG=0)
+B. 면접 루프 INTERVIEW_LOOP (2026-11-13, ADLC 6.1-B 노드 9~13 — 답변이 들어올 때마다 answer_step이 재개)
+   START → ask_question(interrupt 대기) → record_answer → judge_followup(A3) ─(꼬리질문)→ make_followup → ask_question
+                                                                       └(없음)→ next_question ─(남음)→ ask_question
+                                                                                              └(끝)→ END
+   체크포인터 = 프로세스 메모리(InMemorySaver, thread_id = attempt-<id>), 임시 보관만. 기준은 DB(attempt_questions·attempts)이고
+   체크포인트가 없거나 어긋나면 DB로 다시 만든다. 루프가 실패하면 체크포인터 없는 한 걸음 그래프 INTERVIEW_STEP으로 대체.
 
 규칙(ADLC 0~2장): 모델 호출은 llm.chat_json만. 점수·합불·응시 상태 전이는 코드. 어떤 노드가 실패해도 규칙·템플릿 경로로 끝까지 간다.
 꼬리질문 판단(judge_followup)은 ADLC/followup에서 새로 설계하는 꼬리질문 에이전트로 바꿀 자리다(노드 계약: judge(att, q, answer) → (질문, 사유) | None).
 """
+import logging
 import random
 import re
+import threading
+import time
 from typing import TypedDict
 
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, interrupt
 
 from .. import config, db, llm, prompts, questions as Q
+
+log = logging.getLogger(__name__)
 
 REVIEW = config.QGRAPH_REVIEW          # 0이면 A5·A6 모델 검수를 건너뛴다(규칙 검사는 그대로)
 MIN_KEYWORDS = 2
@@ -40,6 +50,14 @@ class GenState(TypedDict, total=False):
     drafts: list                # 문항 초안 (finalize 전)
     final_questions: list
     log: list                   # 노드별 처리 기록(문장 원문 없이 종류·개수만)
+    # 사내문서 RAG ② (ADLC v0.7 6.14.3, 2026-11-13 구현). 조각 본문은 State 안에만 — 로그·DB에는 조각 ID만(B-08)
+    query_vector: list          # retrieve가 만든 질의 벡터(4-B가 재사용 → 임베딩 추가 호출 0회)
+    internal_hits: list         # [{chunk_id, ref, doc_id, sec, doc_title, sec_title, disclosure, dept, sim, text}] 상위 4개까지
+    internal_context: str       # 출처 머리글이 붙은 조립 문자열(2,000자 상한). 비면 기존 contextualize 경로
+    internal_refs: list         # 주입한 조각 ID(doc_id#sec) — doc_refs 검사 기준
+    forbid_terms: list          # Redis idoc:forbid 용어(질문 검사용 전부)
+    forbid_ready: bool          # 사전을 읽었는가. False면 사내문서 경로 미사용(보수적)
+    guard_report: dict          # 7-B {checked, blocked, reasons{종류: 건수}, model} — 원문 없음
 
 
 def _snapshot_squash(snapshot):
@@ -186,8 +204,58 @@ def retrieve(s: GenState) -> GenState:
     if not s["resume_fallback"]:                    # 이력서 질문 3개마다 질문 은행 참고 문항(RAG)
         picks["resume_bank"] = _resume_bank_refs(s, role, used) if s["use_llm"] else []
         src["resume_bank"] = "redis" if picks["resume_bank"] and any(b and b.get("doc_id") for b in picks["resume_bank"]) else "-"
-    return {"picks": picks, "log": s["log"] + ["retrieve: " + " · ".join(f"{k} {len(v)}({src.get(k)})" for k, v in picks.items())
-                                               + (f" · redis 오류 {src['error']}" if "error" in src else "")]}
+    return {"picks": picks, "query_vector": vector,
+            "log": s["log"] + ["retrieve: " + " · ".join(f"{k} {len(v)}({src.get(k)})" for k, v in picks.items())
+                               + (f" · redis 오류 {src['error']}" if "error" in src else "")]}
+
+
+def retrieve_internal(s: GenState) -> GenState:
+    """4-B RAG ② (ADLC v0.7 6.13.6 · 6.14.2): 사내문서 Chroma(public 컬렉션만)에서 기업 문항 1개의 근거 조각.
+    질의 벡터는 retrieve가 만든 것을 재사용(임베딩 추가 호출 0회). 맨 앞에서 internal_forbid.rag_ready()
+    (금지 용어 사전 idoc:forbid를 읽을 수 있고 + 마지막 적재 감사 게이트 idoc:audit 통과)가 False면 쓰지 않는다(H-08, 6.13.8).
+    어떤 예외든 빈 컨텍스트로 두고 그래프를 멈추지 않는다 → generate는 기존 contextualize(공고 정보만)."""
+    from . import internal_forbid, internal_search
+    empty = {"internal_hits": [], "internal_context": "", "internal_refs": [], "forbid_terms": [], "forbid_ready": False}
+
+    def done(msg, **extra):
+        return {**empty, **extra, "log": s["log"] + ["retrieve_internal: " + msg]}
+
+    if not config.INTERNAL_DOCS_RAG:
+        return done("꺼짐(INTERNAL_DOCS_RAG=0)")
+    if not s.get("use_llm") or s.get("query_vector") is None:
+        return done("질의 벡터 없음 → 사용 안 함")
+    if not s.get("picks", {}).get("company"):
+        return done("기업 문항 없음 → 사용 안 함")
+    try:
+        ok, why = internal_forbid.rag_ready()
+        if not ok:
+            return done(f"관문 닫힘({why}) → 사용 안 함")
+        terms = internal_forbid.load_terms()
+    except Exception as e:  # noqa: BLE001 — ForbidUnavailable 포함, 검사할 수 없으면 쓰지 않는다
+        return done(f"금지 용어 사전 없음({type(e).__name__}) → 사용 안 함")
+    try:
+        # 조각 검사는 일반 단어(주소·전화번호) 제외(chunk_terms) — 질문 문장 검사(_rule_ok·7-B·A15)는 terms 전부
+        r = internal_search.search(s["query_vector"], role_code=s["job"].get("role_code"),
+                                   forbid_terms=internal_forbid.chunk_terms(terms))
+    except Exception as e:  # noqa: BLE001
+        return done(f"검색 오류 {type(e).__name__} → 사용 안 함", forbid_terms=terms, forbid_ready=True)
+    hits = []
+    for h in r.get("hits") or []:
+        m = h["metadata"]
+        if m.get("disclosure") != "public" or m.get("status") not in internal_search.ALLOWED_STATUS:
+            return done("공개판이 아닌 조각 혼입 → 사용 안 함(B-09)", forbid_terms=terms, forbid_ready=True)
+        body = h.get("body") or h["document"]
+        if internal_forbid.find_terms(body, internal_forbid.chunk_terms(terms)):
+            continue                                   # search가 이미 버렸어야 함 — 두 번째 확인
+        hits.append({"chunk_id": h["id"], "ref": f"{m['doc_id']}#{m.get('sec', '')}", "doc_id": m["doc_id"], "sec": m.get("sec", ""),
+                     "doc_title": m.get("doc_title", ""), "sec_title": m.get("sec_title", ""), "disclosure": m["disclosure"],
+                     "dept": [x for x in (m.get("dept") or "").split("|") if x], "sim": round(float(h["sim"]), 4), "text": body})
+    if not hits:
+        return done("근거 0조각 → 기존 경로", forbid_terms=terms, forbid_ready=True)
+    ctx = "\n\n".join(f"[근거 {h['ref']} · {h['doc_title']} > {h['sec_title']}]\n{h['text']}" for h in hits)
+    refs = list(dict.fromkeys(h["ref"] for h in hits))
+    return {"internal_hits": hits, "internal_context": ctx, "internal_refs": refs, "forbid_terms": terms, "forbid_ready": True,
+            "log": s["log"] + [f"retrieve_internal: {len(hits)}조각 · " + ", ".join(refs)]}
 
 
 def _enrich_character(b):
@@ -262,17 +330,27 @@ def generate(s: GenState) -> GenState:
                 r = {"text": tpl, "resume_ref": ref, "gen_method": "template"}
             drafts.append({"category": "resume", "eval_items": Q.EVAL_ITEMS["resume"], "bank_id": None, "orig": tpl,
                            "intent": "이력서 항목의 " + Q.ANGLES[angle], **r})
+    n_rag = 0
     for cat in ("job", "company"):
         for b in s["picks"].get(cat, []):
+            rag = None
             if not use_llm:
                 text = b["text"]
             elif cat == "job":
                 text = Q.contextualize_job(b["text"], s["job"], s["snapshot"], b.get("subcategory") or "")
             else:
-                text = Q.contextualize(b["text"], s["job"], b.get("subcategory") or "")
-            drafts.append({"category": cat, "eval_items": Q.EVAL_ITEMS[cat], "text": text, "orig": b["text"],
-                           **_bank_fields(b), "intent": b.get("subcategory") or ""})
-    return {"drafts": drafts, "log": s["log"] + [f"generate: {len(drafts)}문항"]}
+                if s.get("internal_context") and s.get("forbid_ready"):   # A15: 공개판 사내문서 근거로 회사 맞춤
+                    rag = Q.contextualize_rag(b["text"], s["job"], b.get("subcategory") or "", s["internal_context"],
+                                              s.get("internal_refs") or [], [h["text"] for h in s.get("internal_hits") or []],
+                                              s.get("forbid_terms") or [])
+                text = rag["text"] if rag else Q.contextualize(b["text"], s["job"], b.get("subcategory") or "")
+            d = {"category": cat, "eval_items": Q.EVAL_ITEMS[cat], "text": text, "orig": b["text"],
+                 **_bank_fields(b), "intent": b.get("subcategory") or ""}
+            if rag:
+                n_rag += 1
+                d.update(company_facts=rag["company_facts"], doc_refs=rag["doc_refs"])
+            drafts.append(d)
+    return {"drafts": drafts, "log": s["log"] + [f"generate: {len(drafts)}문항" + (f" · 사내문서 근거 {n_rag}" if n_rag else "")]}
 
 
 PHIL_SCHEMA = {"type": "object", "properties": {
@@ -281,10 +359,17 @@ PHIL_SCHEMA = {"type": "object", "properties": {
     "revised_question": {"type": "string"}}, "required": ["scores", "pass", "problems", "revised_question"]}
 
 
-def _rule_ok(d, text, snapshot):
-    """A2·A6 공통 규칙: 길이 10~160자, 차단 목록, 이력서 질문은 고유 명칭·수치가 이력서에 있어야 함."""
+def _rule_ok(d, text, snapshot, forbid_terms=()):
+    """A2·A6 공통 규칙: 길이 10~160자, 차단 목록, 이력서 질문은 고유 명칭·수치가 이력서에 있어야 함.
+    사내문서 근거 문항(doc_refs)은 A6·A7이 고친 문장에도 금지 용어 사전 검사(ADLC 6.13.7 조기 차단, 최종 관문은 7-B)."""
     if not (10 <= len(text) <= 160) or Q.BLOCKLIST.search(text):
         return False
+    if d.get("doc_refs"):
+        from . import internal_forbid
+        if not forbid_terms or internal_forbid.find_terms(text, forbid_terms):   # 사전 없음 = 검사 불가 → 실패(보수적)
+            return False
+        if internal_forbid.masked_hits(text):                                   # 마스킹 표식·가명·사본 ID
+            return False
     if d["category"] == "resume" and d.get("gen_method") == "llm":
         return Q.grounded(text, [], snapshot)
     return True
@@ -316,7 +401,7 @@ def evaluate_philosophy(s: GenState) -> GenState:
                 ok = True
                 break
             nq = (r.get("revised_question") or "").strip()
-            if not nq or nq == text or not _rule_ok(d, nq, s["snapshot"]):
+            if not nq or nq == text or not _rule_ok(d, nq, s["snapshot"], s.get("forbid_terms") or ()):
                 break
             text = nq
         if ok:
@@ -324,7 +409,7 @@ def evaluate_philosophy(s: GenState) -> GenState:
             d["text"] = text
         else:
             stats["reverted"] += 1
-            if Q.one_sentence(d["orig"]) or not (Q.one_sentence(d["text"]) and _rule_ok(d, d["text"], s["snapshot"])):
+            if Q.one_sentence(d["orig"]) or not (Q.one_sentence(d["text"]) and _rule_ok(d, d["text"], s["snapshot"], s.get("forbid_terms") or ())):
                 d["text"] = d["orig"]
                 if d["category"] == "resume" and d.get("gen_method") == "llm":
                     d["gen_method"] = "template"
@@ -354,31 +439,114 @@ def evaluate_answerability(s: GenState) -> GenState:
                 nq = (r.get("revised_question") or "").strip()
             except llm.LLMError:
                 pass
-            if not nq or Q._too_broad(nq, secs) or not _rule_ok(d, nq, s["snapshot"]):
+            if not nq or Q._too_broad(nq, secs) or not _rule_ok(d, nq, s["snapshot"], s.get("forbid_terms") or ()):
                 nq = re.split(r"(?<=[?요])\s", d["text"])[0]
             d["text"] = nq
         drafts.append(d)
     return {"drafts": drafts, "log": s["log"] + [f"evaluate_answerability: 좁힘 {n}"]}
 
 
+GUARD_SCHEMA = {"type": "object", "properties": {"leak": {"type": "boolean"},
+                "kinds": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 6}}}, "required": ["leak", "kinds"]}
+
+
+def _drop_rag(d):
+    d.pop("company_facts", None)
+    d.pop("doc_refs", None)
+    return d
+
+
+def guard_disclosure(s: GenState) -> GenState:
+    """7-B A16 (ADLC v0.7 6.13.7 ④ · 6.14.2): 마지막 누출 관문. A6·A7 수정까지 반영된 최종 문장을 본다.
+    대상 = 사내문서 근거(doc_refs)가 남은 기업 문항. 규칙이 1차:
+      ⓐ 질문·company_facts에 idoc:forbid 용어 0건 · 질문·company_facts에 마스킹 표식·가명 0건(mask_marker) ⓑ company_facts ⊂ (공고 + 주입 조각 본문)
+      ⓒ doc_refs ⊂ 실제 주입한 조각 ID ⓓ BLOCKLIST·영문·숫자 토큰(은행 원문 + 공고 + 조각 본문)
+    규칙 통과 + 모델 검수(QGRAPH_REVIEW)면 보조 프롬프트 evaluate/internal_doc_guard.md. 모델 실패 → 규칙 결과만(6.14.2).
+    하나라도 실패 → 그 문항만 은행 원문으로. guard_report에는 사유 종류·건수만(원문 금지, B-08)."""
+    from . import internal_forbid
+    job, terms = s["job"], s.get("forbid_terms") or []
+    bodies = [h["text"] for h in s.get("internal_hits") or []]
+    allowed = re.sub(r"\s+", "", " ".join([job.get("company_intro") or "", job.get("duties") or "", job.get("requirements") or ""] + bodies))
+    injected = set(s.get("internal_refs") or [])
+    rep = {"checked": 0, "blocked": 0, "reasons": {}, "model": "skipped"}
+    drafts = []
+    for d in s.get("drafts") or []:
+        d = dict(d)
+        if not d.get("doc_refs"):
+            drafts.append(d)
+            continue
+        if d["text"] == d["orig"]:                        # A6이 은행 원문으로 되돌림 → 사내문서를 쓰지 않은 문장
+            drafts.append(_drop_rag(d))
+            continue
+        rep["checked"] += 1
+        why = []
+        if not s.get("forbid_ready") or not terms:
+            why.append("forbid_unavailable")
+        elif internal_forbid.find_terms(d["text"], terms) or any(internal_forbid.find_terms(f, terms) for f in d.get("company_facts") or []):
+            why.append("forbid_term")
+        if internal_forbid.masked_hits(d["text"]) or any(internal_forbid.masked_hits(f) for f in d.get("company_facts") or []):
+            why.append("mask_marker")                   # 마스킹 표식([금액] 등)·가명(고객사A…)·사본 ID → 원문(2026-11-13 사용자 결정)
+        if Q.asks_interview_method(d["text"]):         # 면접 방식·평가 기준·질문 설계를 묻는 질문 → 원문(2026-11-13 사용자 결정)
+            why.append("interview_meta")
+        if not all(re.sub(r"\s+", "", f) in allowed for f in d.get("company_facts") or []):
+            why.append("facts_unmatched")
+        if not set(d["doc_refs"]) <= injected:
+            why.append("doc_ref_invalid")
+        if Q.BLOCKLIST.search(d["text"]) or Q._bad_tokens(d["text"], " ".join([d["orig"]] + bodies), job, {}):
+            why.append("rule")
+        if not why and s.get("use_llm") and REVIEW:
+            try:
+                system = prompts.load("evaluate/internal_doc_guard", company_name=job.get("company_name") or "",
+                                      internal_context=s.get("internal_context") or "")
+                r = llm.chat_json(system, f"질문: {d['text']}\ncompany_facts: {d.get('company_facts') or []}", GUARD_SCHEMA,
+                                  timeout=60, temperature=0)
+                rep["model"] = "ok"
+                if r.get("leak"):
+                    why.append("model_flag")
+            except llm.LLMError:
+                rep["model"] = "error"                    # 규칙이 1차 — 규칙 결과만으로 판단
+        if why:
+            rep["blocked"] += 1
+            for w in why:
+                rep["reasons"][w] = rep["reasons"].get(w, 0) + 1
+            d["text"] = d["orig"]
+            d["guard"] = "blocked"
+            _drop_rag(d)
+        else:
+            d["guard"] = "pass"
+        drafts.append(d)
+    msg = f"guard_disclosure: 검사 {rep['checked']} · 차단 {rep['blocked']}"
+    if rep["reasons"]:
+        msg += " (" + ", ".join(f"{k} {v}" for k, v in sorted(rep["reasons"].items())) + ")"
+    return {"drafts": drafts, "guard_report": rep, "log": s["log"] + [msg]}
+
+
 def finalize(s: GenState) -> GenState:
-    """코드: 순서 고정(Q.PLAN = 인성 2 → 이력서 3 → 직무 2 → 기업 1). 저장 형식은 기존 build_set과 같다."""
+    """코드: 순서 고정(Q.PLAN = 인성 2 → 이력서 3 → 직무 2 → 기업 1). 저장 형식은 기존 build_set과 같다.
+    사내문서 근거가 관문을 통과한 기업 문항은 gen_method 뒤에 `|internal:<doc_id#sec>,…`(조각 ID만, ADLC 6.14.3 — 스키마 변경 없음)."""
     order = {c: i for i, (c, _) in enumerate(Q.PLAN)}
     keep = ("category", "eval_items", "text", "bank_id", "gen_method", "resume_ref")
-    final = [{k: d.get(k) for k in keep if k in d} for d in sorted(s["drafts"], key=lambda d: order[d["category"]])]
+    final = []
+    for d in sorted(s["drafts"], key=lambda d: order[d["category"]]):
+        q = {k: d.get(k) for k in keep if k in d}
+        if d.get("doc_refs") and d.get("guard") == "pass":
+            q["gen_method"] = f"{q.get('gen_method') or 'db'}|internal:" + ",".join(d["doc_refs"])
+        final.append(q)
     return {"final_questions": final, "log": s["log"] + [f"finalize: {len(final)}문항"]}
 
 
 def _build_generation():
     g = StateGraph(GenState)
     for name, fn in (("start", start), ("extract_keywords", extract_keywords), ("evaluate_trust", evaluate_trust),
-                     ("retrieve", retrieve), ("generate", generate), ("evaluate_philosophy", evaluate_philosophy),
-                     ("evaluate_answerability", evaluate_answerability), ("finalize", finalize)):
+                     ("retrieve", retrieve), ("retrieve_internal", retrieve_internal), ("generate", generate),
+                     ("evaluate_philosophy", evaluate_philosophy), ("evaluate_answerability", evaluate_answerability),
+                     ("guard_disclosure", guard_disclosure), ("finalize", finalize)):
         g.add_node(name, fn)
     g.add_edge(START, "start")
     for a, b in (("start", "extract_keywords"), ("extract_keywords", "evaluate_trust"), ("evaluate_trust", "retrieve"),
-                 ("retrieve", "generate"), ("generate", "evaluate_philosophy"), ("evaluate_philosophy", "evaluate_answerability"),
-                 ("evaluate_answerability", "finalize"), ("finalize", END)):
+                 ("retrieve", "retrieve_internal"), ("retrieve_internal", "generate"),
+                 ("generate", "evaluate_philosophy"), ("evaluate_philosophy", "evaluate_answerability"),
+                 ("evaluate_answerability", "guard_disclosure"), ("guard_disclosure", "finalize"), ("finalize", END)):
         g.add_edge(a, b)
     return g.compile()
 
@@ -390,10 +558,11 @@ def generate_set(application, use_llm=True):
     """그래프 1-A 실행 → 10문항(기존 build_set과 같은 형식) + 처리 기록."""
     out = GENERATION.invoke({"application": application, "use_llm": use_llm},
                             {"run_name": "question_graph", "tags": ["graph1", "generate"], "metadata": {"application_id": application["id"]}})
-    return out["final_questions"], {"log": out.get("log", []), "keyword_report": out.get("keyword_report", {})}
+    return out["final_questions"], {"log": out.get("log", []), "keyword_report": out.get("keyword_report", {}),
+                                    "internal_refs": out.get("internal_refs", []), "guard_report": out.get("guard_report", {})}
 
 
-# ======================= B. 면접 한 걸음 (답변 1개) =======================
+# ======================= B. 면접 루프 (답변 1개마다 한 걸음) =======================
 PRE_SCHEMA = {"type": "object", "properties": {
     "question_topic": {"type": "string"}, "answer_topic": {"type": "string"}, "addresses_question": {"type": "boolean"},
     "logic": {"type": "integer", "minimum": 1, "maximum": 5}, "relevance": {"type": "integer", "minimum": 1, "maximum": 5},
@@ -408,21 +577,108 @@ PRE_SYSTEM = """너는 1차 면접 진행 중 답변을 빠르게 선평가하�
 6. generic_only: 구체적인 사례·수치·경험 없이 일반론만 말했을 때 true.
 7. followup_question: 질문의 원래 의도를 다시 겨냥하되 답변에 나온 내용을 짚어 더 구체적으로 묻는 한국어 질문 한 문장(60초 안에 답할 범위).
 거짓말 여부를 판단하거나 추궁하지 않는다. 나이·가족·학교 서열 등 인적 사정은 묻지 않는다."""
+# 판단 ③(ADLC 6.1-B): 은행 문항에 모범 답변 요지(model_answer)가 있을 때만 구체성 점수를 더 묻는다.
+# 모범 답변이 없으면 위 PRE_SYSTEM·PRE_SCHEMA를 그대로 써서 기존 동작(eval_followup 기준선)과 같다.
+PRE_SCHEMA_IDEAL = {**PRE_SCHEMA, "properties": {**PRE_SCHEMA["properties"], "specificity": {"type": "integer", "minimum": 1, "maximum": 5}},
+                    "required": PRE_SCHEMA["required"] + ["specificity"]}
+PRE_SYSTEM_IDEAL = PRE_SYSTEM + """
+추가 판단 — specificity(1~5): '모범 답변 요지'와 비교해 답변이 얼마나 구체적인가. 본인이 한 행동·상황·결과·수치 없이 일반론만 말하면 1~2점.
+모범 답변 요지는 판단 기준일 뿐이다. 지원자가 말하지 않은 모범 답변의 내용·용어를 followup_question에 넣지 않는다(힌트 금지)."""
+SPECIFICITY_MAX = 2          # ③ 구체성 이 점수 이하 → 꼬리질문
+REF_TIMEOUT = 0.3            # 실시간 경로: 은행 문항 조회(Redis) 제한 시간(초). 넘으면 ②③ 없이 판단
+_RESUME_KW = re.compile(r"[A-Za-z][A-Za-z0-9+#.\-]*[A-Za-z0-9+#]")
+_KW_SPLIT = re.compile(r"[,;\n]+")
+
+
+def _norm(s):
+    return re.sub(r"\s+", "", (s or "").lower())
+
+
+def keyword_groups(raw):
+    """은행 expected_keywords 'RAG|검색 증강, Recall@k' → [['RAG','검색 증강'], ['Recall@k']] (| = 동의어)."""
+    out = []
+    for part in _KW_SPLIT.split(raw or ""):
+        g = [w.strip() for w in part.split("|") if w.strip()]
+        if g:
+            out.append(g)
+    return out
+
+
+def keyword_hits(groups, answer):
+    """판단 ② 코드 대조: 답변에 나온 키워드 묶음의 대표어 목록(대소문자·띄어쓰기 무시, 동의어 포함)."""
+    a = _norm(answer)
+    return [g[0] for g in groups if any(_norm(w) and _norm(w) in a for w in g)]
+
+
+def _resume_keywords(q):
+    """이력서 질문: 근거 항목 인용의 영문 기술 토큰(2자 이상)을 키워드로 쓴다. 숫자·날짜는 쓰지 않는다."""
+    quote = (q.get("resume_ref") or {}).get("quote") or ""
+    seen, out = set(), []
+    for t in _RESUME_KW.findall(quote):
+        if len(t) >= 2 and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append([t])
+    return out[:8]
+
+
+def bank_reference(q):
+    """판단 ②③ 재료: {'keywords': [[동의어…]…], 'ideal': 모범 답변 요지}. 없거나 조회 실패면 빈 값(그 판단만 건너뜀).
+    Redis 은행 문항(gen_method = redis:<문서 ID>)만 expected_keywords·model_answer가 있다. 이력서 질문은 근거 항목 토큰."""
+    ref = {"keywords": [], "ideal": ""}
+    gm = q.get("gen_method") or ""
+    if gm.startswith("redis:"):
+        try:
+            import redis
+            r = redis.Redis.from_url(config.REDIS_URL, socket_timeout=REF_TIMEOUT, socket_connect_timeout=REF_TIMEOUT)
+            kw, ideal = r.hmget("qb:" + gm[len("redis:"):].split("|")[0], "expected_keywords", "model_answer")
+            ref["keywords"] = keyword_groups((kw or b"").decode("utf-8", "ignore"))
+            ref["ideal"] = (ideal or b"").decode("utf-8", "ignore").strip()
+        except Exception:
+            pass
+    if not ref["keywords"] and q.get("category") == "resume":
+        ref["keywords"] = _resume_keywords(q)
+    return ref
 
 
 class StepState(TypedDict, total=False):
+    attempt_id: int
     att: dict
     q: dict
     text: str
     source: str | None
     proposal: dict | None          # judge_followup 결과 {question, reason}
+    keyword_hits: list | None      # 판단 ② 답변에 나온 기대 키워드(없으면 None = 판단 안 함)
+    specificity: int | None        # 판단 ③ 모범 답변 대비 구체성(없으면 None)
     followup_id: int | None
-    outcome: str                   # next | coding | finished
+    outcome: str                   # next | coding | finished | ended
+    qa_pairs: list                 # 루프 동안 임시로 두는 질문–답변 쌍(기준은 DB attempt_questions)
 
 
 def current_question(attempt_id):
     return db.one("""SELECT * FROM attempt_questions WHERE attempt_id=%s AND answer_status='pending'
                      ORDER BY seq, parent_id NULLS FIRST, id LIMIT 1""", attempt_id)
+
+
+def _load_attempt(attempt_id):
+    return db.one("""SELECT a.*, ap.user_id, ap.job_id FROM attempts a JOIN applications ap ON ap.id=a.application_id
+                     WHERE a.id=%s""", attempt_id)
+
+
+def ask_question(s: StepState) -> StepState:
+    """노드 9 (ADLC 6.1-B): 현재 질문을 내보내고 답변을 기다린다(LangGraph interrupt).
+    답변 제출 API가 Command(resume={question_id, text, source})로 다시 진행시킨다.
+    재개 때 이 노드는 처음부터 다시 돌므로 interrupt 앞은 DB 읽기만 한다(부작용 없음).
+    응시가 면접 단계가 아니거나 남은 질문이 없으면 끝(END)."""
+    att = _load_attempt(s["attempt_id"])
+    q = current_question(s["attempt_id"]) if att and att["status"] == "interview" else None
+    if not q:
+        return {"outcome": "ended", "q": None}
+    got = interrupt({"question_id": q["id"], "seq": q["seq"], "time_limit": q["time_limit"],
+                     "is_followup": q["parent_id"] is not None})
+    if (got or {}).get("question_id") != q["id"]:
+        raise StaleLoop(f"waiting {q['id']}, got {(got or {}).get('question_id')}")
+    return {"att": att, "q": q, "text": got.get("text") or "", "source": got.get("source"),
+            "proposal": None, "keyword_hits": None, "specificity": None, "followup_id": None}
 
 
 def record_answer(s: StepState) -> StepState:
@@ -431,43 +687,89 @@ def record_answer(s: StepState) -> StepState:
     return {}
 
 
-def judge(att, q, answer):
-    """A3 꼬리질문 판단 (INT-06·07). 반환 (꼬리질문, 사유) | None.
-    ① 생략 규칙(이미 꼬리질문·4개 소진·내용 없음·5자 미만) → ② 모델 선평가(FOLLOWUP_TIMEOUT 안) → 조건 충족 + 문장 검사."""
+def judge_detail(att, q, answer):
+    """A3 꼬리질문 판단 (INT-06·07, ADLC 6.1-B 의사 결정 표). DB 없이 돈다(eval_followup이 그대로 부름).
+    반환 {'followup': (꼬리질문, 사유) | None, 'keyword_hits': list | None, 'specificity': int | None}.
+    ① 생략 규칙(이미 꼬리질문·4개 소진·내용 없음·5자 미만) → 모델 선평가(FOLLOWUP_TIMEOUT 안)
+    → ② 기대 키워드 0개 · ③ 모범 답변 대비 구체성 ≤2 · ④ 주제 이탈/논리·관련성 ≤2 · 이력서와 다름 · 일반론 → 문장 검사.
+    ②는 코드가 정하지만 꼬리질문 문장은 모델이 만들므로, 모델이 실패·시간 초과면 ②가 걸려도 생략한다."""
     from .. import evaluation
+    out = {"followup": None, "keyword_hits": None, "specificity": None}
     if q["parent_id"] is not None or att["followups_used"] >= config.MAX_FOLLOWUPS:
-        return None
+        return out
     if evaluation.NO_CONTENT.match(answer) or len(answer.strip()) < 5:
-        return None
-    ref = f"\n근거 이력서 항목: {q['resume_ref']['quote']}" if q["resume_ref"] and q["resume_ref"].get("quote") else ""
+        return out
+    bref = bank_reference(q)
+    groups, ideal = bref["keywords"], bref["ideal"]
+    if groups:
+        out["keyword_hits"] = keyword_hits(groups, answer)
+    ref = f"\n근거 이력서 항목: {q['resume_ref']['quote']}" if q.get("resume_ref") and q["resume_ref"].get("quote") else ""
+    system, schema = (PRE_SYSTEM_IDEAL, PRE_SCHEMA_IDEAL) if ideal else (PRE_SYSTEM, PRE_SCHEMA)
+    user = f"질문: {q['text']}{ref}" + (f"\n모범 답변 요지: {ideal[:800]}" if ideal else "") + f"\n답변: {answer[:1500]}"
     try:
-        r = llm.chat_json(PRE_SYSTEM, f"질문: {q['text']}{ref}\n답변: {answer[:1500]}", PRE_SCHEMA, timeout=config.FOLLOWUP_TIMEOUT)
+        r = llm.chat_json(system, user, schema, timeout=config.FOLLOWUP_TIMEOUT)
     except llm.LLMError:
-        return None
+        return out
+    if ideal and isinstance(r.get("specificity"), int):
+        out["specificity"] = r["specificity"]
+    kw_zero = groups and not out["keyword_hits"]
+    abstract = out["specificity"] is not None and out["specificity"] <= SPECIFICITY_MAX
     off = (not r["addresses_question"]) or r["logic"] <= 2 or r["relevance"] <= 2
-    if not (off or r["inconsistent_with_resume"] or r["generic_only"]):
-        return None
+    if kw_zero:
+        reason = "기대 키워드 0개"
+    elif abstract:
+        reason = "모범 답변 대비 구체성 2점 이하"
+    elif off:
+        reason = "논리성·관련성 2점 이하"
+    elif r["inconsistent_with_resume"]:
+        reason = "이력서와 다름"
+    elif r["generic_only"]:
+        reason = "일반론"
+    else:
+        return out
     fq = (r.get("followup_question") or "").strip()
     if not fq or Q.BLOCKLIST.search(fq) or len(fq) > 150:
-        return None
-    return fq, ("논리성·관련성 2점 이하" if off else ("이력서와 다름" if r["inconsistent_with_resume"] else "일반론"))
+        return out
+    if groups:   # 힌트 금지(B-07): 지원자가 말하지 않은 기대 키워드가 꼬리질문에 있으면(원 질문에 있던 말은 제외) 생략
+        said, qn, fn = set(out["keyword_hits"]), _norm(q["text"]), _norm(fq)
+        for g in groups:
+            if g[0] not in said and any(_norm(w) in fn and _norm(w) not in qn for w in g if _norm(w)):
+                return out
+    out["followup"] = (fq, reason)
+    return out
+
+
+def judge(att, q, answer):
+    """A3 노드 계약(ADLC 6.1-B): judge(att, q, answer) → (꼬리질문, 사유) | None."""
+    return judge_detail(att, q, answer)["followup"]
 
 
 def judge_followup(s: StepState) -> StepState:
-    if not s["text"]:
-        return {"proposal": None}
-    fu = judge(s["att"], s["q"], s["text"])
-    return {"proposal": {"question": fu[0], "reason": fu[1]} if fu else None}
+    d = judge_detail(s["att"], s["q"], s["text"]) if s["text"] else {"followup": None, "keyword_hits": None, "specificity": None}
+    fu = d["followup"]
+    q = s["q"]
+    pair = {"question_id": q["id"], "seq": q["seq"], "is_followup": q["parent_id"] is not None, "answered": bool(s["text"]),
+            "keyword_hits": d["keyword_hits"], "specificity": d["specificity"], "followup_reason": fu[1] if fu else None}
+    return {"proposal": {"question": fu[0], "reason": fu[1]} if fu else None, "keyword_hits": d["keyword_hits"],
+            "specificity": d["specificity"], "qa_pairs": (s.get("qa_pairs") or []) + [pair]}
 
 
 def make_followup(s: StepState) -> StepState:
-    """꼬리질문을 같은 seq 자리에 끼워 넣고 사용 수를 늘린다(질문당 1개·전체 4개는 judge가 이미 확인)."""
+    """꼬리질문을 같은 seq 자리에 끼워 넣고 사용 수를 늘린다(질문당 1개·전체 4개는 judge가 확인, 여기서 DB로 한 번 더 확인)."""
     from .. import speech
     att, q, p = s["att"], s["q"], s["proposal"]
+    if db.one("SELECT 1 AS x FROM attempt_questions WHERE parent_id=%s", q["id"]) or \
+       (db.one("SELECT followups_used FROM attempts WHERE id=%s", att["id"]) or {}).get("followups_used", 0) >= config.MAX_FOLLOWUPS:
+        return {"followup_id": None}
     row = db.one("""INSERT INTO attempt_questions (attempt_id, seq, parent_id, category, eval_items, text, gen_method, time_limit)
                     VALUES (%s,%s,%s,'followup',%s,%s,'llm',%s) RETURNING id""",
                  att["id"], q["seq"], q["id"], q["eval_items"], p["question"], config.FOLLOWUP_SECONDS)
-    db.run("UPDATE attempt_questions SET prescore=%s WHERE id=%s", db.J({"followup_reason": p["reason"]}), q["id"])
+    pre = {"followup_reason": p["reason"]}
+    if s.get("keyword_hits") is not None:
+        pre["keyword_hits"] = s["keyword_hits"]
+    if s.get("specificity") is not None:
+        pre["specificity"] = s["specificity"]
+    db.run("UPDATE attempt_questions SET prescore=%s WHERE id=%s", db.J(pre), q["id"])
     db.run("UPDATE attempts SET followups_used=followups_used+1 WHERE id=%s", att["id"])
     speech.prewarm([p["question"]])
     return {"followup_id": row["id"] if row else None}
@@ -489,6 +791,7 @@ def next_question(s: StepState) -> StepState:
 
 
 def _build_step():
+    """체크포인터 없는 한 걸음 그래프(2026-11-09 방식). 루프가 실패했고 답변이 아직 저장되지 않았을 때의 대체 경로."""
     g = StateGraph(StepState)
     for name, fn in (("record_answer", record_answer), ("judge_followup", judge_followup),
                      ("make_followup", make_followup), ("next_question", next_question)):
@@ -502,9 +805,117 @@ def _build_step():
     return g.compile()
 
 
+def _build_loop(checkpointer):
+    """ADLC 6.1-B 면접 루프: ask_question(대기) → record_answer → judge_followup ─(꼬리질문)→ make_followup → ask_question
+                                                                      └(없음)→ next_question ─(남음)→ ask_question / (끝)→ END."""
+    g = StateGraph(StepState)
+    for name, fn in (("ask_question", ask_question), ("record_answer", record_answer), ("judge_followup", judge_followup),
+                     ("make_followup", make_followup), ("next_question", next_question)):
+        g.add_node(name, fn)
+    g.add_edge(START, "ask_question")
+    g.add_conditional_edges("ask_question", lambda s: "end" if s.get("outcome") == "ended" else "record",
+                            {"end": END, "record": "record_answer"})
+    g.add_edge("record_answer", "judge_followup")
+    g.add_conditional_edges("judge_followup", lambda s: "make" if s.get("proposal") else "next",
+                            {"make": "make_followup", "next": "next_question"})
+    g.add_edge("make_followup", "ask_question")
+    g.add_conditional_edges("next_question", lambda s: "ask" if s.get("outcome") == "next" else "end",
+                            {"ask": "ask_question", "end": END})
+    return g.compile(checkpointer=checkpointer)
+
+
+class StaleLoop(Exception):
+    """체크포인트가 기다리는 질문과 DB의 현재 질문이 다름 → 체크포인트를 버리고 DB로 다시 만든다."""
+
+
+# 임시 상태 보관 = 프로세스 메모리 체크포인터(thread_id = attempt-<id>). 기준은 계속 DB(attempt_questions·attempts)이고
+# 체크포인트가 없거나(재시작) 어긋나면 DB에서 다시 만든다(장애 이어가기 RES-01과 같은 방식). 응시가 끝나면 지운다.
+# uvicorn 워커 1개 기준. 워커를 늘리면 워커마다 따로 들고 있다가 어긋날 때 DB로 다시 만든다(정확성은 유지, 재사용률만 떨어짐).
+CHECKPOINTER = InMemorySaver()
 INTERVIEW_STEP = _build_step()
+INTERVIEW_LOOP = _build_loop(CHECKPOINTER)
+LOOP_IDLE_SECONDS = 3 * 3600     # 이만큼 안 쓴 체크포인트는 버린다(탭 닫기·취소로 END에 못 간 응시)
+_locks_guard = threading.Lock()
+_locks: dict = {}
+_last_used: dict = {}
+
+
+def _thread(aid):
+    return f"attempt-{aid}"
+
+
+def _lock(aid):
+    with _locks_guard:
+        return _locks.setdefault(aid, threading.Lock())
+
+
+def discard(aid):
+    """응시의 루프 체크포인트를 지운다(없어도 됨)."""
+    try:
+        CHECKPOINTER.delete_thread(_thread(aid))
+    except Exception:
+        pass
+    with _locks_guard:
+        _last_used.pop(aid, None)
+
+
+def _prune(now):
+    with _locks_guard:
+        old = [a for a, t in _last_used.items() if now - t > LOOP_IDLE_SECONDS]
+    for a in old:
+        discard(a)
+        with _locks_guard:
+            _locks.pop(a, None)
+
+
+def waiting_on(cfg):
+    """체크포인트가 ask_question에서 기다리는 질문 ID(없으면 None)."""
+    snap = INTERVIEW_LOOP.get_state(cfg)
+    if snap.next != ("ask_question",):
+        return None
+    for t in snap.tasks:
+        for it in (t.interrupts or ()):
+            v = getattr(it, "value", None)
+            if isinstance(v, dict) and "question_id" in v:
+                return v["question_id"]
+    return None
+
+
+def _recover(att, q, text, source):
+    """루프가 실패했을 때: 답변이 아직 저장 전이면 한 걸음 그래프로 처음부터, 저장됐으면 남은 상태 전이만 한다."""
+    row = db.one("SELECT answer_status FROM attempt_questions WHERE id=%s", q["id"])
+    if row and row["answer_status"] == "pending":
+        return INTERVIEW_STEP.invoke({"att": att, "q": q, "text": text or "", "source": source},
+                                     {"run_name": "interview_step", "tags": ["graph1", "interview", "fallback"],
+                                      "metadata": {"attempt_id": att["id"]}})
+    cur = _load_attempt(att["id"])
+    if cur and cur["status"] == "interview" and not current_question(att["id"]):
+        return next_question({"att": cur})
+    return {"outcome": "next"}
 
 
 def answer_step(att, q, text, source):
-    return INTERVIEW_STEP.invoke({"att": att, "q": q, "text": text or "", "source": source},
-                                 {"run_name": "interview_step", "tags": ["graph1", "interview"], "metadata": {"attempt_id": att["id"]}})
+    """답변 1개 → 루프 한 걸음(routes_applicant._save_answer가 부름, 반환값은 쓰지 않음).
+    체크포인트가 이 질문에서 기다리고 있으면 그대로 재개하고, 아니면 DB로 루프를 다시 만든 뒤 재개한다."""
+    aid = att["id"]
+    cfg = {"configurable": {"thread_id": _thread(aid)}, "run_name": "interview_loop",
+           "tags": ["graph1", "interview"], "metadata": {"attempt_id": aid}}
+    now = time.monotonic()
+    _prune(now)
+    with _lock(aid):
+        with _locks_guard:
+            _last_used[aid] = now
+        try:
+            if waiting_on(cfg) != q["id"]:
+                discard(aid)
+                INTERVIEW_LOOP.invoke({"attempt_id": aid, "qa_pairs": []}, cfg)      # DB로 다시 만들기 → ask_question에서 멈춤
+                if waiting_on(cfg) != q["id"]:
+                    raise StaleLoop(f"rebuilt loop not waiting on {q['id']}")
+            out = INTERVIEW_LOOP.invoke(Command(resume={"question_id": q["id"], "text": text or "", "source": source}), cfg)
+        except Exception:
+            log.exception("interview loop failed (attempt %s) → fallback", aid)
+            discard(aid)
+            return _recover(att, q, text, source)
+        if not INTERVIEW_LOOP.get_state(cfg).next:      # END(코딩 전환·응시 종료·면접 단계 아님)
+            discard(aid)
+        return out

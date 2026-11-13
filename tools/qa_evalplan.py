@@ -4,8 +4,11 @@
   - 계획서 4_AI품질지표 M-31~M-54 (유형 · 판정 주체 · 측정 시점 · CI95 하한 목표 열 추가, 세 겹 판정 수식)
   - 계획서 1_범위·전략 '평가 플랜' 블록, 3_시나리오 S-14~20, 5_리스크 R-16~22
   - 테스트케이스 AI평가 EV-29~63 (그래프 1-A 노드별 · 1-B 꼬리질문 A3 · 2 평가 그래프 · 운영 지표)
-  - 추적표 하단 'AC ↔ EV ↔ M' 블록, 결함 QA-27~30 (qa_agent.DEFECTS에 이어 붙임)
+  - 추적표 하단 'AC ↔ EV ↔ M' 블록, 결함 QA-27~31 (qa_agent.DEFECTS에 이어 붙임)
   - documents/03_QA_doc/eval_runs/*.json 이 있으면 지표 현재값 · EV 실제 결과 · 실행기록 RUN을 채움(없으면 비워 둠)
+    종류(rag·report·golden·followup)마다 **가장 최신 파일**의 값을 쓴다(파일 이름의 날짜 → 같은 날짜면 접미사 없는 것 먼저,
+    _fix1·_r2처럼 접미사가 붙은 것이 나중). 기준선(BASELINE_DATE) 값은 근거·비고 칸에 '기준선 값 → 변화'로 같이 적는다.
+    골든셋 metrics.json(build_golden_sets metrics)은 M-xx 키가 없어 GOLDEN_MAP으로 옮긴다(파일 이름에 golden이 있어야 함).
 
 사람이 채우는 노란 칸(현재값·표본 수·측정일·근거·CI 하한 측정값 / EV 측정값·표본 수·상태·실행일·비고)은
 평가 결과 파일이 없으면 건드리지 않는다. 값의 기준은 PRD v0.13(6.3.5·6.3.6·6.3.8·6.3.9), 측정값은 여기(PSP-10).
@@ -228,6 +231,11 @@ REG_UT = [
     R("UT-44", "운영·관측", "backend/ 전체 · backend/app/config.py", "LangSmith 온라인 평가기 미사용 · DEV_MODE=0이면 추적 끔", "6.3.9, PSP-06·09", "AC-96", "—",
       "—", "backend/ 소스에서 langsmith 평가기 API(evaluate·aevaluate·run_evaluator·RunEvaluator) 검색 + config 추적 차단 조건 확인",
       "평가기 호출 0건, config가 DEV_MODE=0에서 LANGSMITH_TRACING을 끔", "결정적", "스크립트(호스트)", "로컬", "P1"),
+    R("UT-45", "질문 생성", "backend/app/questions.py contextualize · _bad_tokens · _tokens_ok · backend/tools/test_contextualize_retry.py",
+      "기업 질문 contextualize: 토큰 검사 실패 시 피드백 붙여 1회 재생성, 그래도 실패면 원문(2026-11-13 fix2)", "QST-01, M-49", "AC-91", "—",
+      "—(가짜 llm.chat_json, 모델·DB 없음)", "cd backend && python -m tools.test_contextualize_retry — C1 통과 답 / C2 지어낸 수치 → 재생성 / C3 두 번 실패 / C4 한 문장 위반 / C5 모델 오류 / C6 토큰 함수",
+      "7/7 PASS: C1 1회 채택 · C2 2회·둘째 요청에 [다시 쓰기]와 걸린 토큰 · C3 원문·3회째 없음 · C4 재시도 없이 원문 · C5 원문 · C6 _bad_tokens == ['85%']",
+      "결정적", "스크립트(호스트)", "로컬", "P1"),
 ]
 REG_IT = [
     R("IT-39", "사내문서 RAG", "backend/app/internal_store.py · questionbank/vectorDB/chroma", "Chroma 80문서·2,270조각·등급 분리(혼입 0)", "QST-11, EVP-03", "AC-75", "Chroma internal_docs_public·restricted",
@@ -298,10 +306,79 @@ def _kind(fname):
     return "rag"
 
 
+# build_golden_sets metrics 산출물(metrics.json) → 지표. 실제 키(2026-11-13 코드 확인):
+#   n_gold · raw_vector{recall@1,recall@4,recall@12,mrr@12} · pipeline_no_floor{recall@4,mrr@4,by_type}
+#   · current_min_sim · min_sim_table[{min_sim, recall@4, mrr@4, empty_rate, avg_hits, noise_ratio, neg_pass_rate, …}]
+# M-45·M-46 = 제품 경로 internal_search.search를 '지금 MIN_SIM'으로 돌린 값(min_sim_table에서 current_min_sim 행),
+#   그 행이 없으면 pipeline_no_floor(하한 없음)로 대신하고 비고에 적는다.
+# M-47(G-질문 의미 유사도) = 최상위 키 "m47_question_sim": {"value", "n"} (golden-set 팀원이 golden_metrics_<날짜>.json에 넣기로 함,
+#   2026-11-13). 키가 없으면 만들지 않고 미측정 유지. 목표 없는 기록 지표(rec)라 pass는 None.
+GOLDEN_MAP = {"M-45": "recall@4", "M-46": "mrr@4"}
+GOLDEN_TOP = {"M-47": "m47_question_sim"}
+
+
+def _wilson(p, n, z=1.96):
+    if not n:
+        return None
+    den = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / den
+    h = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / den
+    return [round(c - h, 4), round(c + h, 4)]
+
+
+def _golden_metrics(obj, src):
+    """golden metrics.json 모양이면 {M-45: …, M-46: …}, 아니면 {}."""
+    if not isinstance(obj, dict) or not any(k in obj for k in ("min_sim_table", "pipeline_no_floor", *GOLDEN_TOP.values())):
+        return {}
+    goals = {m[0]: (m[4], m[11]) for m in METRICS}
+    cur = obj.get("current_min_sim")
+    row = next((r for r in obj.get("min_sim_table") or [] if cur is not None and abs(r.get("min_sim", -9) - cur) < 1e-9), None)
+    base, where = (row, f"internal_search.search MIN_SIM={cur}") if row else (obj.get("pipeline_no_floor") or {}, "pipeline_no_floor(하한 없음 — 현재 MIN_SIM 행 없음)")
+    n = _num(obj.get("n_gold"))
+    out = {}
+    for mid, key in GOLDEN_MAP.items():
+        if key is None or _num(base.get(key)) is None:
+            continue
+        v = base[key]
+        goal, cilow_goal = goals.get(mid, (None, None))
+        ci = _wilson(v, int(n)) if key.startswith("recall") and n else None
+        ok = None if goal is None else (v >= goal and (cilow_goal is None or (ci is not None and ci[0] >= cilow_goal)))
+        out[mid] = {"value": v, "ci_low": ci[0] if ci else None, "n": n, "pass": ok,
+                    "note": f"G-검색 {key} · {where} · 원시 벡터 recall@4 {(obj.get('raw_vector') or {}).get('recall@4')}", "src": src}
+    for mid, key in GOLDEN_TOP.items():
+        d = obj.get(key)
+        if isinstance(d, dict) and _num(d.get("value")) is not None:
+            out[mid] = {"value": d["value"], "ci_low": _num(_ci_low(d.get("ci") or d.get("ci95"))), "n": _num(d.get("n")),
+                        "pass": None, "note": d.get("note") or f"G-질문 의미 유사도({key})", "src": src}
+    return out
+
+
+_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def _file_order(path):
+    """최신 판정 순서: 이름 속 날짜 → 같은 날짜면 접미사 없는 것(기준) 먼저, 접미사(_fix1·_r2 …) 있는 것 나중 → 수정 시각."""
+    b = os.path.splitext(os.path.basename(path))[0]
+    m = _DATE_RE.search(b)
+    date = m.group(1) if m else ""
+    suffix = b[m.end():] if m else b
+    return (date, suffix != "", suffix, os.path.getmtime(path))
+
+
+def _file_date(name):
+    m = _DATE_RE.search(os.path.basename(name))
+    return m.group(1) if m else None
+
+
 def load_eval_runs(qa_dir):
-    """{kind: {"files": [...], "metrics": {M-xx: {...}}}} — 파일이 없으면 {}."""
+    """{kind: {"files": [...], "metrics": {M-xx: 최신 값}, "baseline": {M-xx: 기준선 값}, "by_file": {파일: {M-xx: 값}}}}.
+
+    파일이 없으면 {}. 종류마다 오래된 파일 → 최신 파일 순으로 읽어 지표별로 마지막(최신) 값이 남는다.
+    baseline = 이름 날짜가 BASELINE_DATE인 파일 중 가장 앞(접미사 없는 것)의 값 — 회귀 비교용.
+    """
     res = {}
-    for p in sorted(glob.glob(os.path.join(eval_dir(qa_dir), "*.json"))):     # 맨 위 결과 파일만(raw_*/ 중간 산출물은 읽지 않음)
+    paths = sorted(glob.glob(os.path.join(eval_dir(qa_dir), "*.json")), key=_file_order)   # 맨 위 결과 파일만(raw_*/ 중간 산출물은 읽지 않음)
+    for p in paths:
         try:
             obj = json.load(open(p, encoding="utf-8"))
         except Exception:
@@ -310,11 +387,28 @@ def load_eval_runs(qa_dir):
         k = _kind(os.path.basename(p))
         got = {}
         _walk(obj, got, name)
-        slot = res.setdefault(k, {"files": [], "metrics": {}})
+        if k == "golden":
+            for mid, m in _golden_metrics(obj, name).items():
+                got.setdefault(mid, m)
+        slot = res.setdefault(k, {"files": [], "metrics": {}, "baseline": {}, "by_file": {}})
         slot["files"].append(name)
+        slot["by_file"][name] = got
         for mid, m in got.items():
-            slot["metrics"].setdefault(mid, m)
+            slot["metrics"][mid] = m                                   # 최신 파일이 덮어씀
+            if _file_date(name) == BASELINE_DATE:
+                slot["baseline"].setdefault(mid, m)                    # 기준선은 그날 첫 파일
     return res
+
+
+def _vs_base(m, b):
+    """근거·비고 칸 문구: 최신 파일 · 기준선 값 → 변화."""
+    if b is None or b.get("src") == m.get("src"):
+        first = _file_date(m["src"]) == BASELINE_DATE
+        return f"eval_runs/{m['src']} · " + (f"{BASELINE_DATE} 첫 기준선" if first else f"첫 측정({BASELINE_DATE} 기준선 없음 — 이 값이 기준)")
+    d = None
+    if _num(m.get("value")) is not None and _num(b.get("value")) is not None:
+        d = round(m["value"] - b["value"], 4)
+    return f"eval_runs/{m['src']} · 기준선 {BASELINE_DATE} {b.get('value')} → {m.get('value')}" + (f" ({d:+g})" if d is not None else "")
 
 
 def host_checks(root, qa_dir):
@@ -341,6 +435,26 @@ def host_checks(root, qa_dir):
     out["UT-44"] = {"id": "UT-44", "status": "통과" if not hits and gate else "실패",
                     "actual": f"온라인 평가기 호출 {len(hits)}건" + (f"({', '.join(hits[:3])})" if hits else "") + f" · config DEV_MODE 추적 차단 코드 {gate}",
                     "ms": round((time.time() - t) * 1000)}
+    # UT-45: contextualize 재시도(fix2). 호스트에서 돈다 — 가짜 llm이라 모델·DB가 필요 없고,
+    # 컨테이너는 재빌드 전이면 옛 questions.py라(2026-11-13 확인: /srv/app/questions.py에 _bad_tokens 없음) 호스트 저장소 코드로 검사한다.
+    import subprocess
+    import sys
+    t = time.time()
+    try:
+        p = subprocess.run([sys.executable, "-m", "tools.test_contextualize_retry"], cwd=os.path.join(root, "backend"), capture_output=True,
+                           text=True, encoding="utf-8", errors="replace", timeout=120, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+        lines = [x for x in p.stdout.splitlines() if x.strip()]
+        fails = [x[5:] for x in lines if x.startswith("FAIL ")]
+        summary = lines[-1] if lines else ""
+        if p.returncode == 0 and not fails and len(set(summary.split("/"))) == 1 and summary.split("/")[0].isdigit():
+            out["UT-45"] = {"id": "UT-45", "status": "통과", "actual": f"{summary} PASS (C1~C6)", "ms": round((time.time() - t) * 1000)}
+        elif fails:
+            out["UT-45"] = {"id": "UT-45", "status": "실패", "actual": f"{summary} · 실패: " + "; ".join(fails[:4]), "ms": round((time.time() - t) * 1000)}
+        else:
+            out["UT-45"] = {"id": "UT-45", "status": "보류", "actual": f"실행 오류(코드 {p.returncode}): {(p.stderr or p.stdout).strip()[-150:]}",
+                            "ms": round((time.time() - t) * 1000)}
+    except Exception as e:
+        out["UT-45"] = {"id": "UT-45", "status": "보류", "actual": f"실행 오류: {type(e).__name__}: {str(e)[:120]}", "ms": round((time.time() - t) * 1000)}
     return out, runs
 
 
@@ -391,13 +505,12 @@ def _ev_formula(r, kind):
     return f'=IF(I{r}="","미측정",IF(L{r}="이상",IF(I{r}>=K{r},"달성","미달"),IF(I{r}<=K{r},"달성","미달")))'
 
 
-def _fill_metric(ws, r, m, today):
+def _fill_metric(ws, r, m, today, base=None):
     ws.cell(r, 9).value = m["value"]
     if m.get("n") is not None:
         ws.cell(r, 10).value = m["n"]
-    ws.cell(r, 11).value = today
-    base = "2026-11-12 첫 기준선" if today == BASELINE_DATE else f"기준선 {BASELINE_DATE} 대비 비교"
-    ws.cell(r, 12).value = f"eval_runs/{m['src']} · {base}" + (f" · CI95 하한 {round(m['ci_low'], 3)}" if m.get("ci_low") is not None else "")
+    ws.cell(r, 11).value = _file_date(m["src"]) or today                 # 측정일 = 결과 파일 날짜
+    ws.cell(r, 12).value = _vs_base(m, base) + (f" · CI95 하한 {round(m['ci_low'], 3)}" if m.get("ci_low") is not None else "")
     if m.get("ci_low") is not None:
         ws.cell(r, 19).value = m["ci_low"]
 
@@ -413,6 +526,7 @@ def apply_plan(plan, runs, today):
     data_end = max(r for r in range(5, footer) if isinstance(ws.cell(r, 1).value, str) and ws.cell(r, 1).value.startswith("M-"))
     yellow_src = ws.cell(5, 9)
     flat = {k: v for kind in runs.values() for k, v in kind["metrics"].items()}
+    flat_base = {k: v for kind in runs.values() for k, v in kind.get("baseline", {}).items()}
     for (mid, role, name, unit, goal, direction, defin, data, typ, judge, timing, cilow, note, kind) in METRICS:
         r = _row_of(ws, mid)
         if r is None:
@@ -430,7 +544,7 @@ def apply_plan(plan, runs, today):
             _style(ws.cell(r, 13), ws.cell(r, c))
         _style(yellow_src, ws.cell(r, 19))                      # CI 하한(측정) = 노란 칸
         if mid in flat and mid not in ("M-44",) and kind != "alarm":
-            _fill_metric(ws, r, flat[mid], today)
+            _fill_metric(ws, r, flat[mid], today, flat_base.get(mid))
     # 요약 수식: 범위 다시 쓰기 + 보류·기록·경보 행 보장
     rows_by = {ws.cell(r, 1).value: r for r in range(data_end + 1, ws.max_row + 1) if ws.cell(r, 1).value}
     last = max(rows_by.values())
@@ -515,17 +629,18 @@ def apply_cases(wb, runs, today):
             ws.cell(r, 15).value = "미실행"
             ws.cell(r, 17).value = f"{note} · {acs}".strip(" ·")
         k = src_kind.get(ev)
-        m = runs.get(k, {}).get("metrics", {}).get(ev if mid == "—" else mid) if k else None
+        key = ev if mid == "—" else mid
+        m = runs.get(k, {}).get("metrics", {}).get(key) if k else None
+        b = runs.get(k, {}).get("baseline", {}).get(key) if k else None
         if m:
             ws.cell(r, 9).value = m["value"]
             if m.get("n") is not None:
                 ws.cell(r, 13).value = m["n"]
             ok = m.get("pass")
             ws.cell(r, 15).value = "통과" if ok is True else ("실패" if ok is False else "부분 통과")
-            ws.cell(r, 16).value = today
-            base = "2026-11-12 첫 기준선" if today == BASELINE_DATE else f"기준선 {BASELINE_DATE} 대비"
+            ws.cell(r, 16).value = _file_date(m["src"]) or today
             ci = f" · CI95 하한 {round(m['ci_low'], 3)}" if m.get("ci_low") is not None else ""
-            ws.cell(r, 17).value = f"{base} · eval_runs/{m['src']}{ci} · {acs}"
+            ws.cell(r, 17).value = f"{_vs_base(m, b)}{ci} · {acs}"
     _extend_rules(ws, 150)
 
 
@@ -537,7 +652,7 @@ def add_run_rows(wb, runs, started, commit):
         for f in slot["files"]:
             if f in seen:
                 continue
-            mets = {k: v for k, v in slot["metrics"].items() if v.get("src") == f}
+            mets = slot.get("by_file", {}).get(f) or {k: v for k, v in slot["metrics"].items() if v.get("src") == f}
             if not mets:
                 continue
             s.insert_rows(5)
@@ -545,7 +660,8 @@ def add_run_rows(wb, runs, started, commit):
             ok = sum(1 for v in mets.values() if v.get("pass") is True)
             bad = sum(1 for v in mets.values() if v.get("pass") is False)
             vals = [f"RUN-{len(runs_n) + 1:03d}", started, commit, f"AI 평가({kind}) {f}", len(mets), ok, bad, len(mets) - ok - bad, None, None, "-",
-                    "통과" if bad == 0 else "미달 있음", f"{BASELINE_DATE} 첫 기준선 · " + ", ".join(sorted(mets))]
+                    "통과" if bad == 0 else "미달 있음", (f"{BASELINE_DATE} 첫 기준선 · " if f == (slot["files"] or [None])[0] and _file_date(f) == BASELINE_DATE
+                     else f"기준선 {BASELINE_DATE} 대비 재측정 · ") + ", ".join(sorted(mets))]
             for i, v in enumerate(vals, 1):
                 s.cell(5, i).value = v
                 _style(s.cell(6, i), s.cell(5, i))

@@ -1,6 +1,6 @@
 """수집 공고 RAG 재생성 핵심 함수 (2026-11-12, 개발 도구 — 제품 실행 경로 아님).
 
-원문(`job_posting_resources/*.json`) → 조각 → llm.embed(qwen3-embedding:0.6b) → Chroma `job_postings_ref`
+원문(`job_posting_resources/<site>/*.json`) → 조각 → llm.embed(qwen3-embedding:0.6b) → Chroma `job_postings_ref`
 → 시드 공고마다 같은 직무 참고 조각 검색 → llm.chat_json(LLM_MODEL)으로 새 공고 초안 → 원문 유사성 검사 → 검토용 파일.
 
 - 모델 호출은 llm.chat_json · llm.embed만(외부 API 없음, CLAUDE.md 2026-11-11 임베딩 로컬 Qwen).
@@ -76,7 +76,7 @@ def normalize_raw(d):
 
 def load_raw(raw_dir):
     out = []
-    for p in sorted(Path(raw_dir).glob("*.json")):
+    for p in sorted(Path(raw_dir).rglob("*.json")):   # saramin/ · wanted/ 하위 폴더(2026-11-13)
         try:
             r = normalize_raw(json.loads(p.read_text(encoding="utf-8")))
         except Exception:
@@ -356,7 +356,7 @@ def seed_jobs(roles=None):
     rows = db.all_("""SELECT j.id, j.role_code, j.title, j.company_intro, j.duties, j.requirements,
                              c.name company_name, r.name role_name
                       FROM jobs j JOIN companies c ON c.id=j.company_id JOIN job_roles r ON r.code=j.role_code
-                      WHERE c.name LIKE '헤드헌터랩\\_%' AND j.status='published' ORDER BY j.id""")
+                      WHERE c.name LIKE '헤드헌터랩\\_%%' AND j.status='published' ORDER BY j.id""")
     return [r for r in rows if not roles or r["role_code"] in roles]
 
 

@@ -116,6 +116,10 @@ QUESTION_SECONDS = 90
 FOLLOWUP_SECONDS = 60
 MAX_FOLLOWUPS = 4
 QGRAPH_REVIEW = os.getenv("QGRAPH_REVIEW", "1") == "1"   # 그래프 1 A5·A6 모델 검수(0이면 규칙만)
+# 사내문서 RAG를 그래프 1-A 기업 문항에 붙이는 스위치(ADLC v0.7 6.13.7 · P-4, 2026-11-13 구현).
+# 0이면 retrieve_internal이 빈 컨텍스트를 돌려주고 guard_disclosure는 할 일이 없다(v0.6과 같은 질문 구성).
+# 1이어도 금지 용어 사전 Redis idoc:forbid가 없으면 사내문서 경로를 쓰지 않는다(`internal_docs_agent forbid`로 만든다).
+INTERNAL_DOCS_RAG = os.getenv("INTERNAL_DOCS_RAG", "1") == "1"
 CONSENT_VERSION = "2026-11-09.v3"   # v2: 제3자 제공 4요소·자동화된 결정 거부권·음성 삭제·국외 보관 문구 · v3: LangSmith 국외 이전(PRD V9-14)
 
-VERSIONS = {"prompt": "p-2026.11.12", "rubric": "r-1.0", "ocr": "tesseract-5 " + OCR_LANG}
+VERSIONS = {"prompt": "p-2026.11.13", "rubric": "r-1.0", "ocr": "tesseract-5 " + OCR_LANG}

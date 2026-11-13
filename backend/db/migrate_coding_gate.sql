@@ -6,9 +6,9 @@
 ALTER TABLE eval_criteria ADD COLUMN IF NOT EXISTS coding_gate_mode TEXT NOT NULL DEFAULT 'none'
   CHECK (coding_gate_mode IN ('none','hard','soft'));
 
-UPDATE eval_criteria SET decision_mode = 'hybrid' WHERE decision_mode = 'semi';
-
+-- 옛 CHECK(auto,semi)를 먼저 지워야 'hybrid'로 UPDATE할 수 있다(2026-11-13 순서 수정 — 전 순서는 로컬에서 실패함)
 ALTER TABLE eval_criteria DROP CONSTRAINT IF EXISTS eval_criteria_decision_mode_check;
+UPDATE eval_criteria SET decision_mode = 'hybrid' WHERE decision_mode = 'semi';
 ALTER TABLE eval_criteria ADD CONSTRAINT eval_criteria_decision_mode_check CHECK (decision_mode IN ('auto','hybrid'));
 
 ALTER TABLE eval_criteria DROP COLUMN IF EXISTS coding_ratio;

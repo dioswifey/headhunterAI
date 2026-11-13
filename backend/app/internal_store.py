@@ -64,6 +64,18 @@ def count(name):
     return collection(name).count()
 
 
+def chunks(name, documents=False):
+    """감사·정리용 전체 목록 — [{id, metadata[, document]}]. 벡터는 읽지 않는다."""
+    got = collection(name).get(include=["metadatas", "documents"] if documents else ["metadatas"])
+    out = []
+    for i, cid in enumerate(got.get("ids") or []):
+        rec = {"id": cid, "metadata": (got.get("metadatas") or [])[i] or {}}
+        if documents:
+            rec["document"] = (got.get("documents") or [])[i] or ""
+        out.append(rec)
+    return out
+
+
 def query_public(vector, k=12, where=None):
     """지원자 질문 생성 경로가 쓰는 유일한 검색. 컬렉션은 PUBLIC로 고정이다(인자로 받지 않는다).
 

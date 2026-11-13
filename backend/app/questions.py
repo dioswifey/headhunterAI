@@ -90,18 +90,89 @@ def contextualize(q, job, intent=""):
     system = prompts.load("generate/question_generator", company_name=job.get("company_name") or "우리 회사", role_name=job.get("role_name") or "",
                           company_intro=(job.get("company_intro") or "")[:400], duties=(job.get("duties") or "")[:400],
                           requirements=(job.get("requirements") or "")[:300], intent=intent or "원래 질문과 같음", seconds=config.QUESTION_SECONDS)
-    try:
-        out = llm.chat_json(system, f"기본 질문: {q}", CTX_SCHEMA, timeout=60, temperature=0.4)
-    except llm.LLMError:
-        return q
-    nq = (out.get("question") or "").strip()
+    user = f"기본 질문: {q}"
     squash = re.sub(r"\s+", "", info)
-    facts_ok = all(re.sub(r"\s+", "", f) in squash for f in out.get("company_facts", []) if f and f.strip())
     # 2026-11-12 RAG 평가(M-32): 모델이 밝힌 company_facts만 대조하면 질문 속 지어낸 수치('정확도 85%')가 통과한다
     # → 직무 질문과 같은 토큰 검사(영문·숫자 토큰은 은행 원문·공고·회사 정보에 있어야 함)
-    if not (10 <= len(nq) <= 160) or not one_sentence(nq) or BLOCKLIST.search(nq) or not facts_ok or not _tokens_ok(nq, q, job, {}):
-        return q
-    return nq
+    # 2026-11-13 fix2: 토큰 검사에 걸리면 바로 원문으로 가지 않고, 걸린 토큰을 알려 주고 1회만 다시 만든다
+    #   (fix1 재측정에서 기업 질문 9개 중 8개가 원문 '우리 회사의 서비스나 사업…'으로 돌아가 루브릭 3.82→2.84)
+    for attempt in range(2):
+        try:
+            out = llm.chat_json(system, user, CTX_SCHEMA, timeout=60, temperature=0.4)
+        except llm.LLMError:
+            return q
+        nq = (out.get("question") or "").strip()
+        facts_ok = all(re.sub(r"\s+", "", f) in squash for f in out.get("company_facts", []) if f and f.strip())
+        if not (10 <= len(nq) <= 160) or not one_sentence(nq) or BLOCKLIST.search(nq) or not facts_ok:
+            return q
+        bad = _bad_tokens(nq, q, job, {})
+        if not bad:
+            return nq
+        if attempt == 0:
+            user = (f"기본 질문: {q}\n\n[다시 쓰기] 방금 만든 질문: {nq}\n"
+                    f"회사 정보·기본 질문에 없는 숫자·영문 토큰이 들어 있다: {', '.join(bad[:8])}\n"
+                    "회사 정보·기본 질문에 없는 숫자(비율·점수·건수 등)와 영문 용어는 쓰지 말고, 같은 평가 목적의 질문 한 문장으로 다시 써라.")
+    return q
+
+
+RAG_SCHEMA = {"type": "object", "properties": {"question": {"type": "string"},
+              "company_facts": {"type": "array", "items": {"type": "string"}},
+              "doc_refs": {"type": "array", "items": {"type": "string"}}}, "required": ["question", "company_facts", "doc_refs"]}
+
+
+# 면접 방식 자체를 묻는 질문(2026-11-13 사용자 결정 — 41번 문서 STAR·질문 설계 섹션이 근거로 들어올 때 대비).
+# A15·7-B의 사내문서 근거 문항에만 쓴다(은행 원문에는 쓰지 않음).
+# 강한 키워드 = 단독으로 차단. 약한 키워드(평가 기준·평가 항목·채점)는 채용 맥락 단어와 같은 문장에 있을 때만
+# (데이터 직무 '모델 평가 기준' 같은 정상 질문 오탐 방지, 2026-11-13 조정).
+INTERVIEW_META_STRONG = re.compile(r"(루브릭|STAR|질문\s*설계|면접\s*방식)")
+INTERVIEW_META_WEAK = re.compile(r"(평가\s*기준|평가\s*항목|채점)")
+HIRING_CONTEXT = re.compile(r"(면접|채용|지원자|합격|서류|전형)")
+
+
+def asks_interview_method(text):
+    """면접 방법·평가 기준·질문 설계를 묻는 문장이면 True. 질문(의문·요청형) 문장이 대상이라 키워드만 본다."""
+    t = text or ""
+    return bool(INTERVIEW_META_STRONG.search(t) or (INTERVIEW_META_WEAK.search(t) and HIRING_CONTEXT.search(t)))
+
+
+def contextualize_rag(q, job, intent, context, refs, bodies, forbid_terms=()):
+    """A15 (ADLC v0.7 6.13.6 ⑩, 2026-11-13): 공개판 사내문서 컨텍스트로 기업 문항을 다시 쓴다.
+    반환 {text, company_facts, doc_refs} | None. None이면 호출 쪽이 기존 contextualize(공고 정보만)로 내려간다.
+    ⑪ 재생성하지 않는다 — 규칙에 한 번 걸리면 None. 검사:
+      길이 10~160 · 한 문장 · BLOCKLIST · 금지 용어 사전 · company_facts ⊂ (공고 + 주입 조각 본문) ·
+      doc_refs가 비지 않고 실제 주입한 조각 ID · 영문·숫자 토큰이 (은행 원문 + 공고 + 조각 본문)에 있음.
+    bodies = 조각 본문(출처 머리글 제외). 머리글의 조각 ID가 '허용 토큰'이 되지 않게 본문만 근거로 쓴다."""
+    from .agents import internal_forbid
+    if not forbid_terms:                       # 사전 없음 = 검사 불가 → 사내문서 경로 미사용(6.13.8)
+        return None
+    system = prompts.load("generate/company_question_rag", company_name=job.get("company_name") or "우리 회사",
+                          role_name=job.get("role_name") or "", company_intro=(job.get("company_intro") or "")[:400],
+                          duties=(job.get("duties") or "")[:400], requirements=(job.get("requirements") or "")[:300],
+                          internal_context=context, intent=intent or "원래 질문과 같음", seconds=config.QUESTION_SECONDS)
+    try:
+        out = llm.chat_json(system, f"기본 질문: {q}", RAG_SCHEMA, timeout=90, temperature=0.4)
+    except llm.LLMError:
+        return None
+    nq = (out.get("question") or "").strip()
+    facts = [f.strip() for f in out.get("company_facts") or [] if f and f.strip()]
+    drefs = [r.strip() for r in out.get("doc_refs") or [] if r and r.strip()]
+    if not (10 <= len(nq) <= 160) or not one_sentence(nq) or BLOCKLIST.search(nq):
+        return None
+    if internal_forbid.find_terms(nq, forbid_terms) or any(internal_forbid.find_terms(f, forbid_terms) for f in facts):
+        return None
+    if internal_forbid.masked_hits(nq) or any(internal_forbid.masked_hits(f) for f in facts):      # 마스킹 표식([금액] 등)·가명(고객사A…)이 든 질문은 쓰지 않는다(2026-11-13 사용자 결정)
+        return None
+    if asks_interview_method(nq):            # 면접 방식·평가 기준을 묻는 질문은 쓰지 않는다(2026-11-13 사용자 결정)
+        return None
+    allowed = re.sub(r"\s+", "", " ".join([job.get("company_intro") or "", job.get("duties") or "",
+                                            job.get("requirements") or ""] + list(bodies)))
+    if not all(re.sub(r"\s+", "", f) in allowed for f in facts):
+        return None
+    if not drefs or not set(drefs) <= set(refs):
+        return None
+    if _bad_tokens(nq, " ".join([q] + list(bodies)), job, {}):
+        return None
+    return {"text": nq, "company_facts": facts, "doc_refs": drefs}
 
 
 def _info_squash(job, snapshot):
@@ -112,9 +183,14 @@ def _info_squash(job, snapshot):
 
 def _tokens_ok(question, base, job, snapshot, used_terms=()):
     """다시 쓴 질문의 영문·숫자 토큰과 used_terms가 (원문 문항 + 공고 + 이력서) 안에 있어야 한다(지어내기 차단)."""
+    return not _bad_tokens(question, base, job, snapshot, used_terms)
+
+
+def _bad_tokens(question, base, job, snapshot, used_terms=()):
+    """_tokens_ok에서 걸린 토큰 목록(정렬). 비어 있으면 통과."""
     allowed = _info_squash(job, snapshot) + re.sub(r"\s+", "", (base or "").lower())
     toks = set(re.findall(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|\d+(?:\.\d+)?%?", question)) | {t for t in used_terms if t}
-    return all(re.sub(r"\s+", "", t.lower().strip(".")) in allowed for t in toks)
+    return sorted(t for t in toks if re.sub(r"\s+", "", t.lower().strip(".")) not in allowed)
 
 
 SENT_END = re.compile(r"(?:[다요까]|니까)[.?!]\s*(?=\S)")
@@ -388,6 +464,35 @@ def build_set(application, use_llm=True):
     return result
 
 
+# ---------- applications.pregen_questions(JSONB) 형식 (2026-11-13, ADLC v0.7 6.14.3 — 스키마 변경 없음) ----------
+# v2 = {"v": 2, "questions": [...], "guard_report": {...}, "internal_refs": [...]}. 옛 형식 = 질문 목록(list) 그대로.
+# guard_report·internal_refs에는 사유 종류·건수·조각 ID만 — 질문 원문 밖의 문장·조각 본문·금지 용어 원문은 넣지 않는다(B-08).
+GUARD_REASONS = ("forbid_unavailable", "forbid_term", "mask_marker", "interview_meta","facts_unmatched", "doc_ref_invalid", "rule", "model_flag")
+_REF_RE = re.compile(r"^[A-Za-z0-9_\-]+#[A-Za-z0-9_\-]*$")
+
+
+def _safe_guard_report(rep):
+    rep = rep or {}
+    return {"checked": int(rep.get("checked") or 0), "blocked": int(rep.get("blocked") or 0),
+            "reasons": {k: int(v) for k, v in (rep.get("reasons") or {}).items() if k in GUARD_REASONS},
+            "model": rep.get("model") if rep.get("model") in ("skipped", "ok", "error") else "skipped"}
+
+
+def pack_pregen(qs, info=None):
+    info = info or {}
+    refs = [r for r in (info.get("internal_refs") or []) if isinstance(r, str) and _REF_RE.match(r)]
+    return {"v": 2, "questions": qs, "guard_report": _safe_guard_report(info.get("guard_report")), "internal_refs": refs}
+
+
+def pregen_list(value):
+    """pregen_questions → 질문 목록. 옛 형식(list)·v2(dict) 둘 다 읽는다. 없거나 모르는 형식이면 빈 목록."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        return value.get("questions") or []
+    return []
+
+
 def pregenerate(application_id):
     """RSQ-05: run during environment check; interview start uses this if ready."""
     db.run("UPDATE applications SET pregen_status='running' WHERE id=%s", application_id)
@@ -395,10 +500,11 @@ def pregenerate(application_id):
         app = db.one("SELECT * FROM applications WHERE id=%s", application_id)
         try:   # 그래프 1-A 질문 생성(LangGraph, ADLC v0.5 6.1). 그래프가 실패하면 기존 함수 경로
             from .agents import question_graph
-            qs, _info = question_graph.generate_set(app, use_llm=True)
+            qs, info = question_graph.generate_set(app, use_llm=True)
         except Exception:
-            qs = build_set(app, use_llm=True)
-        db.run("UPDATE applications SET pregen_status='ready', pregen_questions=%s WHERE id=%s", db.J(qs), application_id)
+            qs, info = build_set(app, use_llm=True), {}
+        db.run("UPDATE applications SET pregen_status='ready', pregen_questions=%s WHERE id=%s",
+               db.J(pack_pregen(qs, info)), application_id)
         from . import speech   # v0.9 INT-01: 환경 점검 중에 질문 음성(Qwen3-TTS)도 미리 만든다(TTS가 실시간보다 느림)
         speech.prewarm([q["text"] for q in qs])
     except Exception:

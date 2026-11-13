@@ -38,6 +38,21 @@ CAT_LABEL = {"personality": "인성 질문", "resume": "이력서 기반 질문"
 EXPECTED = ["personality"] * 2 + ["resume"] * 3 + ["job"] * 2 + ["company"]
 DUP_COS = 0.85
 RUBRIC = ("clarity", "job_relevance", "answerability", "one_sentence", "unbiased")
+BASELINE_DATE = "2026-11-12"   # 첫 기준선 실행일(rag_questions_2026-11-12.json)
+
+
+def _run_info(name):
+    """--name(예: rag_questions_2026-11-13_fix1) → (날짜, 꼬리표). 이름에 날짜가 없으면 오늘(KST)."""
+    m = re.search(r"\d{4}-\d{2}-\d{2}", name or "")
+    if m:
+        return m.group(0), (name[m.end():].strip("_-") or "")
+    return time.strftime("%Y-%m-%d", time.gmtime(time.time() + 9 * 3600)), ""
+
+
+def _run_note(date, tag):
+    if date == BASELINE_DATE and not tag:
+        return f"첫 기준선({BASELINE_DATE}). 제품 코드·프롬프트는 고치지 않고 그대로 기록"
+    return f"재측정({tag or date}) — 기준선({BASELINE_DATE}) 대비 비교는 md '기준선 대비 전후 비교' 절(compare)"
 
 # ---------------- 가상 인물 이력서 스냅샷 (실존 인물 아님) ----------------
 def _p(name, role, period, detail, tech):
@@ -666,7 +681,7 @@ def _xlsx(R, sets_full, jobs, path, sample_ids):
                  ("질문 합격률", f"{R['pass_rate']['k']}/{R['pass_rate']['n']} = {_f(R['pass_rate']['p'])} (Wilson {_ci(R['pass_rate']['wilson95'])})"),
                  ("합격 기준", "루브릭 평균 ≥4.0 · 근거성(규칙 ∧ 판정) 통과 · 하드 제약(차단 목록·10~160자·한 문장) 위반 0"),
                  ("통과 기준(세 겹)", "① 하드 제약 0건(차단 목록·대외비 누출 등) ② 평균 목표 + 95% CI 하한(루브릭 ≥4.0 / 하한 ≥3.7) ③ 회귀 허용 폭 — 다음 실행부터 기준선 대비 점수 −0.2점·비율 −5%p 이내"),
-                 ("이번 실행", "첫 기준선(2026-11-12). 제품 코드·프롬프트는 고치지 않고 그대로 기록"),
+                 ("이번 실행", m.get("run_note") or _run_note(m["date"], "")),
                  ("사람 검토 선정", R.get("human_review_note", "")),
                  ("통계", m["stats"]), ("걸린 시간", f"생성 {m['gen_seconds_total']:.0f}초 · 판정 {m['judge_seconds_total']:.0f}초({m['judge_calls']}회, 실패 {m['judge_errors']})"),
                  ("데이터", "시드 공고(헤드헌터랩_서울·경기·인천 × AI/AX·백엔드·데이터) + 가상 인물 이력서 9개. 실제 지원자 데이터 없음. DB 쓰기 없음.")]:
@@ -835,7 +850,8 @@ def cmd_report(a):
     rsec = [v["sec"] for v in jd["retrieval"].values() if "sec" in v]
     isec = [h["sec"] for x in internal["queries"] for h in x["hits"] if "sec" in h]
     jerr = sum(1 for v in list(jd["quality"].values()) + list(jd["retrieval"].values()) if "error" in v)
-    meta = {"date": "2026-11-12", "n_sets": len(sets), "n_questions": len(qs), "n_retrieved": len(rel), "n_internal_hits": len(allhits),
+    run_date, run_tag = _run_info(a.name)
+    meta = {"date": run_date, "run_name": a.name, "run_tag": run_tag, "run_note": _run_note(run_date, run_tag), "n_sets": len(sets), "n_questions": len(qs), "n_retrieved": len(rel), "n_internal_hits": len(allhits),
             "gen_model": gen["meta"].get("gen_model"), "embed_model": gen["meta"].get("embed_model"), "judge_model": _models_txt(jd["meta"].get("models") or {}, internal.get("meta", {}).get("judge_model")),
             "qgraph_review": gen["meta"].get("qgraph_review"), "prompt_version": gen["meta"].get("prompt_version"),
             "gen_seconds_total": round(sum(s["seconds"] for s in sets), 1), "gen_seconds_per_set": summ([s["seconds"] for s in sets]),
@@ -898,8 +914,10 @@ def cmd_report(a):
     jp = os.path.join(a.outdir, a.name + ".json")
     json.dump(result, open(jp, "w", encoding="utf-8", newline="\n"), ensure_ascii=False, indent=1)
     open(os.path.join(a.outdir, a.name + ".md"), "w", encoding="utf-8", newline="\n").write(_md(result, ranked, sample, sets))
-    _xlsx(result, sets, {j["id"]: j for j in _jobs()}, os.path.join(a.outdir, a.xlsx), {q["qid"] for q in sample})
-    print("saved", jp, "·", a.xlsx, "· 질문 합격률", pass_rate["p"])
+    xname = a.xlsx or ((a.name.replace("rag_questions_", "rag_question_eval_", 1) if a.name.startswith("rag_questions_")
+                        else "rag_question_eval_" + a.name) + ".xlsx")
+    _xlsx(result, sets, {j["id"]: j for j in _jobs()}, os.path.join(a.outdir, xname), {q["qid"] for q in sample})
+    print("saved", jp, "·", xname, "· 질문 합격률", pass_rate["p"])
 
 
 def _f(x, d=3):
@@ -912,8 +930,9 @@ def _ci(c):
 
 def _md(R, ranked, sample, sets):
     M, m = R["metrics"], R["meta"]
-    L = ["---", "title: RAG 면접 질문 생성 품질 측정", "date: 2026-11-12", "metrics: M-31~M-37", "---", "",
-         "# RAG 면접 질문 생성 품질 측정 (2026-11-12)", "",
+    ttl = m["date"] + (f" · {m['run_tag']}" if m.get("run_tag") else "")
+    L = ["---", "title: RAG 면접 질문 생성 품질 측정", f"date: {m['date']}", "metrics: M-31~M-37", "---", "",
+         f"# RAG 면접 질문 생성 품질 측정 ({ttl})", "",
          f"- 표본: 질문 세트 **{m['n_sets']}개** · 질문 **{m['n_questions']}개** · 검색 문항 {m['n_retrieved']}개 · 사내문서 검색 조각 {m['n_internal_hits']}개",
          f"- 생성 모델 `{m['gen_model']}` · 임베딩 `{m['embed_model']}` · 판정 모델 `{m['judge_model']}` · A5/A6 검수 {'켜짐' if m['qgraph_review'] else '꺼짐'} · 프롬프트 `{m['prompt_version']}`",
          f"- 걸린 시간: 생성 {m['gen_seconds_total']:.0f}초(세트당 평균 {_f(m['gen_seconds_per_set'].get('mean'), 0)}초) · 판정 {m['judge_seconds_total']:.0f}초({m['judge_calls']}회, 실패 {m['judge_errors']})",
@@ -935,7 +954,7 @@ def _md(R, ranked, sample, sets):
     for r in rows:
         L.append("| " + " | ".join(str(x) for x in r[:6]) + f" | {'달성' if r[6] else '**미달**'} |")
     L.append("| M-44 | 판정 모델 vs 사람 일치도(Spearman) | ≥0.6 | 미측정(사람 평가 전) | - | - | 미측정 |")
-    L += ["", "- 통과 기준 세 겹: ① 하드 제약 0건 ② 평균 목표 + 95% CI 하한 ③ 회귀 허용 폭(다음 실행부터 기준선 대비 −0.2점·−5%p). **이번 실행 = 첫 기준선**(제품 코드·프롬프트 무수정). 기준선 값은 xlsx `요약` 시트."]
+    L += ["", "- 통과 기준 세 겹: ① 하드 제약 0건 ② 평균 목표 + 95% CI 하한 ③ 회귀 허용 폭(다음 실행부터 기준선 대비 −0.2점·−5%p). **이번 실행 = " + (m.get("run_note") or _run_note(m["date"], "")) + "**. 기준선 값은 xlsx `요약` 시트."]
     pr = R["pass_rate"]
     L += ["", f"- 질문 1개 합격(루브릭 평균 ≥4.0 · 근거성 통과 · 하드 제약 위반 0): **{pr['k']}/{pr['n']} = {_f(pr['p'])}** · Wilson {_ci(pr['wilson95'])}"
           f" · 세트 군집 부트스트랩 {_ci(pr.get('cluster_boot95'))}",
@@ -1033,8 +1052,14 @@ def cmd_compare(a):
                 ("하드: 한 문장 규칙 위반(건)", sum(1 for q in qs if not q.get("rule_one_sentence", True)), None, "count", "0"),
                 ("하드: 근거 규칙 실패(건)", sum(1 for q in qs if not q.get("rule_grounded")), None, "count", "0"),
                 ("기업 질문 근거 규칙 실패(건)", sum(1 for q in qs if q["category"] == "company" and not q.get("rule_grounded")), None, "count", "0")]
-    L = ["", "## 7. 기준선 대비 전후 비교 (fix1)", "",
-         f"- 기준선: `{os.path.basename(a.base)}` · 수정 후: `{os.path.basename(a.new)}` · 생성·판정 모델 동일(qwen3:4b), 같은 공고·가상 이력서 짝",
+    def label(R, path):  # 컨테이너 /tmp에 다른 이름으로 복사해 돌려도 원래 결과 이름이 나오게
+        nm = R["meta"].get("run_name") or os.path.splitext(os.path.basename(path))[0]
+        if not re.search(r"\d{4}-\d{2}-\d{2}", nm):
+            nm = "rag_questions_" + R["meta"].get("date", "")
+        return nm + ".json"
+    tag = N["meta"].get("run_tag") or _run_info(os.path.basename(a.new))[1] or N["meta"].get("date", "")
+    L = ["", f"## 7. 기준선 대비 전후 비교 ({tag})", "",
+         f"- 기준선: `{label(B, a.base)}` · 수정 후: `{label(N, a.new)}` · 생성·판정 모델 동일(qwen3:4b), 같은 공고·가상 이력서 짝",
          "- 회귀 판정: 점수 −0.2점 / 비율 −5%p(낮을수록 좋은 지표는 +5%p)보다 나빠지면 '회귀'", "",
          "| 지표 | 목표 | 기준선 | 95% CI | 수정 후 | 95% CI | 변화 | 판정 |", "|---|---|---|---|---|---|---|---|"]
     for (name, bv, bci, kind, tgt), (_, nv, nci, _, _) in zip(vals(B), vals(N)):
@@ -1051,7 +1076,9 @@ def cmd_compare(a):
         else:
             j = "회귀" if d > 0 else ("개선" if d < 0 else "유지")
         L.append(f"| {name} | {tgt} | {_f(bv)} | {_ci(bci)} | {_f(nv)} | {_ci(nci)} | {d:+.3f} | {j} |")
-    L += ["", "- **M-31·M-35: 수정 1번(`pick_bank` 직무 필터) 미적용이라 변화 없음을 예상한다.** DB `question_bank`에 role_code 열이 없고 직무 문항이 AI 계열뿐이다."
+    L += [""] if tag != "fix1" else []
+    L += ["- 생성은 확률적(temperature 0.4)이라 같은 입력이어도 표본이 달라진다. 변화가 CI 안에 있으면 '유지'로 본다.", ""] if tag != "fix1" else [
+          "", "- **M-31·M-35: 수정 1번(`pick_bank` 직무 필터) 미적용이라 변화 없음을 예상한다.** DB `question_bank`에 role_code 열이 없고 직무 문항이 AI 계열뿐이다."
           " 근본 해결(backend·data_sci 직무 문항을 regularDB에 추가해 sync하고 role_code 열 추가)은 별도 작업으로 사용자에게 올린다.",
           "- 수정 ③(`_pick_redis`에서 두 문장 은행 문항 제외)으로 Redis ai_ax 직무 후보가 222개에서 218개로 줄어, M-35가 조금 오를 수 있다.",
           "- 생성은 확률적(temperature 0.4)이라 같은 입력이어도 표본이 달라진다. 변화가 CI 안에 있으면 '유지'로 본다.",
@@ -1071,7 +1098,7 @@ def main(argv=None):
     j.add_argument("--only", default="", choices=["", "quality", "retrieval"])
     i = sp.add_parser("internal"); i.add_argument("--out", required=True); i.add_argument("--model", default="qwen3:8b"); i.add_argument("--gen", default="")
     r = sp.add_parser("report"); r.add_argument("--dir", required=True); r.add_argument("--outdir", required=True); r.add_argument("--name", required=True)
-    r.add_argument("--xlsx", default="rag_question_eval_2026-11-12.xlsx")
+    r.add_argument("--xlsx", default="", help="기본 = --name에서 rag_questions_ → rag_question_eval_ (예: rag_question_eval_2026-11-13_fix1.xlsx)")
     c = sp.add_parser("compare"); c.add_argument("--base", required=True); c.add_argument("--new", required=True)
     a = ap.parse_args(argv)
     if a.cmd == "compare":

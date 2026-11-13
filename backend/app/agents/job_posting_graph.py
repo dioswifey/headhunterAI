@@ -2,7 +2,7 @@
 
 새 원문 공고가 `job_posting_resources/`에 들어오면 이 그래프 한 번으로 전체 단계를 돈다.
 
-  (0단계, 그래프 밖·호스트) backend/tools/collect_jobs.py --site saramin|wanted  → job_posting_resources/*.json
+  (0단계, 그래프 밖·호스트) backend/tools/collect_jobs.py --site saramin|wanted  → job_posting_resources/<site>/*.json
       Scrapling은 호스트 가상환경에만 있고 Chroma·LangGraph는 api 컨테이너에만 있어서 수집은 그래프 밖에 둔다.
 
   START → scan ─(새·바뀐 공고 없음, force 아님)→ END

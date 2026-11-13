@@ -1,7 +1,7 @@
 """공고 원문 수집기 (사람인·원티드) — RAG 재생성용 참고 자료, 개발 전용.
 
 2026-11-12 사용자 지시: 사람인 50개 + 원티드 150개, DB job_roles 7개 직무에 고르게.
-원문은 저장소 루트 job_posting_resources/에 둔다(2026-11-12 사용자 지시). DB에 넣지 않는다.
+원문은 저장소 루트 job_posting_resources/<site>/에 둔다(2026-11-12 사용자 지시). DB에 넣지 않는다.
 다음 단계(임베딩 → Chroma → 재생성)는 LangGraph `app.agents.job_posting_graph`가 맡는다.
 
 접속 예절
@@ -303,7 +303,7 @@ def main():
     ap.add_argument("--total", type=int, required=True)
     ap.add_argument("--out", default=str(Path(__file__).resolve().parents[2] / "job_posting_resources"))
     a = ap.parse_args()
-    out = Path(a.out)
+    out = Path(a.out) / a.site          # 사이트별 하위 폴더 saramin/ · wanted/ (2026-11-13 사용자 지시)
     out.mkdir(parents=True, exist_ok=True)
     fn = collect_saramin if a.site == "saramin" else collect_wanted
     try:

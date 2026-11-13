@@ -4,7 +4,9 @@
     docker exec -w /srv AI-Interview-project-api python qa_checks.py [TC ID …]
 
 한 줄에 하나씩 JSON 결과: {"id", "status": 통과|실패|보류, "actual", "ms"}.
-외부 AI API(OpenAI)는 부르지 않는다(생성 품질 지표는 DB에 저장된 결과로 계산). 로컬 모델 호출도 하지 않는다.
+외부 AI API(OpenAI)는 부르지 않는다(생성 품질 지표는 DB에 저장된 결과로 계산).
+로컬 모델(임베딩·LLM·음성)도 부르지 않는다 — 예외는 GPU_CHECKS 4건(UT-35·UT-36·IT-37·IT-38)뿐이고,
+QA_NO_GPU=1(`qa_agent.py run --no-gpu`)이면 이 4건은 실행하지 않고 '보류'로 남긴다.
 테스트가 남기는 데이터(조회 인원 키 등)는 끝에서 지운다.
 """
 import json

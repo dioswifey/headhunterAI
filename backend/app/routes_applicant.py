@@ -273,7 +273,8 @@ def start_attempt(app_id: int, user=Depends(security.applicant)):
     active = db.one("SELECT count(*) n FROM attempts WHERE status IN ('interview','coding')")["n"]
     if active >= config.MAX_CONCURRENT_INTERVIEWS:  # INT-08, 응시 횟수 미차감
         raise HTTPException(503, "지금은 응시 인원이 많아 시작할 수 없습니다. 잠시 후 마이페이지에서 다시 시작해 주세요.")
-    qs = a["pregen_questions"] if a["pregen_status"] == "ready" and a["pregen_questions"] else questions.build_set(a, use_llm=False)
+    qs = (questions.pregen_list(a["pregen_questions"]) if a["pregen_status"] == "ready" else []) \
+        or questions.build_set(a, use_llm=False)   # pregen_questions: 옛 형식(list)·v2({questions, guard_report, …}) 둘 다
     with db.tx() as conn:
         conn.execute("UPDATE eval_criteria SET locked_at=coalesce(locked_at, now()) WHERE job_id=%s", (a["job_id"],))
         crit = conn.execute("SELECT * FROM eval_criteria WHERE job_id=%s", (a["job_id"],)).fetchone()

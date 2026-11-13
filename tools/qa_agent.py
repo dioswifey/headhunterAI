@@ -308,7 +308,9 @@ def record(results, gaps, changed, started, secs, eval_runs=None):
         for meta in rows:
             res = results.get(meta[0])
             run = [res["status"], _fmt(res["actual"]), f"{res['ms']}ms", TODAY, None] if res else ["미실행", "자동 검사 없음 — 브라우저 확인 필요", None, None, None]
-            r, new = upsert(ws, meta + run)
+            # 자동 검사가 없는 행(E2E 등): 사람이 적은 상태·실제 결과·소요·실행일·결함 ID를 덮어쓰지 않는다(새 행·빈 칸만 '미실행')
+            human = () if res else tuple(range(len(meta) + 1, len(meta) + len(run) + 1))
+            r, new = upsert(ws, meta + run, keep_human=human)
             (added if new else updated).append(meta[0])
     # 기존 케이스 중 재실행한 회귀 항목(UT-03·07·13): 상태·실제 결과·소요·실행일만
     for tid in ("UT-03", "UT-07", "UT-13"):
