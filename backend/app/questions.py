@@ -308,6 +308,69 @@ def contextualize_job(q, job, snapshot, intent=""):
     return nq
 
 
+# ---------- 직무 이해도 Dual RAG: Redis 은행 문항 + Chroma 사내문서 + 공고 + 이력서 (2026-11-16, ADLC 6.18.3) ----------
+JOB_RAG_SCHEMA = {"type": "object", "properties": {"question": {"type": "string"},
+                  "used_terms": {"type": "array", "items": {"type": "string"}},
+                  "company_facts": {"type": "array", "items": {"type": "string"}},
+                  "doc_refs": {"type": "array", "items": {"type": "string"}}},
+                  "required": ["question", "used_terms", "company_facts", "doc_refs"]}
+# 지원자가 이미 한 일처럼 전제하는 과거형 높임 표현 — 사내문서 사실과 같은 문장에 있으면 '허위 경험 전제'로 본다
+PAST_PREMISE = re.compile(r"(하셨던|하셨는|하신\s*경험|진행하신|진행하셨|담당하신|담당하셨|맡으셨|맡았던|참여하신|참여하셨|수행하신|수행하셨|경험하신|구축하신|구축하셨|개발하신|개발하셨)")
+
+
+def _premise_violation(nq, facts, job, snapshot):
+    """사내문서 사실(공고·이력서에 없는 문구)을 쓰면서 과거 경험을 전제하면 True. 지원 직무를 경력처럼 전제해도 True."""
+    role = (job.get("role_name") or "").strip()
+    if role and re.search(re.escape(role) + r"\s*(?:이)?(?:로|으로|으로서|로서)\s*(?:근무|일하|일했|재직|활동)", nq):
+        return True
+    base = _info_squash(job, snapshot)
+    doc_only = [f for f in facts if re.sub(r"\s+", "", f.lower()) not in base]
+    return bool(doc_only and PAST_PREMISE.search(nq))
+
+
+def contextualize_job_rag(q, job, snapshot, intent, context, refs, bodies, forbid_terms=()):
+    """직무 문항 Dual RAG(2026-11-16): 질문 은행 문항(Redis) + 공개판 사내문서 맥락(Chroma) + 공고 + 이력서로 다시 쓴다.
+    반환 {text, company_facts, doc_refs} | None. None이면 호출 쪽이 기존 contextualize_job(공고·이력서만)으로 내려간다.
+    재생성하지 않는다(규칙에 한 번 걸리면 None). 검사 = contextualize_rag와 같은 사내문서 규칙 + 이력서 근거:
+      길이 10~160 · 한 문장 · BLOCKLIST · 금지 용어 · 마스킹 표식/가명 · 면접 방식 질문 ·
+      company_facts ⊂ (공고 + 주입 조각 본문) · doc_refs ⊂ 주입 조각 ID(빈 목록이면 사내문서 미사용 → None) ·
+      영문·숫자 토큰과 used_terms ⊂ (은행 원문 + 조각 본문 + 공고 + 이력서) · 허위 경험 전제(_premise_violation) 없음.
+    사내문서는 질문의 맥락·근거로만 쓴다 — 이력서 근거 검사(_tokens_ok의 snapshot)는 지원자 경험의 유일한 근거다."""
+    from .agents import internal_forbid
+    if not forbid_terms or not context:
+        return None
+    system = prompts.load("generate/job_question_rag", company_name=job.get("company_name") or "우리 회사",
+                          role_name=job.get("role_name") or "", company_intro=(job.get("company_intro") or "")[:400],
+                          duties=(job.get("duties") or "")[:400], requirements=(job.get("requirements") or "")[:300],
+                          internal_context=context, intent=intent or "원래 질문과 같음",
+                          resume_keywords=", ".join(resume_keywords(snapshot)) or "(없음)", seconds=config.QUESTION_SECONDS)
+    try:
+        out = llm.chat_json(system, f"질문 은행 문항: {q}", JOB_RAG_SCHEMA, timeout=90, temperature=0.4)
+    except llm.LLMError:
+        return None
+    nq = (out.get("question") or "").strip()
+    facts = [f.strip() for f in out.get("company_facts") or [] if f and f.strip()]
+    drefs = [r.strip() for r in out.get("doc_refs") or [] if r and r.strip()]
+    used = [t for t in out.get("used_terms") or [] if t and t.strip()]
+    if not (10 <= len(nq) <= 160) or not one_sentence(nq) or BLOCKLIST.search(nq):
+        return None
+    if internal_forbid.find_terms(nq, forbid_terms) or any(internal_forbid.find_terms(f, forbid_terms) for f in facts):
+        return None
+    if internal_forbid.masked_hits(nq) or any(internal_forbid.masked_hits(f) for f in facts) or asks_interview_method(nq):
+        return None
+    allowed = re.sub(r"\s+", "", " ".join([job.get("company_intro") or "", job.get("duties") or "",
+                                            job.get("requirements") or ""] + list(bodies)))
+    if not all(re.sub(r"\s+", "", f) in allowed for f in facts):
+        return None
+    if not drefs or not set(drefs) <= set(refs):
+        return None
+    if _bad_tokens(nq, " ".join([q] + list(bodies)), job, snapshot, used):
+        return None
+    if _premise_violation(nq, facts, job, snapshot):
+        return None
+    return {"text": nq, "company_facts": facts, "doc_refs": drefs}
+
+
 # ---------- RSQ: resume-based questions ----------
 def _year(period):
     ys = re.findall(r"(19|20)\d{2}", period or "")

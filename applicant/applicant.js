@@ -34,6 +34,11 @@ async function openMedia() {
 function stopMedia() {
   if (media.stream) { media.stream.getTracks().forEach((t) => t.stop()); media.stream = null; }
 }
+/* 카메라 트랙만 끈다(마이크는 유지). 코딩 단계처럼 미리보기가 필요 없을 때 카메라 표시등까지 꺼지게 */
+function stopVideo() {
+  if (!media.stream) return;
+  media.stream.getVideoTracks().forEach((t) => { t.stop(); media.stream.removeTrack(t); });
+}
 
 function onLeave(fn) { cleanup.push(fn); }
 function go(hash) { location.hash = hash; }
@@ -757,9 +762,12 @@ async function envView(appId) {
       const v = document.createElement('video'); v.autoplay = true; v.muted = true; v.playsInline = true; v.srcObject = new MediaStream(r.stream.getVideoTracks());
       $('#cam').innerHTML = ''; $('#cam').appendChild(v);
       v.onloadeddata = () => mark('cam', true);
-    } else { // 임시(2026-10-29, 사용자 결정): 카메라가 없어도 통과. 원래 APP-06은 카메라 필수
-      camReal = false; mark('cam', true, '없음 · 생략');
-      $('#cam').textContent = '카메라 없이 진행합니다';
+    } else if (isTestApplicant()) { // 2026-11-16 사용자 결정: 카메라 필수(APP-06). 테스트 계정(이지원)만 카메라 없이 통과
+      camReal = false; mark('cam', true, '없음 · 생략(테스트 계정)');
+      $('#cam').textContent = '테스트 계정은 카메라 없이 진행합니다';
+    } else {
+      camReal = false; // show('cam', …)가 이미 실패로 표시함 → 카메라를 켜야 면접을 시작할 수 있다
+      $('#cam').textContent = '카메라를 켜야 면접을 시작할 수 있습니다';
     }
     await fillDevices();
   }
@@ -920,13 +928,28 @@ async function interviewView(attemptId) {
     clearInterval(qTimer); clearTimeout(blurTimer); speechSynthesis.cancel(); stopQuestionAudio(); stopRecording(true);
     if (codingCtx) codingCtx.stop();
     if (wave) { wave.stop(); wave = null; }
+    stopMedia(); // 면접 화면을 벗어나면 카메라·마이크 트랙을 모두 끈다(카메라는 표시만, 녹화·저장 없음)
   });
+  const onPageHide = () => stopMedia();
+  window.addEventListener('pagehide', onPageHide);
+  onLeave(() => window.removeEventListener('pagehide', onPageHide));
 
+  /* 카메라 미리보기 창은 면접 화면에 들어올 때 한 번만 만들고, 질문·꼬리질문·답변이 바뀌어도 다시 그리지 않는다(같은 자리 고정) */
+  const camFloat = document.createElement('div');
+  camFloat.className = 'cam-float'; camFloat.hidden = true;
+  camFloat.innerHTML = '<div class="cam" id="cam">카메라 연결 중</div><div class="cam-note">카메라 미리보기 · 녹화·저장 안 함</div>';
+  document.body.appendChild(camFloat);
+  onLeave(() => camFloat.remove());
+  const placeCam = () => { const bar = document.querySelector('.devbar'); camFloat.style.top = ((bar && bar.offsetParent ? bar.offsetHeight : 0) + 16) + 'px'; };
+
+  const liveVideo = () => (media.stream ? media.stream.getVideoTracks().filter((t) => t.readyState === 'live') : []);
   async function ensureCamera() {
-    if (media.stream && media.stream.active) return media.stream;
+    // 카메라 필수(2026-11-16): 면접 단계에서 카메라 트랙이 없으면 다시 연다. 코딩 단계·테스트 계정은 마이크만 있으면 됨
+    if (media.stream && media.stream.active && (liveVideo().length || st.status === 'coding' || isTestApplicant())) return media.stream;
+    stopMedia();
     const r = await openMedia();
     media.stream = r.stream;
-    return r.mic ? null : media.stream; // 카메라는 임시로 선택(env 점검 참고)
+    return r.mic ? null : media.stream;
   }
   /* v0.9 INT-03: 답변 시간 동안 마이크만 녹음한다(카메라 영상은 넣지 않음). 제출할 때 서버로 보내 글로 바꾸고, 파일은 저장하지 않는다 */
   function startRecording() {
@@ -957,11 +980,15 @@ async function interviewView(attemptId) {
     if (qAudio) { try { qAudio.pause(); URL.revokeObjectURL(qAudio.src); } catch (_) { /* ignore */ } qAudio = null; }
   }
 
+  /* 카메라 미리보기: srcObject로 화면에 표시만 한다. MediaRecorder·캔버스 캡처·업로드·저장 없음 */
   function attachCam() {
-    const box = $('#cam');
-    if (!box || !media.stream) return;
-    if (!media.stream.getVideoTracks().length) { box.textContent = '카메라 없음'; return; }
-    const v = document.createElement('video'); v.autoplay = true; v.muted = true; v.playsInline = true; v.srcObject = media.stream;
+    const box = camFloat.querySelector('.cam');
+    placeCam(); camFloat.hidden = false;
+    const vt = liveVideo();
+    if (!vt.length) { box.textContent = '카메라가 연결되지 않았습니다 · 면접은 계속 진행됩니다'; return; }
+    const cur = box.querySelector('video');
+    if (cur && cur.srcObject && cur.srcObject.getVideoTracks()[0] === vt[0]) return; // 같은 카메라면 그대로 둠(깜빡임 없음)
+    const v = document.createElement('video'); v.autoplay = true; v.muted = true; v.playsInline = true; v.srcObject = new MediaStream(vt);
     box.innerHTML = ''; box.appendChild(v);
   }
 
@@ -1032,6 +1059,7 @@ async function interviewView(attemptId) {
     clearInterval(qTimer);
     if (codingCtx) { codingCtx.stop(); codingCtx = null; }
     if (wave) { wave.stop(); wave = null; }
+    if (st.status !== 'interview') camFloat.hidden = true; // 미리보기는 면접 질문·답변 단계에서만
     if (st.status === 'interrupted') return renderInterrupted();
     if (['completed', 'terminated', 'cancelled'].includes(st.status)) return renderEnded();
     if (st.status === 'interview') return renderInterview();
@@ -1061,8 +1089,9 @@ async function interviewView(attemptId) {
       <div class="row"><span class="pill dim" id="re-dev">장치 재점검 중</span></div>
       <button class="btn primary lg" id="resume" disabled>전체 화면으로 이어가기</button></div></div>`;
     ensureCamera().then((s) => {
-      const okDev = !!s;
-      $('#re-dev').textContent = okDev ? '마이크 정상' : '마이크 권한이 필요합니다';
+      const camOk = liveVideo().length > 0 || isTestApplicant(); // 카메라 필수(테스트 계정만 예외)
+      const okDev = !!s && camOk;
+      $('#re-dev').textContent = !s ? '마이크 권한이 필요합니다' : !camOk ? '카메라를 켜야 이어갈 수 있습니다' : '마이크·카메라 정상';
       $('#re-dev').className = 'pill ' + (okDev ? 'on' : 'dim');
       $('#resume').disabled = !okDev;
     });
@@ -1077,14 +1106,14 @@ async function interviewView(attemptId) {
     const q = st.question;
     if (!q) return;
     current = q;
-    view.innerHTML = `<div class="wrap" style="max-width:1000px">
-      <div class="between" style="margin-bottom:14px"><span class="logo">headhunter<span class="accent">AI</span></span>
+    view.innerHTML = `<div class="wrap iv-wrap" style="max-width:1000px">
+      <div class="between iv-head" style="margin-bottom:14px"><span class="logo">headhunter<span class="accent">AI</span></span>
         <span class="row"><span class="pill neon">${q.seq} / ${st.total}${q.followup ? ' · 꼬리질문' : ''}</span>
         ${st.exit_count ? `<span class="pill">화면 이탈 ${st.exit_count}회</span>` : ''}</span></div>
       <div class="stage">
         <div class="between" style="align-items:flex-start;gap:20px">
           <div style="flex:1;min-width:260px" class="col"><div class="small">${q.followup ? '꼬리질문' : `질문 ${q.seq}`}</div><div class="qbox" id="qtext">${esc(q.text)}</div></div>
-          <div class="col" style="justify-items:center"><div class="cam" id="cam">카메라</div><div class="timer idle" id="timer">${q.time_limit}</div></div>
+          <div class="col" style="justify-items:center"><div class="timer idle" id="timer">${q.time_limit}</div></div>
         </div>
         <div id="phase" class="small">질문을 읽어 드리고 있습니다…</div>
         <div class="voice"><canvas id="wave"></canvas><span class="voice-label" id="voice-label">대기</span></div>
@@ -1207,6 +1236,7 @@ async function interviewView(attemptId) {
   }
 
   async function renderCoding() {
+    stopVideo(); // 코딩 단계는 카메라 미리보기 없음 → 카메라 트랙을 끄고 마이크만 유지(2026-11-16 사용자 결정)
     const data = await get(`/api/attempts/${attemptId}/coding`);
     let idx = 0;
     const codes = Object.fromEntries(data.problems.map((p) => [p.problem_id, p.code]));

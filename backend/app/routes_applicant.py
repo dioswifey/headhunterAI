@@ -243,9 +243,10 @@ class EnvCheck(BaseModel):
 @router.post("/applications/{app_id}/env")
 def env_check(app_id: int, body: EnvCheck, user=Depends(security.applicant)):
     a = _own_app(app_id, user)
-    # 임시(2026-10-29, 사용자 결정): 카메라는 없어도 통과. 원래 APP-06은 카메라 필수. 카메라 없이 통과하면 감사 로그 action=env_check_no_camera
-    if not all(v for k, v in body.model_dump().items() if k != "cam"):
-        raise HTTPException(400, "모든 점검 항목을 통과해야 시작할 수 있습니다.")
+    # 2026-11-16 사용자 결정: 카메라 필수(APP-06). 테스트 계정(이지원)만 카메라 없이 통과 → 감사 로그 action=env_check_no_camera
+    is_test = user["email"] == config.TEST_APPLICANT_EMAIL
+    if not all(v for k, v in body.model_dump().items() if k != "cam" or not is_test):
+        raise HTTPException(400, "카메라를 포함한 모든 점검 항목을 통과해야 시작할 수 있습니다.")
     db.audit(user["id"], "env_check" if body.cam else "env_check_no_camera", "application", app_id)
     if a["step"] not in ("env", "ready"):
         raise HTTPException(400, "이력서 확인을 먼저 완료해 주세요.")

@@ -52,12 +52,16 @@ class GenState(TypedDict, total=False):
     log: list                   # 노드별 처리 기록(문장 원문 없이 종류·개수만)
     # 사내문서 RAG ② (ADLC v0.7 6.14.3, 2026-11-13 구현). 조각 본문은 State 안에만 — 로그·DB에는 조각 ID만(B-08)
     query_vector: list          # retrieve가 만든 질의 벡터(4-B가 재사용 → 임베딩 추가 호출 0회)
+    query_vectors: list         # Multi-Query 벡터 목록(2026-11-16, ADLC 6.18). [0] = query_vector(기존 단일 쿼리). 단일 경로면 길이 1
+    mq_report: dict             # {mode: baseline|multi|fallback|off, queries, embed_calls, reason} — 쿼리 문장 원문 없음
     internal_hits: list         # [{chunk_id, ref, doc_id, sec, doc_title, sec_title, disclosure, dept, sim, text}] 상위 4개까지
     internal_context: str       # 출처 머리글이 붙은 조립 문자열(2,000자 상한). 비면 기존 contextualize 경로
     internal_refs: list         # 주입한 조각 ID(doc_id#sec) — doc_refs 검사 기준
     forbid_terms: list          # Redis idoc:forbid 용어(질문 검사용 전부)
     forbid_ready: bool          # 사전을 읽었는가. False면 사내문서 경로 미사용(보수적)
     guard_report: dict          # 7-B {checked, blocked, reasons{종류: 건수}, model} — 원문 없음
+    retrieve_report: dict       # retrieve 카테고리별 출처 {personality|job|company|resume_bank: redis|db|md|-, error?} (2026-11-16)
+    dual_report: dict           # Dual RAG 결과 {mode: dual|redis_only|chroma_only|safe, redis, chroma, job_rag, company_rag} (ADLC 6.18.3)
 
 
 def _snapshot_squash(snapshot):
@@ -145,12 +149,77 @@ def _redis_query_vector(s):
     return llm.embed([QC.QUERY_INSTRUCT + query])[0]
 
 
+def _multi_queries(s):
+    """Multi-Query(2026-11-16, ADLC 6.18) — 규칙으로 만드는 관점별 검색 쿼리. LLM을 쓰지 않는다(HyDE 아님).
+    ① 기존 단일 쿼리(공고 직무명·업무·요건 + A5 키워드 12개, `question_chain._query` 그대로) — 언제나 맨 앞
+    ② 공고 관점: 직무명·주요 업무·자격 요건만(이력서 키워드 없이)
+    ③ 지원자 관점: 직무명 + A5 키워드 + 이력서 후보 항목(이름·역할·기술·내용 앞 160자) 3개까지
+    같은 문장은 한 번만, 최대 config.RAG_MQ_N개. 각 1,200자 상한(①과 같은 기준)."""
+    from . import question_chain as QC
+    job = s["job"]
+    kws = (s.get("keyword_report") or {}).get("keywords") or [k["term"] for k in s.get("keywords", [])]
+    q1 = QC._query({"job": job, "resume_keywords": kws[:12]})
+    q2 = " ".join(filter(None, [job.get("role_name"), job.get("duties"), job.get("requirements")]))[:1200]
+    items = []
+    for c in (s.get("candidates") or [])[:3]:
+        it = c.get("item") or {}
+        items.append(" ".join(filter(None, [c.get("label"), it.get("role"), " ".join(it.get("tech", []) or []),
+                                            (it.get("detail") or "")[:160]])))
+    q3 = " ".join(filter(None, [job.get("role_name"), ", ".join(kws[:12])] + items))[:1200]
+    out = []
+    for q in (q1, q2, q3):
+        q = (q or "").strip()
+        if q and q not in out:
+            out.append(q)
+    return out[:max(1, config.RAG_MQ_N)]
+
+
+def _query_vectors(s):
+    """(vectors, report). Multi-Query가 꺼져 있으면 기존 단일 쿼리 그대로(임베딩 1회).
+    켜져 있으면 쿼리 N개를 한 번의 묶음 호출로 임베딩한다. 그 호출이 실패하거나 쿼리가 1개뿐이면
+    기존 단일 쿼리로 내려간다(fallback). 단일 쿼리마저 실패하면 예외를 올린다(→ retrieve가 DB 은행).
+    스위치가 꺼져 있으면 기존 _redis_query_vector만 부른다(새 import·호출 없음 — 기존 동작과 같음)."""
+    if config.RAG_MULTI_QUERY:
+        tried = False
+        try:
+            from . import question_chain as QC
+            qs = _multi_queries(s)
+            if len(qs) > 1:
+                tried = True
+                vecs = llm.embed([QC.QUERY_INSTRUCT + q for q in qs])    # 한 번의 HTTP 호출(묶음)
+                if len(vecs) == len(qs):
+                    return vecs, {"mode": "multi", "queries": len(qs), "embed_calls": 1}
+            reason = "쿼리 1개" if not tried else "벡터 수 불일치"
+        except Exception as e:   # noqa: BLE001 — 임베딩·조립 실패 → 기존 단일 쿼리
+            reason = type(e).__name__
+        return [_redis_query_vector(s)], {"mode": "fallback", "queries": 1, "embed_calls": 2 if tried else 1,
+                                          "reason": reason}
+    return [_redis_query_vector(s)], {"mode": "baseline", "queries": 1, "embed_calls": 1}
+
+
+def _knn_fused(vectors, roles, cat, k):
+    """벡터가 1개면 기존 KNN 그대로. 여러 개면 쿼리마다 같은 필터·깊이로 병렬 KNN → 문서 ID 기준 RRF(상위 k개).
+    일부 쿼리가 실패하면 성공한 목록만 합치고, 모두 실패하면 예외(→ 호출 쪽 DB 은행)."""
+    from .. import vectorstore
+    kw = dict(role_codes=roles, categories=[cat], translated_only=True)
+    if len(vectors) == 1:
+        return vectorstore.knn(vectors[0], k=k, **kw)
+    from . import rag_fusion
+    res = rag_fusion.parallel(lambda v: vectorstore.knn(v, k=k, **kw), [(v,) for v in vectors])
+    lists = [r for ok, r in res if ok]
+    if not lists:
+        raise res[0][1]
+    return rag_fusion.rrf(lists, key=lambda h: h["doc_id"], k=config.RAG_RRF_K, limit=k)
+
+
 def _pick_redis(vector, role_code, cat, n, used):
     """Redis 질문 은행(번역 에이전트를 거친 한·영 문항)에서 가까운 순으로 후보 n×2개 → 그중 n개를 무작위로.
-    직무 질문은 지원 직무 문항만, 인성·기업 질문은 공통 + 지원 직무. 모자라면 None(→ DB 은행)."""
-    from .. import vectorstore
+    직무 질문은 지원 직무 문항만, 인성·기업 질문은 공통 + 지원 직무. 모자라면 None(→ DB 은행).
+    vector: 벡터 1개(기존) 또는 벡터 목록(Multi-Query, 2026-11-16) — 목록이면 RRF로 합친 순위를 쓴다."""
+    vectors = vector if (vector and isinstance(vector[0], (list, tuple))) else [vector]
     roles = [role_code] if cat == "job" else ["common", role_code]
-    hits = vectorstore.knn(vector, k=max(16, n * 6), role_codes=roles, categories=[cat], translated_only=True)
+    depth = max(16, n * 6)
+    hits = _knn_fused(vectors, roles, cat, max(depth, config.RAG_MQ_K) if len(vectors) > 1 else depth)
     pool, seen = [], set(used)
     for h in hits:
         b = {"id": None, "doc_id": h["doc_id"], "text": (h.get("question_ko") or h.get("question") or "").strip(),
@@ -177,10 +246,12 @@ def retrieve(s: GenState) -> GenState:
     Redis·임베딩 실패, 모델 미사용, 해당 카테고리 문항 부족이면 그 카테고리만 DB 질문 은행(적게 쓴 순·dup_group 중복 제거)."""
     used, picks, src = set(), {}, {}
     need = dict(Q.PLAN)
-    vector, role = None, s["job"]["role_code"]
+    vector, vectors, role = None, None, s["job"]["role_code"]
+    mq = {"mode": "off"}
     if s["use_llm"]:
         try:
-            vector = _redis_query_vector(s)
+            vectors, mq = _query_vectors(s)       # Multi-Query + RRF(6.18)면 여러 개, 아니면 1개
+            vector = vectors[0]
         except Exception as e:                      # Redis·임베딩 모델이 없어도 면접은 진행
             src["error"] = type(e).__name__
     order = (["resume_fallback"] if s["resume_fallback"] else []) + ["personality", "job", "company"]
@@ -189,7 +260,7 @@ def retrieve(s: GenState) -> GenState:
         got = None
         if vector is not None:
             try:
-                got = _pick_redis(vector, role, cat, n, used)
+                got = _pick_redis(vectors if vectors and len(vectors) > 1 else vector, role, cat, n, used)
             except Exception as e:
                 src["error"] = type(e).__name__
         src[key] = "redis" if got else "db"
@@ -204,9 +275,12 @@ def retrieve(s: GenState) -> GenState:
     if not s["resume_fallback"]:                    # 이력서 질문 3개마다 질문 은행 참고 문항(RAG)
         picks["resume_bank"] = _resume_bank_refs(s, role, used) if s["use_llm"] else []
         src["resume_bank"] = "redis" if picks["resume_bank"] and any(b and b.get("doc_id") for b in picks["resume_bank"]) else "-"
-    return {"picks": picks, "query_vector": vector,
+    return {"picks": picks, "query_vector": vector, "query_vectors": vectors or ([vector] if vector is not None else []),
+            "mq_report": mq, "retrieve_report": dict(src),
             "log": s["log"] + ["retrieve: " + " · ".join(f"{k} {len(v)}({src.get(k)})" for k, v in picks.items())
-                               + (f" · redis 오류 {src['error']}" if "error" in src else "")]}
+                               + (f" · redis 오류 {src['error']}" if "error" in src else "")
+                               + f" · 쿼리 {mq.get('mode')} {mq.get('queries', 0)}개"
+                               + (f"({mq['reason']})" if mq.get("reason") else "")]}
 
 
 def retrieve_internal(s: GenState) -> GenState:
@@ -224,8 +298,9 @@ def retrieve_internal(s: GenState) -> GenState:
         return done("꺼짐(INTERNAL_DOCS_RAG=0)")
     if not s.get("use_llm") or s.get("query_vector") is None:
         return done("질의 벡터 없음 → 사용 안 함")
-    if not s.get("picks", {}).get("company"):
-        return done("기업 문항 없음 → 사용 안 함")
+    picks = s.get("picks", {})
+    if not (picks.get("company") or (config.RAG_DUAL_JOB and picks.get("job"))):
+        return done("기업·직무 문항 없음 → 사용 안 함")
     try:
         ok, why = internal_forbid.rag_ready()
         if not ok:
@@ -235,8 +310,18 @@ def retrieve_internal(s: GenState) -> GenState:
         return done(f"금지 용어 사전 없음({type(e).__name__}) → 사용 안 함")
     try:
         # 조각 검사는 일반 단어(주소·전화번호) 제외(chunk_terms) — 질문 문장 검사(_rule_ok·7-B·A15)는 terms 전부
-        r = internal_search.search(s["query_vector"], role_code=s["job"].get("role_code"),
-                                   forbid_terms=internal_forbid.chunk_terms(terms))
+        vecs = s.get("query_vectors") or [s["query_vector"]]
+        how, r = "단일", None
+        if len(vecs) > 1:                              # Multi-Query + RRF(6.18). 실패하면 기존 단일 쿼리로
+            try:
+                r = internal_search.search_multi(vecs, role_code=s["job"].get("role_code"),
+                                                 forbid_terms=internal_forbid.chunk_terms(terms))
+                how = f"RRF {r['mq']['ok']}/{r['mq']['queries']}"
+            except Exception:  # noqa: BLE001
+                r, how = None, "RRF 실패 → 단일"
+        if r is None:
+            r = internal_search.search(s["query_vector"], role_code=s["job"].get("role_code"),
+                                       forbid_terms=internal_forbid.chunk_terms(terms))
     except Exception as e:  # noqa: BLE001
         return done(f"검색 오류 {type(e).__name__} → 사용 안 함", forbid_terms=terms, forbid_ready=True)
     hits = []
@@ -255,7 +340,7 @@ def retrieve_internal(s: GenState) -> GenState:
     ctx = "\n\n".join(f"[근거 {h['ref']} · {h['doc_title']} > {h['sec_title']}]\n{h['text']}" for h in hits)
     refs = list(dict.fromkeys(h["ref"] for h in hits))
     return {"internal_hits": hits, "internal_context": ctx, "internal_refs": refs, "forbid_terms": terms, "forbid_ready": True,
-            "log": s["log"] + [f"retrieve_internal: {len(hits)}조각 · " + ", ".join(refs)]}
+            "log": s["log"] + [f"retrieve_internal: {len(hits)}조각({how}) · " + ", ".join(refs)]}
 
 
 def _enrich_character(b):
@@ -330,14 +415,19 @@ def generate(s: GenState) -> GenState:
                 r = {"text": tpl, "resume_ref": ref, "gen_method": "template"}
             drafts.append({"category": "resume", "eval_items": Q.EVAL_ITEMS["resume"], "bank_id": None, "orig": tpl,
                            "intent": "이력서 항목의 " + Q.ANGLES[angle], **r})
-    n_rag = 0
+    n_rag, rag_by = 0, {"job": 0, "company": 0}
     for cat in ("job", "company"):
         for b in s["picks"].get(cat, []):
             rag = None
             if not use_llm:
                 text = b["text"]
             elif cat == "job":
-                text = Q.contextualize_job(b["text"], s["job"], s["snapshot"], b.get("subcategory") or "")
+                if config.RAG_DUAL_JOB and s.get("internal_context") and s.get("forbid_ready"):
+                    # Dual RAG(6.18.3): 은행 문항(Redis) + 사내문서 맥락(Chroma) + 공고 + 이력서. 실패하면 기존 섞어 쓰기
+                    rag = Q.contextualize_job_rag(b["text"], s["job"], s["snapshot"], b.get("subcategory") or "",
+                                                  s["internal_context"], s.get("internal_refs") or [],
+                                                  [h["text"] for h in s.get("internal_hits") or []], s.get("forbid_terms") or [])
+                text = rag["text"] if rag else Q.contextualize_job(b["text"], s["job"], s["snapshot"], b.get("subcategory") or "")
             else:
                 if s.get("internal_context") and s.get("forbid_ready"):   # A15: 공개판 사내문서 근거로 회사 맞춤
                     rag = Q.contextualize_rag(b["text"], s["job"], b.get("subcategory") or "", s["internal_context"],
@@ -348,9 +438,16 @@ def generate(s: GenState) -> GenState:
                  **_bank_fields(b), "intent": b.get("subcategory") or ""}
             if rag:
                 n_rag += 1
+                rag_by[cat] += 1
                 d.update(company_facts=rag["company_facts"], doc_refs=rag["doc_refs"])
             drafts.append(d)
-    return {"drafts": drafts, "log": s["log"] + [f"generate: {len(drafts)}문항" + (f" · 사내문서 근거 {n_rag}" if n_rag else "")]}
+    rr = s.get("retrieve_report") or {}
+    redis_ok = any(rr.get(k) == "redis" for k in ("personality", "job", "company", "resume_bank"))
+    chroma_ok = bool(s.get("internal_context") and s.get("forbid_ready"))
+    mode = {(True, True): "dual", (True, False): "redis_only", (False, True): "chroma_only", (False, False): "safe"}[(redis_ok, chroma_ok)]
+    dual = {"mode": mode, "redis": redis_ok, "chroma": chroma_ok, "job_rag": rag_by["job"], "company_rag": rag_by["company"]}
+    return {"drafts": drafts, "dual_report": dual,
+            "log": s["log"] + [f"generate: {len(drafts)}문항" + (f" · 사내문서 근거 {n_rag}" if n_rag else "") + f" · RAG {mode}"]}
 
 
 PHIL_SCHEMA = {"type": "object", "properties": {
@@ -492,7 +589,8 @@ def guard_disclosure(s: GenState) -> GenState:
             why.append("facts_unmatched")
         if not set(d["doc_refs"]) <= injected:
             why.append("doc_ref_invalid")
-        if Q.BLOCKLIST.search(d["text"]) or Q._bad_tokens(d["text"], " ".join([d["orig"]] + bodies), job, {}):
+        snap = (s.get("snapshot") or {}) if d["category"] == "job" else {}   # 직무 Dual RAG 문항은 이력서 토큰 허용(6.18.3)
+        if Q.BLOCKLIST.search(d["text"]) or Q._bad_tokens(d["text"], " ".join([d["orig"]] + bodies), job, snap):
             why.append("rule")
         if not why and s.get("use_llm") and REVIEW:
             try:
@@ -559,7 +657,8 @@ def generate_set(application, use_llm=True):
     out = GENERATION.invoke({"application": application, "use_llm": use_llm},
                             {"run_name": "question_graph", "tags": ["graph1", "generate"], "metadata": {"application_id": application["id"]}})
     return out["final_questions"], {"log": out.get("log", []), "keyword_report": out.get("keyword_report", {}),
-                                    "internal_refs": out.get("internal_refs", []), "guard_report": out.get("guard_report", {})}
+                                    "internal_refs": out.get("internal_refs", []), "guard_report": out.get("guard_report", {}),
+                                    "dual_report": out.get("dual_report", {}), "mq_report": out.get("mq_report", {})}
 
 
 # ======================= B. 면접 루프 (답변 1개마다 한 걸음) =======================

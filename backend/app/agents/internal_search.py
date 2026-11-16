@@ -61,25 +61,24 @@ def _strip_code(body, meta):
     return CODE_RE.sub("[코드 생략]", body) if meta.get("has_code") else body
 
 
-def search(vector, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid_terms=None):
-    """반환: {context, refs, hits}. 근거가 없으면 context="" (호출 쪽이 공고 정보만으로 생성).
+def _where():
+    return {"$and": [{"disclosure": {"$eq": "public"}},
+                     {"status": {"$in": list(ALLOWED_STATUS)}}]}
 
-    forbid_terms(2026-11-13, 6.13.6 ⑧): 전 문서 금지 용어 사전 `idoc:forbid`(`agents.internal_forbid.load_terms`).
-    주면 조각 자신의 forbid_terms에 더해 이 용어가 본문에 있는 조각도 버린다. None이면 기존 동작(평가 도구 호환)."""
-    where = {"$and": [{"disclosure": {"$eq": "public"}},
-                      {"status": {"$in": list(ALLOWED_STATUS)}}]}
-    try:
-        hits = internal_store.query_public(vector, k=k, where=where)
-    except Exception:
-        return {"context": "", "refs": [], "hits": []}      # Chroma 실패 → 사내문서 없이 진행
 
+def _ranked(vector, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid_terms=None):
+    """벡터 1개 → 안전 조건(하한·금지 용어)을 통과한 조각을 규칙 재순위한 목록. Chroma 오류는 그대로 올린다."""
+    hits = internal_store.query_public(vector, k=k, where=_where())
     hits = [h for h in hits if h["sim"] >= min_sim]
     hits = [h for h in hits if not _forbidden(h["document"], h["metadata"])]
     if forbid_terms:
         from . import internal_forbid
         hits = [h for h in hits if not internal_forbid.find_terms(h["document"], forbid_terms)]
-    hits = _rerank(hits, role_code, level_band)
+    return _rerank(hits, role_code, level_band)
 
+
+def _assemble(hits):
+    """순위대로 솎기(문서당 2조각 · 상위 4조각 · 2,000자) → 컨텍스트 조립."""
     picked, per_doc, total = [], {}, 0
     for h in hits:
         m = h["metadata"]
@@ -101,4 +100,34 @@ def search(vector, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid
         ref = f"{m['doc_id']}#{m.get('sec', '')}"
         refs.append(ref)
         blocks.append(f"[근거 {ref} · {m.get('doc_title', '')} > {m.get('sec_title', '')}]\n{h['body']}")
-    return {"context": "\n\n".join(blocks), "refs": refs, "hits": picked}
+    return {"context": "\n\n".join(blocks), "refs": refs, "hits": picked, "ranked": [h["id"] for h in hits]}
+
+
+def search(vector, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid_terms=None):
+    """반환: {context, refs, hits, ranked}. 근거가 없으면 context="" (호출 쪽이 공고 정보만으로 생성).
+
+    forbid_terms(2026-11-13, 6.13.6 ⑧): 전 문서 금지 용어 사전 `idoc:forbid`(`agents.internal_forbid.load_terms`).
+    주면 조각 자신의 forbid_terms에 더해 이 용어가 본문에 있는 조각도 버린다. None이면 기존 동작(평가 도구 호환).
+    ranked(2026-11-16): 솎기 전 재순위 목록의 조각 ID — 평가용. 기존 호출 쪽은 쓰지 않는다."""
+    try:
+        hits = _ranked(vector, role_code, level_band, k, min_sim, forbid_terms)
+    except Exception:
+        return {"context": "", "refs": [], "hits": [], "ranked": []}      # Chroma 실패 → 사내문서 없이 진행
+    return _assemble(hits)
+
+
+def search_multi(vectors, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid_terms=None, rrf_k=None):
+    """Multi-Query + RRF (2026-11-16, ADLC v0.8 6.18). 벡터마다 `_ranked`(안전 조건 → 규칙 재순위)를 병렬로 돌리고,
+    그 순위 목록들을 조각 ID 기준 RRF로 합친 뒤 기존과 같은 솎기·조립을 한다.
+    반환: search()와 같은 모양 + mq{queries, ok, failed, per_query, fused}. 모든 목록이 실패하면 RuntimeError(호출 쪽이 단일 쿼리로 대체)."""
+    from .. import config
+    from . import rag_fusion
+    res = rag_fusion.parallel(lambda v: _ranked(v, role_code, level_band, k, min_sim, forbid_terms), [(v,) for v in vectors])
+    lists = [r for ok, r in res if ok]
+    if not lists:
+        raise RuntimeError("all queries failed")
+    fused = rag_fusion.rrf(lists, key=lambda h: h["id"], k=rrf_k or config.RAG_RRF_K)
+    out = _assemble(fused)
+    out["mq"] = {"queries": len(vectors), "ok": len(lists), "failed": len(vectors) - len(lists),
+                 "per_query": [len(x) for x in lists], "fused": len(fused)}
+    return out

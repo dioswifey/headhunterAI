@@ -120,6 +120,16 @@ QGRAPH_REVIEW = os.getenv("QGRAPH_REVIEW", "1") == "1"   # 그래프 1 A5·A6 �
 # 0이면 retrieve_internal이 빈 컨텍스트를 돌려주고 guard_disclosure는 할 일이 없다(v0.6과 같은 질문 구성).
 # 1이어도 금지 용어 사전 Redis idoc:forbid가 없으면 사내문서 경로를 쓰지 않는다(`internal_docs_agent forbid`로 만든다).
 INTERNAL_DOCS_RAG = os.getenv("INTERNAL_DOCS_RAG", "1") == "1"
+# Multi-Query + RRF (ADLC v0.8 6.18, 2026-11-16). 그래프 1-A retrieve·retrieve_internal의 검색을
+# 관점이 다른 쿼리 RAG_MQ_N개(기존 단일 쿼리 포함)로 각각 검색해 RRF로 합친다. 0 = 기존 단일 쿼리(기준선).
+# 실패하면 언제나 기존 단일 쿼리로 내려간다. 기본값은 2026-11-16 전후 비교 실측으로 정했다(ADLC 6.18.5).
+RAG_MULTI_QUERY = os.getenv("RAG_MULTI_QUERY", "0") == "1"
+RAG_MQ_N = _int("RAG_MQ_N", 3)            # 쿼리 수(기존 쿼리 포함)
+RAG_MQ_K = _int("RAG_MQ_K", 16)           # 질문 은행 쿼리당 검색 깊이(기존 _pick_redis의 k와 같은 값에서 시작)
+RAG_RRF_K = _int("RAG_RRF_K", 60)         # RRF 상수 k
+# Dual RAG (2026-11-16, ADLC 6.18.3): 사내문서(Chroma) 근거를 기업 문항(A15)뿐 아니라 직무 이해도 문항 2개에도 넣는다
+# (질문 은행 Redis 문항 + 사내문서 맥락 + 공고 + 이력서 → generate/job_question_rag, 7-B 관문 대상). 0 = 기업 문항에만(기존).
+RAG_DUAL_JOB = os.getenv("RAG_DUAL_JOB", "0") == "1"
 CONSENT_VERSION = "2026-11-09.v3"   # v2: 제3자 제공 4요소·자동화된 결정 거부권·음성 삭제·국외 보관 문구 · v3: LangSmith 국외 이전(PRD V9-14)
 
-VERSIONS = {"prompt": "p-2026.11.13", "rubric": "r-1.0", "ocr": "tesseract-5 " + OCR_LANG}
+VERSIONS = {"prompt": "p-2026.11.16", "rubric": "r-1.0", "ocr": "tesseract-5 " + OCR_LANG}
