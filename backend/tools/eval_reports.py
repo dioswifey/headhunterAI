@@ -418,7 +418,7 @@ def allowed_numbers(rec):
 def ai_text(rec):
     """AI가 쓴 문장만. 코치가 템플릿(report_mail._template_coach, 코드 고정 문구 — 예: '첫 10초')이면 코치 칸은 뺀다."""
     out = {"strengths": rec["strengths"], "improvements": rec["improvements"], "summary": [rec["summary"]]}
-    if rec.get("coach_writer") == "crewai":
+    if rec.get("coach_writer") == "local":
         out.update({"coaching": [rec["coaching"]], "actions": rec["actions"]})
     return out
 
@@ -538,12 +538,12 @@ def cmd_report(a):
             cons, spread = consistency(rec)
             fb = forbidden(rec)
             jmean = round(sum(j[k] for k in RUBRIC) / len(RUBRIC), 2) if j else None
-            fields_ok = bool(rec["strengths"] and rec["improvements"] and rec["summary"].strip() and rec["coaching"].strip() and rec["actions"])
+            fields_ok = bool(rec["strengths"] and rec["improvements"] and rec["summary"].strip() and rec["coaching"].strip())
             row.update({"interview_score": rec["interview_score"], "item_scores": rec["item_scores"], "a4_quotes": a4,
                         "a4_unverified": unverified, "report_quotes": rq, "consistency": cons, "item_spread": round(spread, 2),
                         "judge_consistency": judge_consistency(rec, j), "forbidden": fb, "judge": j, "judge_mean": jmean,
                         "judge2": j2, "judge2_mean": round(sum(j2[k] for k in RUBRIC) / len(RUBRIC), 2) if j2 else None,
-                        "coach_template": rec["coach_writer"] != "crewai", "summary_template": rec["summary_template"],
+                        "coach_template": rec["coach_writer"] != "local", "summary_template": rec["summary_template"],
                         "fields_ok": fields_ok, "sec": rec["sec"]})
         rows.append(row)
     okr = [r for r in rows if r["ok"]]

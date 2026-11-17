@@ -2,7 +2,7 @@
 
 - hybrid 공고에서 담당자가 `POST /admin/applicants/{id}/decision`으로 최종 합불을 확정하면 1회 자동 발송한다(재발송 버튼 없음).
 - 메일에는 합불만 담고, 점수·강점·개선점·코딩테스트 결과는 넣지 않는다(그건 auto 전용 report_mail.py가 맡는다).
-- 메시지 문장은 CrewAI(crew/decision_notice.py)가 쓰고, 실패하면 템플릿 문구로 대체한다.
+- 메시지 문장은 agents/decision_notice.py(llm.chat_json 1회 직접 호출, 2026-11-17 CrewAI 제거)가 쓰고, 실패하면 템플릿 문구로 대체한다.
 - 발송은 베스트에포트: 실패해도 담당자의 확정 자체는 그대로 유지된다(routes_admin.decide가 호출).
 """
 import threading
@@ -25,12 +25,12 @@ def _load(attempt_id):
 
 def _message(r):
     writer = "template"
-    if config.REPORT_WRITER == "crewai":
+    if config.REPORT_WRITER == "local":
         try:
-            from .crew import decision_notice
+            from .agents import decision_notice
             out = decision_notice.write({"job": r["job_title"], "company": r["company"], "name": r["name"], "result": r["final_result"]})
             if out:
-                return out["message"], "crewai"
+                return out["message"], "local"
         except Exception:
             traceback.print_exc()
     return TEMPLATE[r["final_result"]], writer

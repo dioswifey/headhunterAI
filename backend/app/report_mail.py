@@ -2,7 +2,8 @@
 
 - 지원자가 완료·결과 화면에서 '결과 리포트 이메일로 받기'를 누르면 발송한다(자동 발송 없음, 60초 간격·응시당 5회). Gmail SMTP만.
 - 메일에는 합불을 넣지 않는다. 항목별 점수(100점 환산)·AI 면접 점수·코딩 통과 수·강점·개선점·코치 코멘트만.
-- 코치 코멘트는 CrewAI(crew/report_coach.py)가 쓰고, 실패하면 템플릿 문구로 대체한다. 숫자는 모두 코드가 만든 값이다.
+- 코치 코멘트(coaching, 정성적 코멘트 하나만, 2026-11-17 연습 과제 삭제)는 agents/report_coach.py(llm.chat_json 1회
+  직접 호출, 2026-11-17 CrewAI 제거)가 쓰고, 실패하면 템플릿 문구로 대체한다. 숫자는 모두 코드가 만든 값이다.
 - 기업 담당자에게는 메일을 보내지 않는다(대시보드에서 확인).
 """
 import html
@@ -38,24 +39,16 @@ def _facts(r):
     return {"answered": qs["answered"], "base": qs["base"] or 10, "followups": qs["followups"], "coding": coding}
 
 
-def _template_coach(items, strengths, improvements):
+def _template_coach(items):
     if report_guard.is_tie(dict(items)):   # 동점: '가장 높고 가장 낮은 항목' 문장을 쓰지 않는다
         coaching = ("이번 면접에서는 항목 간 점수 차이가 없어 특정 항목이 두드러지지 않았습니다. "
                     "항목별 비교보다 질문 의도에 맞춰 실제 경험과 근거를 들어 답하는 연습부터 해 보세요.")
-        actions = ["자주 나오는 질문 3개를 골라 '결론 → 근거 → 사례' 순서로 1분 안에 답하는 연습을 해 보세요."]
-        if improvements:
-            actions.append(f"개선점 '{improvements[0][:60]}'을(를) 보완할 실제 경험 사례를 하나 정리해 두세요.")
-        actions.append("답변을 녹음해 다시 듣고, 핵심 문장이 첫 10초 안에 나오는지 확인해 보세요.")
-        return {"coaching": coaching, "actions": actions[:3]}
+        return {"coaching": coaching}
     best = max(items, key=lambda kv: kv[1])
     worst = min(items, key=lambda kv: kv[1])
     coaching = (f"이번 면접에서는 {best[0]} 항목이 {best[1]:.0f}점으로 가장 높았고, {worst[0]} 항목이 {worst[1]:.0f}점으로 가장 낮았습니다. "
-                f"잘한 부분은 다음 면접에서도 같은 방식으로 답변하시고, {worst[0]} 항목은 아래 과제로 집중해서 연습해 보세요.")
-    actions = [f"{worst[0]}: 자주 나오는 질문 3개를 골라 '결론 → 근거 → 사례' 순서로 1분 안에 답하는 연습을 해 보세요."]
-    if improvements:
-        actions.append(f"개선점 '{improvements[0][:60]}'을(를) 보완할 실제 경험 사례를 하나 정리해 두세요.")
-    actions.append("답변을 녹음해 다시 듣고, 핵심 문장이 첫 10초 안에 나오는지 확인해 보세요.")
-    return {"coaching": coaching, "actions": actions[:3]}
+                f"잘한 부분은 다음 면접에서도 같은 방식으로 답변하시고, {worst[0]} 항목은 집중해서 연습해 보세요.")
+    return {"coaching": coaching}
 
 
 def _coach(r, items, facts):
@@ -63,18 +56,18 @@ def _coach(r, items, facts):
     if cached:
         return cached, cached.get("writer", "template")
     out, writer, reject = None, "template", None
-    if config.REPORT_WRITER == "crewai":
+    if config.REPORT_WRITER == "local":
         try:
-            from .crew import report_coach
+            from .agents import report_coach
             out = report_coach.write({"job": r["job_title"], "item_scores": {k: v for k, v in items},
                                       "interview_score": float(r["interview_score"]), "coding": facts["coding"],
                                       "strengths": r["strengths"], "improvements": r["improvements"]})
-            writer = "crewai" if out else "template"
+            writer = "local" if out else "template"
             reject = None if out else report_coach.LAST_REJECT
         except Exception as e:
             traceback.print_exc()
             reject = f"exception:{type(e).__name__}"
-    out = out or _template_coach(items, r["strengths"] or [], r["improvements"] or [])
+    out = out or _template_coach(items)
     out["writer"] = writer
     if reject:
         out["reject"] = reject      # 템플릿 대체 사유 코드만(원문 없음) — 리포트 품질 측정 M-42 원인 추적
@@ -134,8 +127,6 @@ def render(r, items, facts, coach):
         f'<tr><td width="34%" style="padding:7px 0;font-size:14px;color:#1a1a1a">{_e(k)}</td>'
         f'<td style="padding:7px 12px">{_bar(v)}</td>'
         f'<td width="52" align="right" style="padding:7px 0;font-size:14px;font-weight:700;color:#000000">{v:.0f}</td></tr>' for k, v in items)
-    actions = "".join(f'<tr><td width="22" valign="top" style="padding:5px 0;font-size:13px;font-weight:700;color:#39FF14">{i + 1}.</td>'
-                      f'<td style="padding:5px 0;font-size:14px;line-height:1.6;color:#ffffff">{_e(a)}</td></tr>' for i, a in enumerate(coach["actions"]))
     my_url = f"{config.PUBLIC_BASE_URL}/applicant/#/my"
     return f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="light only"><title>AI 면접 리포트</title></head>
@@ -159,9 +150,7 @@ def render(r, items, facts, coach):
   <tr><td style="padding:26px 32px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#000000;border-radius:14px">
     <tr><td style="padding:22px 22px 18px">
       <div style="font-size:12px;font-weight:700;letter-spacing:0.5px;color:#39FF14">AI 코치 코멘트</div>
-      <p style="margin:10px 0 0;font-size:14px;line-height:1.7;color:#ffffff">{_e(coach['coaching'])}</p>
-      <div style="font-size:12px;font-weight:700;color:#a6a6a6;margin-top:18px">다음 면접 전까지 해 볼 것</div>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px">{actions}</table></td></tr></table></td></tr>
+      <p style="margin:10px 0 0;font-size:14px;line-height:1.7;color:#ffffff">{_e(coach['coaching'])}</p></td></tr></table></td></tr>
   <tr><td align="center" style="padding:30px 32px 6px">
     <a href="{_e(my_url)}" style="display:inline-block;background:#39FF14;color:#000000;font-size:15px;font-weight:700;text-decoration:none;padding:14px 28px;border-radius:12px">마이페이지에서 보기</a></td></tr>
   <tr><td style="padding:22px 32px 30px">
@@ -180,7 +169,7 @@ def render_text(r, items, facts, coach):
     lines += ["", "[항목별 점수]"] + [f"- {k}: {v:.0f}" for k, v in items]
     lines += ["", "[잘한 부분]"] + [f"- {s}" for s in r["strengths"] or []]
     lines += ["", "[더 발전할 수 있는 부분]"] + [f"- {s}" for s in r["improvements"] or []]
-    lines += ["", "[AI 코치 코멘트]", coach["coaching"], ""] + [f"{i + 1}. {a}" for i, a in enumerate(coach["actions"])]
+    lines += ["", "[AI 코치 코멘트]", coach["coaching"]]
     lines += ["", f"마이페이지: {config.PUBLIC_BASE_URL}/applicant/#/my", "이 리포트는 1차 합격 여부와 관계없이 보내 드립니다."]
     return "\n".join(lines)
 

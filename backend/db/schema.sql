@@ -380,7 +380,7 @@ CREATE TABLE email_logs (
   kind        TEXT NOT NULL,                         -- applicant_report
   to_addr     TEXT NOT NULL,
   status      TEXT NOT NULL CHECK (status IN ('sent','failed')),
-  writer      TEXT,                                  -- crewai | template (코칭 문단 작성 경로)
+  writer      TEXT,                                  -- local | template (코칭 문단 작성 경로. 과거 행은 'crewai'로 남아있을 수 있음, 2026-11-17 CrewAI 제거)
   error       TEXT,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

@@ -76,12 +76,9 @@ SMTP_STARTTLS = os.getenv("SMTP_STARTTLS", "1") == "1"
 MAIL_FROM = os.getenv("MAIL_FROM") or (f"headhunterAI <{SMTP_USER}>" if SMTP_USER else "")  # Gmail은 로그인 계정 주소로만 발신
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:8000").rstrip("/")
 
-# CrewAI (v0.6, 리포트 메일의 코칭 문단 작성 전용). 모델 호출은 llm.chat_json을 거치고, CrewAI 자체 원격 전송(텔레메트리·추적)은 끈다
-os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
-os.environ.setdefault("CREWAI_DISABLE_TRACKING", "true")
-os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
-os.environ.setdefault("OTEL_SDK_DISABLED", "true")
-REPORT_WRITER = os.getenv("REPORT_WRITER", "crewai")  # crewai | template
+# 메일 문구 작성 (v0.11, 2026-11-17 CrewAI 제거 — 멀티에이전트·위임·도구를 쓰지 않는 1-Agent/1-Task 래퍼였음이 드러나
+# llm.chat_json 직접 호출로 통합. agents/report_coach.py · agents/decision_notice.py)
+REPORT_WRITER = os.getenv("REPORT_WRITER", "local")  # local | template
 
 # 음성 서비스 (v0.9, TRD v0.6 14.6) — Qwen3-ASR(STT)·Qwen3-TTS(TTS) 로컬 모델 컨테이너(backend/speech).
 # 비어 있거나 응답이 없으면 STT는 비상 입력란, TTS는 브라우저 내장 음성으로 대체(INT-01)

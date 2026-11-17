@@ -91,12 +91,7 @@ services:
       NAVERPAY_CLIENT_SECRET: ${NAVERPAY_CLIENT_SECRET:-}
       NAVERPAY_CHAIN_ID: ${NAVERPAY_CHAIN_ID:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
-      # CrewAI(리포트 코치): 자체 텔레메트리·추적 전송 끔
-      REPORT_WRITER: crewai
-      CREWAI_DISABLE_TELEMETRY: "true"
-      CREWAI_DISABLE_TRACKING: "true"
-      CREWAI_TRACING_ENABLED: "false"
-      OTEL_SDK_DISABLED: "true"
+      REPORT_WRITER: local   # 2026-11-17 CrewAI 제거 — llm.chat_json 직접 호출로 전환(TRD v0.10 §23.5)
     ports:
       - "8000:8000"
     volumes:
