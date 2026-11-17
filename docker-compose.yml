@@ -35,6 +35,13 @@ services:
       DEV_MODE: "1"
       # 사내문서 RAG 비상 차단 스위치(ADLC T-11, 2026-11-13). .env에 INTERNAL_DOCS_RAG=0을 넣고 up -d api로 끈다
       INTERNAL_DOCS_RAG: ${INTERNAL_DOCS_RAG:-1}
+      # 기본 질문 8개의 주 출처(2026-11-17 사용자 지시, ADLC 6.19). chroma = 사내문서 질문(A17) 우선 · redis = 옛 동작
+      RAG_QUESTION_SOURCE: ${RAG_QUESTION_SOURCE:-chroma}
+      RAG_IQ_MIN_SIM: ${RAG_IQ_MIN_SIM:-0.30}     # 사내문서 질문 검색 유사도 하한
+      RAG_IQ_REWRITE: ${RAG_IQ_REWRITE:-0}        # 1이면 사내문서 질문도 면접마다 다시 쓴다(권장 0)
+      # Multi-Query + RRF · 직무 문항 Dual RAG (ADLC 6.18, 2026-11-16 구현). 기본은 둘 다 꺼짐
+      RAG_MULTI_QUERY: ${RAG_MULTI_QUERY:-0}
+      RAG_DUAL_JOB: ${RAG_DUAL_JOB:-0}
       LLM_PROVIDER: ollama
       LLM_BASE_URL: http://host.docker.internal:11434
       LLM_MODEL: qwen3:4b

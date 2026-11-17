@@ -88,3 +88,72 @@ def query_public(vector, k=12, where=None):
         out.append({"id": cid, "document": r["documents"][0][i], "metadata": r["metadatas"][0][i],
                     "sim": 1.0 - r["distances"][0][i]})
     return out
+
+
+# ---------------- 사내문서에서 만든 '질문' 컬렉션 (A17 · A18, ADLC v0.8 6.19.4) ----------------
+# 조각(설명문)과 질문(한 문장)은 성질이 달라 **컬렉션을 따로** 둔다. 카테고리도 컬렉션으로 물리 분리한다
+# — Chroma `where` 조건에는 카테고리를 넣지 않는다(2026-11-17 사용자 지시 · QO-02·QO-14 실측: where 870 ms vs 19 ms).
+# 질문은 public 조각에서만 만든다(A17) → 메타에 disclosure=public을 남기고 검색 뒤 앱에서 다시 확인한다(B-09).
+QUESTION_BY_CAT = {"personality": "internal_questions_personality",
+                   "job": "internal_questions_job",
+                   "company": "internal_questions_company"}
+
+
+def question_collection(q_cat):
+    name = QUESTION_BY_CAT.get(q_cat)
+    if not name:
+        raise ValueError(f"알 수 없는 질문 카테고리: {q_cat}")
+    return collection(name)
+
+
+def upsert_questions(q_cat, ids, documents, metadatas, embeddings):
+    question_collection(q_cat).upsert(ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings)
+
+
+def delete_questions_of_chunk(q_cat, chunk_id):
+    """조각 1개에서 나온 질문 전부 삭제(그 조각이 바뀌거나 사라졌을 때)."""
+    question_collection(q_cat).delete(where={"chunk_id": chunk_id})
+
+
+def delete_questions_of_doc(q_cat, doc_id):
+    question_collection(q_cat).delete(where={"doc_id": doc_id})
+
+
+def question_chunk_hashes(q_cat):
+    """{chunk_id: chunk_hash} — 증분 재생성 판단용(조각 본문이 바뀌면 그 조각의 질문을 다시 만든다)."""
+    out = {}
+    got = question_collection(q_cat).get(include=["metadatas"])
+    for m in got.get("metadatas") or []:
+        if m and m.get("chunk_id"):
+            out[m["chunk_id"]] = m.get("chunk_hash")
+    return out
+
+
+def questions_all(q_cat, documents=True):
+    """감사·내보내기용 전체 목록 — [{id, metadata[, document]}]. 벡터는 읽지 않는다."""
+    got = question_collection(q_cat).get(include=["metadatas", "documents"] if documents else ["metadatas"])
+    out = []
+    for i, qid in enumerate(got.get("ids") or []):
+        rec = {"id": qid, "metadata": (got.get("metadatas") or [])[i] or {}}
+        if documents:
+            rec["document"] = (got.get("documents") or [])[i] or ""
+        out.append(rec)
+    return out
+
+
+def count_questions(q_cat):
+    return question_collection(q_cat).count()
+
+
+def query_questions(vector, q_cat, k=12, where=None):
+    """질문 컬렉션 KNN. 컬렉션 자체가 카테고리라 `where`에 카테고리를 넣지 않는다(기본 where=None).
+
+    반환: [{id, document(질문 문장), metadata, sim}] — sim = 1 - distance (`query_public`과 같은 환산).
+    """
+    r = question_collection(q_cat).query(query_embeddings=[vector], n_results=k, where=where or None,
+                                         include=["documents", "metadatas", "distances"])
+    out = []
+    for i, qid in enumerate(r["ids"][0]):
+        out.append({"id": qid, "document": r["documents"][0][i], "metadata": r["metadatas"][0][i],
+                    "sim": 1.0 - r["distances"][0][i]})
+    return out

@@ -14,8 +14,10 @@ doc_type은 재순위 **가산점**으로만 반영한다. 안전(disclosure·st
 import re
 
 from .. import internal_store
+from . import internal_qcat
 
 K = 12                     # 1차 후보 조각 수
+K_CAT = 28                 # 질문 카테고리(q_cat)로 거를 때의 1차 후보 수 — 앱에서 거르므로 넉넉히 가져온다(6.19.3 ㉯)
 MIN_SIM = 0.55             # 하한 (실측 후 확정)
 MAX_PER_DOC = 2            # 문서당 최대 조각
 TOP_N = 4                  # 최종 조각 수
@@ -30,8 +32,8 @@ PREFERRED_TYPES = {"jd": 0.04, "talent": 0.04, "project": 0.04,
 CODE_RE = re.compile(r"```.*?```", re.S)
 
 
-def _rerank(hits, role_code=None, level_band=None):
-    """점수 = sim + dept 일치 + doc_type 우선순위 + ct_band 일치 − 같은 문서 중복."""
+def _rerank(hits, role_code=None, level_band=None, q_cat=None):
+    """점수 = sim + dept 일치 + doc_type 우선순위 + q_cat 일치 + ct_band 일치 − 같은 문서 중복."""
     seen = {}
     out = []
     for h in hits:
@@ -40,6 +42,8 @@ def _rerank(hits, role_code=None, level_band=None):
         if role_code and m.get(f"dept_{role_code}"):
             score += 0.05
         score += PREFERRED_TYPES.get(m.get("doc_type", ""), 0.0)
+        if q_cat and q_cat in internal_qcat.qcat_of(m):
+            score += 0.05                     # 하드 필터 아님(6.13.6 ③) — 거르기는 _ranked가 한다
         if level_band and m.get("ct_band") == level_band:
             score += 0.02
         n = seen.get(m.get("doc_id"), 0)
@@ -66,15 +70,21 @@ def _where():
                      {"status": {"$in": list(ALLOWED_STATUS)}}]}
 
 
-def _ranked(vector, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid_terms=None):
-    """벡터 1개 → 안전 조건(하한·금지 용어)을 통과한 조각을 규칙 재순위한 목록. Chroma 오류는 그대로 올린다."""
-    hits = internal_store.query_public(vector, k=k, where=_where())
+def _ranked(vector, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid_terms=None, q_cat=None):
+    """벡터 1개 → 안전 조건(하한·금지 용어)을 통과한 조각을 규칙 재순위한 목록. Chroma 오류는 그대로 올린다.
+
+    q_cat(2026-11-17, 6.19.3): 질문 카테고리로 거른다. **Chroma `where`에 넣지 않고 앱에서 거른다** —
+    `where`는 870 ms vs 19 ms로 비싸고 실제로 거르는 조각도 없었다(QO-02·QO-14). 대신 후보 수를 K_CAT로 늘린다.
+    """
+    hits = internal_store.query_public(vector, k=max(k, K_CAT) if q_cat else k, where=_where())
     hits = [h for h in hits if h["sim"] >= min_sim]
+    if q_cat:
+        hits = [h for h in hits if internal_qcat.matches(h["metadata"], q_cat)]
     hits = [h for h in hits if not _forbidden(h["document"], h["metadata"])]
     if forbid_terms:
         from . import internal_forbid
         hits = [h for h in hits if not internal_forbid.find_terms(h["document"], forbid_terms)]
-    return _rerank(hits, role_code, level_band)
+    return _rerank(hits, role_code, level_band, q_cat)
 
 
 def _assemble(hits):
@@ -103,26 +113,29 @@ def _assemble(hits):
     return {"context": "\n\n".join(blocks), "refs": refs, "hits": picked, "ranked": [h["id"] for h in hits]}
 
 
-def search(vector, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid_terms=None):
+def search(vector, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid_terms=None, q_cat=None):
     """반환: {context, refs, hits, ranked}. 근거가 없으면 context="" (호출 쪽이 공고 정보만으로 생성).
 
     forbid_terms(2026-11-13, 6.13.6 ⑧): 전 문서 금지 용어 사전 `idoc:forbid`(`agents.internal_forbid.load_terms`).
     주면 조각 자신의 forbid_terms에 더해 이 용어가 본문에 있는 조각도 버린다. None이면 기존 동작(평가 도구 호환).
-    ranked(2026-11-16): 솎기 전 재순위 목록의 조각 ID — 평가용. 기존 호출 쪽은 쓰지 않는다."""
+    ranked(2026-11-16): 솎기 전 재순위 목록의 조각 ID — 평가용. 기존 호출 쪽은 쓰지 않는다.
+    q_cat(2026-11-17): 질문 카테고리(personality·job·company)로 조각을 좁힌다. None이면 기존 동작."""
     try:
-        hits = _ranked(vector, role_code, level_band, k, min_sim, forbid_terms)
+        hits = _ranked(vector, role_code, level_band, k, min_sim, forbid_terms, q_cat)
     except Exception:
         return {"context": "", "refs": [], "hits": [], "ranked": []}      # Chroma 실패 → 사내문서 없이 진행
     return _assemble(hits)
 
 
-def search_multi(vectors, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid_terms=None, rrf_k=None):
+def search_multi(vectors, role_code=None, level_band=None, k=K, min_sim=MIN_SIM, forbid_terms=None, rrf_k=None,
+                 q_cat=None):
     """Multi-Query + RRF (2026-11-16, ADLC v0.8 6.18). 벡터마다 `_ranked`(안전 조건 → 규칙 재순위)를 병렬로 돌리고,
     그 순위 목록들을 조각 ID 기준 RRF로 합친 뒤 기존과 같은 솎기·조립을 한다.
     반환: search()와 같은 모양 + mq{queries, ok, failed, per_query, fused}. 모든 목록이 실패하면 RuntimeError(호출 쪽이 단일 쿼리로 대체)."""
     from .. import config
     from . import rag_fusion
-    res = rag_fusion.parallel(lambda v: _ranked(v, role_code, level_band, k, min_sim, forbid_terms), [(v,) for v in vectors])
+    res = rag_fusion.parallel(lambda v: _ranked(v, role_code, level_band, k, min_sim, forbid_terms, q_cat),
+                              [(v,) for v in vectors])
     lists = [r for ok, r in res if ok]
     if not lists:
         raise RuntimeError("all queries failed")

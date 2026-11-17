@@ -6,6 +6,10 @@ def _int(name, default):
     return int(os.getenv(name, default))
 
 
+def _float(name, default):
+    return float(os.getenv(name, default))
+
+
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://headhunter:headhunter@localhost:5432/headhunter")
 DEV_MODE = os.getenv("DEV_MODE", "1") == "1"
 # 이메일 인증 메일이 아직 없어서 가입 시 인증을 자동 완료할지. 기본은 DEV_MODE와 같고, 배포에서 따로 정한다
@@ -130,6 +134,15 @@ RAG_RRF_K = _int("RAG_RRF_K", 60)         # RRF 상수 k
 # Dual RAG (2026-11-16, ADLC 6.18.3): 사내문서(Chroma) 근거를 기업 문항(A15)뿐 아니라 직무 이해도 문항 2개에도 넣는다
 # (질문 은행 Redis 문항 + 사내문서 맥락 + 공고 + 이력서 → generate/job_question_rag, 7-B 관문 대상). 0 = 기업 문항에만(기존).
 RAG_DUAL_JOB = os.getenv("RAG_DUAL_JOB", "0") == "1"
+# ── 사내문서를 기본 질문 8개의 **주 출처**로 (2026-11-17 사용자 지시, ADLC v0.8 6.19)
+# 인성·직무·기업 질문을 사내문서(Chroma)에서 미리 만들어 둔 질문 컬렉션(A17)에서 먼저 꺼내고,
+# 모자랄 때만 Redis 질문 은행 → DB 은행으로 내려간다(Redis = 백업, 목표 20% 미만).
+#   chroma = 사내문서 질문 우선(기본) · redis = 2026-11-16까지의 동작(Redis 우선)
+RAG_QUESTION_SOURCE = os.getenv("RAG_QUESTION_SOURCE", "chroma")
+RAG_IQ_MIN_SIM = _float("RAG_IQ_MIN_SIM", 0.30)   # 사내문서 질문 검색 유사도 하한. 질문↔공고는 조각↔공고보다 값이 낮다
+                                                  # (실측: Redis 인성·기업 문항도 0.27~0.50 구간, ADLC 6.19.1)
+RAG_IQ_REWRITE = os.getenv("RAG_IQ_REWRITE", "0") == "1"   # 1이면 사내문서 질문도 면접마다 다시 쓴다(A15 경로).
+                                                  # 기본 0 = 그대로 쓴다 — 다시 쓰기가 8/20만 성공했기 때문(QO-13)
 CONSENT_VERSION = "2026-11-09.v3"   # v2: 제3자 제공 4요소·자동화된 결정 거부권·음성 삭제·국외 보관 문구 · v3: LangSmith 국외 이전(PRD V9-14)
 
 VERSIONS = {"prompt": "p-2026.11.16", "rubric": "r-1.0", "ocr": "tesseract-5 " + OCR_LANG}

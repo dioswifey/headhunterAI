@@ -1,7 +1,11 @@
 """그래프 1 — 질문 생성 + 면접 루프 (ADLC v0.5 6.1 · 6.1-B, LangGraph).
 
+출처 순서(2026-11-17 사용자 지시, ADLC v0.8 6.19): 인성·직무·기업 문항은 ① **사내문서 질문 컬렉션**(A17이 미리 만들어 둔
+질문, Chroma `internal_questions_*`) → ② Redis 질문 은행(백업) → ③ DB `question_bank`·인성 md 순으로 찾는다.
+스위치 `RAG_QUESTION_SOURCE=redis`면 ①을 건너뛰어 2026-11-16까지의 동작이 된다.
+
 A. 질문 생성 그래프 GENERATION (환경 점검 중 questions.pregenerate가 부름, 결과 → applications.pregen_questions)
-   start → extract_keywords → evaluate_trust(A5, ⟲1) → retrieve(RAG ① 질문 은행) → retrieve_internal(4-B, RAG ② 사내문서)
+   start → extract_keywords → evaluate_trust(A5, ⟲1) → retrieve(RAG ① 사내문서 질문 → 질문 은행) → retrieve_internal(4-B, RAG ② 사내문서 조각)
          → generate(A2 · 기업 문항은 근거가 있으면 A15) → evaluate_philosophy(A6, ⟲2) → evaluate_answerability(A7)
          → guard_disclosure(7-B, A16 누출 관문) → finalize → END
    (4-B·7-B·A15·A16 = ADLC v0.7 6.13.6~6.14, 2026-11-13 구현. 끄기 = INTERNAL_DOCS_RAG=0)
@@ -13,7 +17,10 @@ B. 면접 루프 INTERVIEW_LOOP (2026-11-13, ADLC 6.1-B 노드 9~13 — 답변�
    체크포인트가 없거나 어긋나면 DB로 다시 만든다. 루프가 실패하면 체크포인터 없는 한 걸음 그래프 INTERVIEW_STEP으로 대체.
 
 규칙(ADLC 0~2장): 모델 호출은 llm.chat_json만. 점수·합불·응시 상태 전이는 코드. 어떤 노드가 실패해도 규칙·템플릿 경로로 끝까지 간다.
-꼬리질문 판단(judge_followup)은 ADLC/followup에서 새로 설계하는 꼬리질문 에이전트로 바꿀 자리다(노드 계약: judge(att, q, answer) → (질문, 사유) | None).
+꼬리질문 판단은 **전용 에이전트 `agents/followup_agent.py`(A3)** 가 맡는다(2026-11-17 분리). 노드 계약은 그대로
+`judge(att, q, answer) → (질문, 사유) | None`이고, 프롬프트는 `prompts/evaluate/followup_judge.md`(+ `_ideal.md`) 파일이다.
+이 모듈은 노드(`judge_followup` · `make_followup`)와 은행 참고 조회(`bank_reference` · `keyword_*`)만 들고 있고,
+판단 상수·프롬프트·판단 함수는 followup_agent에서 다시 내보낸다(기존 이름 그대로 — 평가 도구·시험 호환).
 """
 import logging
 import random
@@ -240,14 +247,45 @@ def _pick_redis(vector, role_code, cat, n, used):
     return [b for i, b in enumerate(pool) if i in keep]
 
 
+def _iq_terms():
+    """사내문서 질문을 쓸 수 있는가 + 질문 검사용 금지 용어. (terms, 사유). terms가 None이면 쓰지 않는다."""
+    if config.RAG_QUESTION_SOURCE != "chroma" or not config.INTERNAL_DOCS_RAG:
+        return None, f"source={config.RAG_QUESTION_SOURCE}" if config.INTERNAL_DOCS_RAG else "internal_docs_rag_off"
+    try:
+        from . import internal_forbid
+        ok, why = internal_forbid.rag_ready()
+        if not ok:
+            return None, why
+        return internal_forbid.load_terms(), "ready"
+    except Exception as e:  # noqa: BLE001 — 사전을 못 읽으면 쓰지 않는다(보수적, 6.13.8)
+        return None, type(e).__name__
+
+
+def _pick_internal(vectors, role_code, cat, n, used, terms):
+    """① 사내문서 질문 컬렉션(A17)에서 후보 n개 — 2026-11-17 사용자 지시로 **1순위 출처**(ADLC 6.19.5).
+    질문은 이미 A18 검증을 통과한 한 문장이라 Redis 문항과 같은 모양으로 돌아온다.
+    꺼짐·부족·오류면 None → 호출 쪽이 Redis 질문 은행(백업)으로 내려간다."""
+    if terms is None:
+        return None
+    try:
+        from . import internal_question_agent as IQ
+        return IQ.search_questions(vectors if len(vectors) > 1 else vectors[0], cat, n, used,
+                                   role_code=role_code, forbid_terms=terms)
+    except Exception:  # noqa: BLE001 — 컬렉션 없음·Chroma 오류 → 백업 층으로
+        return None
+
+
 def retrieve(s: GenState) -> GenState:
-    """질문 은행에서 카테고리별 문항(QST-01). 이력서 대체 시 직무 문항을 더 뽑는다.
-    1순위 = Redis 질문 은행(questionbank/vectorDB/ 원본 → 번역 에이전트 → Redis, 이력서 키워드·공고로 벡터 검색).
-    Redis·임베딩 실패, 모델 미사용, 해당 카테고리 문항 부족이면 그 카테고리만 DB 질문 은행(적게 쓴 순·dup_group 중복 제거)."""
+    """카테고리별 문항(QST-01). 이력서 대체 시 직무 문항을 더 뽑는다.
+    1순위 = **사내문서 질문 컬렉션**(A17이 public 조각에서 미리 만들어 둔 질문, Chroma `internal_questions_*`).
+    2순위 = Redis 질문 은행(백업, questionbank/regularDB 원본 → 번역 에이전트 → Redis).
+    3순위 = DB `question_bank`(적게 쓴 순·dup_group 중복 제거) · 인성은 `character_assessment` md.
+    어느 층이 비어도 면접은 끝까지 간다(H-01~H-09). 질의 벡터는 세 층이 **같은 것을 재사용**한다(임베딩 추가 0회)."""
     used, picks, src = set(), {}, {}
     need = dict(Q.PLAN)
     vector, vectors, role = None, None, s["job"]["role_code"]
     mq = {"mode": "off"}
+    iq_terms, iq_why = _iq_terms()
     if s["use_llm"]:
         try:
             vectors, mq = _query_vectors(s)       # Multi-Query + RRF(6.18)면 여러 개, 아니면 1개
@@ -257,13 +295,18 @@ def retrieve(s: GenState) -> GenState:
     order = (["resume_fallback"] if s["resume_fallback"] else []) + ["personality", "job", "company"]
     for key in order:
         cat, n = ("job", Q.RESUME_N) if key == "resume_fallback" else (key, need[key])
-        got = None
+        got, how = None, None
         if vector is not None:
-            try:
-                got = _pick_redis(vectors if vectors and len(vectors) > 1 else vector, role, cat, n, used)
-            except Exception as e:
-                src["error"] = type(e).__name__
-        src[key] = "redis" if got else "db"
+            vecs = vectors if (vectors and len(vectors) > 1) else [vector]
+            got = _pick_internal(vecs, role, cat, n, used, iq_terms)        # ① 사내문서 질문(주 출처)
+            how = "internal_q" if got else None
+            if not got:
+                try:
+                    got = _pick_redis(vecs if len(vecs) > 1 else vector, role, cat, n, used)   # ② Redis(백업)
+                except Exception as e:
+                    src["error"] = type(e).__name__
+                how = "redis" if got else None
+        src[key] = how or "db"
         if not got:   # 인성 대체 = character_assessment md(없으면 DB), 나머지 = DB 은행
             got = Q.pick_character(n, used, s["snapshot"]) if cat == "personality" else Q.pick_bank(cat, n, used)
             if cat == "personality" and any(b.get("char_id") for b in got):
@@ -275,9 +318,11 @@ def retrieve(s: GenState) -> GenState:
     if not s["resume_fallback"]:                    # 이력서 질문 3개마다 질문 은행 참고 문항(RAG)
         picks["resume_bank"] = _resume_bank_refs(s, role, used) if s["use_llm"] else []
         src["resume_bank"] = "redis" if picks["resume_bank"] and any(b and b.get("doc_id") for b in picks["resume_bank"]) else "-"
+    src["internal_q"] = iq_why
     return {"picks": picks, "query_vector": vector, "query_vectors": vectors or ([vector] if vector is not None else []),
             "mq_report": mq, "retrieve_report": dict(src),
             "log": s["log"] + ["retrieve: " + " · ".join(f"{k} {len(v)}({src.get(k)})" for k, v in picks.items())
+                               + f" · 사내문서 질문 {iq_why}"
                                + (f" · redis 오류 {src['error']}" if "error" in src else "")
                                + f" · 쿼리 {mq.get('mode')} {mq.get('queries', 0)}개"
                                + (f"({mq['reason']})" if mq.get("reason") else "")]}
@@ -380,12 +425,25 @@ def _resume_bank_refs(s, role, used):
 
 
 def _bank_fields(b):
-    """은행 행 → 문항 출처 필드. DB 은행은 bank_id, Redis 은행은 gen_method에 문서 ID를 남긴다(bank_id는 DB 행 전용 FK)."""
+    """은행 행 → 문항 출처 필드. DB 은행은 bank_id, 그 밖은 gen_method에 출처 ID를 남긴다(bank_id는 DB 행 전용 FK).
+    사내문서 질문(A17)은 `internal_q:<질문 ID>` — `doc_id`도 같이 있으므로 이 검사가 먼저다."""
+    if b.get("iq_id"):
+        return {"bank_id": None, "gen_method": "internal_q:" + b["iq_id"]}
     if b.get("doc_id"):
         return {"bank_id": None, "gen_method": "redis:" + b["doc_id"]}
     if b.get("char_id"):
         return {"bank_id": None, "gen_method": "character:" + b["char_id"]}
     return {"bank_id": b["id"], "gen_method": "db"}
+
+
+def _internal_draft(b, cat):
+    """A17 질문은 **면접마다 다시 쓰지 않는다**(기본, `RAG_IQ_REWRITE=0`). 이미 A18 검증(한 문장·금지 용어·
+    마스킹 표식·조각 근거·지어낸 토큰·허위 경험 전제)을 통과한 문장이고, 면접 중 다시 쓰는 경로는 20명 중
+    12명이 실패했다(QO-13). 조각 출처(`doc_refs`)·근거 문구(`company_facts`)를 붙여 7-B 관문 대상으로 남긴다."""
+    return {"category": cat, "eval_items": Q.EVAL_ITEMS[cat], "text": b["text"], "orig": b["text"],
+            **_bank_fields(b), "intent": b.get("intent") or b.get("subcategory") or "",
+            "company_facts": list(b.get("company_facts") or []), "doc_refs": list(b.get("doc_refs") or []),
+            "iq_source": True}
 
 
 def generate(s: GenState) -> GenState:
@@ -394,7 +452,12 @@ def generate(s: GenState) -> GenState:
     직무 2 = 은행(RAG) + 공고 + 이력서 → 섞어 다시 쓰기 / 기업 1 = 은행(RAG) → 회사 맞춤."""
     drafts, use_llm = [], s["use_llm"]
     role_name = s["job"].get("role_name") or ""
+    n_iq = {"personality": 0, "job": 0, "company": 0}
     for b in s["picks"].get("personality", []):
+        if b.get("iq_id") and not config.RAG_IQ_REWRITE:          # 사내문서 질문(인성) — 그대로 출제
+            n_iq["personality"] += 1
+            drafts.append(_internal_draft(b, "personality"))
+            continue
         text = Q.contextualize_character(b, s["job"], s["snapshot"]) if use_llm else b["text"]
         drafts.append({"category": "personality", "eval_items": Q.EVAL_ITEMS["personality"], "text": text, "orig": b["text"],
                        **_bank_fields(b), "intent": b.get("intent") or b.get("subcategory") or ""})
@@ -418,6 +481,10 @@ def generate(s: GenState) -> GenState:
     n_rag, rag_by = 0, {"job": 0, "company": 0}
     for cat in ("job", "company"):
         for b in s["picks"].get(cat, []):
+            if b.get("iq_id") and not config.RAG_IQ_REWRITE:      # 사내문서 질문(직무·기업) — 그대로 출제
+                n_iq[cat] += 1
+                drafts.append(_internal_draft(b, cat))
+                continue
             rag = None
             if not use_llm:
                 text = b["text"]
@@ -443,11 +510,16 @@ def generate(s: GenState) -> GenState:
             drafts.append(d)
     rr = s.get("retrieve_report") or {}
     redis_ok = any(rr.get(k) == "redis" for k in ("personality", "job", "company", "resume_bank"))
-    chroma_ok = bool(s.get("internal_context") and s.get("forbid_ready"))
+    chroma_ok = bool(s.get("internal_context") and s.get("forbid_ready")) or sum(n_iq.values()) > 0
     mode = {(True, True): "dual", (True, False): "redis_only", (False, True): "chroma_only", (False, False): "safe"}[(redis_ok, chroma_ok)]
-    dual = {"mode": mode, "redis": redis_ok, "chroma": chroma_ok, "job_rag": rag_by["job"], "company_rag": rag_by["company"]}
+    total_iq = sum(n_iq.values())
+    # 사내문서 출처 문항 = A17 질문 + 조각 근거가 남은 문항(이 둘은 겹치지 않는다 — A17 문항은 다시 쓰지 않으므로)
+    dual = {"mode": mode, "redis": redis_ok, "chroma": chroma_ok, "job_rag": rag_by["job"],
+            "company_rag": rag_by["company"], "internal_q": dict(n_iq), "internal_q_total": total_iq,
+            "internal_total": total_iq + n_rag, "questions": len(drafts)}
     return {"drafts": drafts, "dual_report": dual,
-            "log": s["log"] + [f"generate: {len(drafts)}문항" + (f" · 사내문서 근거 {n_rag}" if n_rag else "") + f" · RAG {mode}"]}
+            "log": s["log"] + [f"generate: {len(drafts)}문항" + (f" · 사내문서 질문 {total_iq}" if total_iq else "")
+                               + (f" · 사내문서 근거 {n_rag}" if n_rag else "") + f" · RAG {mode}"]}
 
 
 PHIL_SCHEMA = {"type": "object", "properties": {
@@ -572,7 +644,8 @@ def guard_disclosure(s: GenState) -> GenState:
         if not d.get("doc_refs"):
             drafts.append(d)
             continue
-        if d["text"] == d["orig"]:                        # A6이 은행 원문으로 되돌림 → 사내문서를 쓰지 않은 문장
+        iq = bool(d.get("iq_source"))                     # A17 질문: text == orig가 정상이라 아래 지름길을 타지 않는다
+        if not iq and d["text"] == d["orig"]:              # A6이 은행 원문으로 되돌림 → 사내문서를 쓰지 않은 문장
             drafts.append(_drop_rag(d))
             continue
         rep["checked"] += 1
@@ -585,12 +658,16 @@ def guard_disclosure(s: GenState) -> GenState:
             why.append("mask_marker")                   # 마스킹 표식([금액] 등)·가명(고객사A…)·사본 ID → 원문(2026-11-13 사용자 결정)
         if Q.asks_interview_method(d["text"]):         # 면접 방식·평가 기준·질문 설계를 묻는 질문 → 원문(2026-11-13 사용자 결정)
             why.append("interview_meta")
-        if not all(re.sub(r"\s+", "", f) in allowed for f in d.get("company_facts") or []):
-            why.append("facts_unmatched")
-        if not set(d["doc_refs"]) <= injected:
-            why.append("doc_ref_invalid")
+        if not iq:
+            # A17 질문의 근거는 **자기 조각**이고 A18이 이미 대조했다. 이 면접에 주입된 조각(injected)과는
+            # 다를 수 있으므로 아래 두 검사는 다시 쓴 문항(A15·Dual)에만 적용한다(6.19.5).
+            if not all(re.sub(r"\s+", "", f) in allowed for f in d.get("company_facts") or []):
+                why.append("facts_unmatched")
+            if not set(d["doc_refs"]) <= injected:
+                why.append("doc_ref_invalid")
         snap = (s.get("snapshot") or {}) if d["category"] == "job" else {}   # 직무 Dual RAG 문항은 이력서 토큰 허용(6.18.3)
-        if Q.BLOCKLIST.search(d["text"]) or Q._bad_tokens(d["text"], " ".join([d["orig"]] + bodies), job, snap):
+        base = " ".join([d["orig"]] + ((d.get("company_facts") or []) if iq else []) + bodies)
+        if Q.BLOCKLIST.search(d["text"]) or Q._bad_tokens(d["text"], base, job, snap):
             why.append("rule")
         if not why and s.get("use_llm") and REVIEW:
             try:
@@ -609,6 +686,10 @@ def guard_disclosure(s: GenState) -> GenState:
                 rep["reasons"][w] = rep["reasons"].get(w, 0) + 1
             d["text"] = d["orig"]
             d["guard"] = "blocked"
+            if iq:
+                # A17 질문이 관문에 걸렸다 = 그 질문 자체를 쓰면 안 된다. 되돌릴 은행 원문이 없으므로
+                # 문항을 버리고 백업 층(Redis·DB 은행)에서 같은 카테고리 문항으로 채운다(6.19.5).
+                d["drop"] = True
             _drop_rag(d)
         else:
             d["guard"] = "pass"
@@ -619,18 +700,38 @@ def guard_disclosure(s: GenState) -> GenState:
     return {"drafts": drafts, "guard_report": rep, "log": s["log"] + [msg]}
 
 
+def _backup_question(cat, used, snapshot):
+    """7-B가 사내문서 질문(A17)을 차단했을 때 그 자리를 채운다 — 백업 층만 쓴다(모델 호출 0회, 6.19.5).
+    인성은 `character_assessment` md → 없으면 DB 은행, 나머지는 DB `question_bank`. 비어 있으면 None(문항 수가 줄어든다)."""
+    got = Q.pick_character(1, used, snapshot) if cat == "personality" else Q.pick_bank(cat, 1, used)
+    if not got:
+        return None
+    b = got[0]
+    return {"category": cat, "eval_items": Q.EVAL_ITEMS[cat], "text": b["text"], "orig": b["text"],
+            **_bank_fields(b), "intent": b.get("intent") or b.get("subcategory") or "", "replaced": "guard_blocked"}
+
+
 def finalize(s: GenState) -> GenState:
     """코드: 순서 고정(Q.PLAN = 인성 2 → 이력서 3 → 직무 2 → 기업 1). 저장 형식은 기존 build_set과 같다.
-    사내문서 근거가 관문을 통과한 기업 문항은 gen_method 뒤에 `|internal:<doc_id#sec>,…`(조각 ID만, ADLC 6.14.3 — 스키마 변경 없음)."""
+    사내문서 근거가 관문을 통과한 문항은 gen_method 뒤에 `|internal:<doc_id#sec>,…`(조각 ID만, ADLC 6.14.3 — 스키마 변경 없음).
+    7-B가 차단한 사내문서 질문(`drop`)은 백업 층 문항으로 바꿔 8문항을 유지한다(6.19.5)."""
     order = {c: i for i, (c, _) in enumerate(Q.PLAN)}
     keep = ("category", "eval_items", "text", "bank_id", "gen_method", "resume_ref")
-    final = []
+    final, used, replaced = [], set(), 0
     for d in sorted(s["drafts"], key=lambda d: order[d["category"]]):
+        if d.get("drop"):
+            rep = _backup_question(d["category"], used, s.get("snapshot") or {})
+            if rep:
+                replaced += 1
+                d = rep
+        if d.get("dup_group"):
+            used.add(d["dup_group"])
         q = {k: d.get(k) for k in keep if k in d}
         if d.get("doc_refs") and d.get("guard") == "pass":
             q["gen_method"] = f"{q.get('gen_method') or 'db'}|internal:" + ",".join(d["doc_refs"])
         final.append(q)
-    return {"final_questions": final, "log": s["log"] + [f"finalize: {len(final)}문항"]}
+    return {"final_questions": final,
+            "log": s["log"] + [f"finalize: {len(final)}문항" + (f" · 백업 교체 {replaced}" if replaced else "")]}
 
 
 def _build_generation():
@@ -662,28 +763,16 @@ def generate_set(application, use_llm=True):
 
 
 # ======================= B. 면접 루프 (답변 1개마다 한 걸음) =======================
-PRE_SCHEMA = {"type": "object", "properties": {
-    "question_topic": {"type": "string"}, "answer_topic": {"type": "string"}, "addresses_question": {"type": "boolean"},
-    "logic": {"type": "integer", "minimum": 1, "maximum": 5}, "relevance": {"type": "integer", "minimum": 1, "maximum": 5},
-    "inconsistent_with_resume": {"type": "boolean"}, "generic_only": {"type": "boolean"}, "followup_question": {"type": "string"}},
-    "required": ["question_topic", "answer_topic", "addresses_question", "logic", "relevance", "inconsistent_with_resume", "generic_only", "followup_question"]}
-PRE_SYSTEM = """너는 1차 면접 진행 중 답변을 빠르게 선평가하는 면접관이다. 아래 순서로 판단한다.
-1. question_topic: 질문이 묻는 핵심을 10자 안팎으로 쓴다.
-2. answer_topic: 답변이 실제로 말한 핵심을 10자 안팎으로 쓴다.
-3. addresses_question: 답변이 질문의 핵심을 직접 다루면 true, 다른 주제를 말하면 false.
-4. relevance(1~5): addresses_question이 false면 반드시 1~2점. logic(1~5): 주장-근거-결론의 일관성.
-5. inconsistent_with_resume: 근거 이력서 항목이 주어졌고 답변 내용이 그것과 명백히 다를 때만 true.
-6. generic_only: 구체적인 사례·수치·경험 없이 일반론만 말했을 때 true.
-7. followup_question: 질문의 원래 의도를 다시 겨냥하되 답변에 나온 내용을 짚어 더 구체적으로 묻는 한국어 질문 한 문장(60초 안에 답할 범위).
-거짓말 여부를 판단하거나 추궁하지 않는다. 나이·가족·학교 서열 등 인적 사정은 묻지 않는다."""
-# 판단 ③(ADLC 6.1-B): 은행 문항에 모범 답변 요지(model_answer)가 있을 때만 구체성 점수를 더 묻는다.
-# 모범 답변이 없으면 위 PRE_SYSTEM·PRE_SCHEMA를 그대로 써서 기존 동작(eval_followup 기준선)과 같다.
-PRE_SCHEMA_IDEAL = {**PRE_SCHEMA, "properties": {**PRE_SCHEMA["properties"], "specificity": {"type": "integer", "minimum": 1, "maximum": 5}},
-                    "required": PRE_SCHEMA["required"] + ["specificity"]}
-PRE_SYSTEM_IDEAL = PRE_SYSTEM + """
-추가 판단 — specificity(1~5): '모범 답변 요지'와 비교해 답변이 얼마나 구체적인가. 본인이 한 행동·상황·결과·수치 없이 일반론만 말하면 1~2점.
-모범 답변 요지는 판단 기준일 뿐이다. 지원자가 말하지 않은 모범 답변의 내용·용어를 followup_question에 넣지 않는다(힌트 금지)."""
-SPECIFICITY_MAX = 2          # ③ 구체성 이 점수 이하 → 꼬리질문
+# ── A3 꼬리질문: 판단 상수·프롬프트·판단 함수는 전용 에이전트(agents/followup_agent.py)에 있다.
+# 여기서는 **같은 이름으로 다시 내보내기만** 한다 — tools/eval_followup.py · sim_applicants.py ·
+# test_graph1b_loop.py가 `question_graph.PRE_SYSTEM` 같은 이름(식별까지)을 그대로 쓰기 때문이다.
+from . import followup_agent as FA  # noqa: E402
+
+PRE_SCHEMA = FA.PRE_SCHEMA
+PRE_SCHEMA_IDEAL = FA.PRE_SCHEMA_IDEAL
+PRE_SYSTEM = FA.PRE_SYSTEM
+PRE_SYSTEM_IDEAL = FA.PRE_SYSTEM_IDEAL
+SPECIFICITY_MAX = FA.SPECIFICITY_MAX
 REF_TIMEOUT = 0.3            # 실시간 경로: 은행 문항 조회(Redis) 제한 시간(초). 넘으면 ②③ 없이 판단
 _RESUME_KW = re.compile(r"[A-Za-z][A-Za-z0-9+#.\-]*[A-Za-z0-9+#]")
 _KW_SPLIT = re.compile(r"[,;\n]+")
@@ -787,60 +876,16 @@ def record_answer(s: StepState) -> StepState:
 
 
 def judge_detail(att, q, answer):
-    """A3 꼬리질문 판단 (INT-06·07, ADLC 6.1-B 의사 결정 표). DB 없이 돈다(eval_followup이 그대로 부름).
+    """A3 꼬리질문 판단 — 전용 에이전트 `followup_agent.judge_detail`에 위임한다(2026-11-17 분리).
     반환 {'followup': (꼬리질문, 사유) | None, 'keyword_hits': list | None, 'specificity': int | None}.
-    ① 생략 규칙(이미 꼬리질문·4개 소진·내용 없음·5자 미만) → 모델 선평가(FOLLOWUP_TIMEOUT 안)
-    → ② 기대 키워드 0개 · ③ 모범 답변 대비 구체성 ≤2 · ④ 주제 이탈/논리·관련성 ≤2 · 이력서와 다름 · 일반론 → 문장 검사.
-    ②는 코드가 정하지만 꼬리질문 문장은 모델이 만들므로, 모델이 실패·시간 초과면 ②가 걸려도 생략한다."""
-    from .. import evaluation
-    out = {"followup": None, "keyword_hits": None, "specificity": None}
-    if q["parent_id"] is not None or att["followups_used"] >= config.MAX_FOLLOWUPS:
-        return out
-    if evaluation.NO_CONTENT.match(answer) or len(answer.strip()) < 5:
-        return out
-    bref = bank_reference(q)
-    groups, ideal = bref["keywords"], bref["ideal"]
-    if groups:
-        out["keyword_hits"] = keyword_hits(groups, answer)
-    ref = f"\n근거 이력서 항목: {q['resume_ref']['quote']}" if q.get("resume_ref") and q["resume_ref"].get("quote") else ""
-    system, schema = (PRE_SYSTEM_IDEAL, PRE_SCHEMA_IDEAL) if ideal else (PRE_SYSTEM, PRE_SCHEMA)
-    user = f"질문: {q['text']}{ref}" + (f"\n모범 답변 요지: {ideal[:800]}" if ideal else "") + f"\n답변: {answer[:1500]}"
-    try:
-        r = llm.chat_json(system, user, schema, timeout=config.FOLLOWUP_TIMEOUT)
-    except llm.LLMError:
-        return out
-    if ideal and isinstance(r.get("specificity"), int):
-        out["specificity"] = r["specificity"]
-    kw_zero = groups and not out["keyword_hits"]
-    abstract = out["specificity"] is not None and out["specificity"] <= SPECIFICITY_MAX
-    off = (not r["addresses_question"]) or r["logic"] <= 2 or r["relevance"] <= 2
-    if kw_zero:
-        reason = "기대 키워드 0개"
-    elif abstract:
-        reason = "모범 답변 대비 구체성 2점 이하"
-    elif off:
-        reason = "논리성·관련성 2점 이하"
-    elif r["inconsistent_with_resume"]:
-        reason = "이력서와 다름"
-    elif r["generic_only"]:
-        reason = "일반론"
-    else:
-        return out
-    fq = (r.get("followup_question") or "").strip()
-    if not fq or Q.BLOCKLIST.search(fq) or len(fq) > 150:
-        return out
-    if groups:   # 힌트 금지(B-07): 지원자가 말하지 않은 기대 키워드가 꼬리질문에 있으면(원 질문에 있던 말은 제외) 생략
-        said, qn, fn = set(out["keyword_hits"]), _norm(q["text"]), _norm(fq)
-        for g in groups:
-            if g[0] not in said and any(_norm(w) in fn and _norm(w) not in qn for w in g if _norm(w)):
-                return out
-    out["followup"] = (fq, reason)
-    return out
+    판단 순서·상수·프롬프트는 그 모듈에 있고, 은행 참고 조회(bank_reference·keyword_hits)는 이 모듈이 그대로 제공한다
+    (평가 도구가 `question_graph.bank_reference`를 갈아끼워 쓰므로 그 경로를 유지한다)."""
+    return FA.judge_detail(att, q, answer)
 
 
 def judge(att, q, answer):
     """A3 노드 계약(ADLC 6.1-B): judge(att, q, answer) → (꼬리질문, 사유) | None."""
-    return judge_detail(att, q, answer)["followup"]
+    return FA.judge(att, q, answer)
 
 
 def judge_followup(s: StepState) -> StepState:

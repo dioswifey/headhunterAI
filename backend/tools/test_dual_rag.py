@@ -155,8 +155,14 @@ def main():
     res.append(("D2 직무 프롬프트 4재료 구분(은행 문항·조각·공고·이력서)",
                 len(jp) == 2 and "질문 은행 문항: job 문항" in p0 and "매주 평가셋" in p0 and T.JOB["duties"] in p0 and "LangChain" in p0
                 and "[재료 3 — 채용공고" in p0 and "[재료 4 — 지원자 이력서" in p0))
+    # 2026-11-17(ADLC 6.19): dual_report에 사내문서 질문 집계가 더해졌다 → 기존 5칸 + 새 4칸을 모두 고정한다
+    dr = info["dual_report"]
     res.append(("D2 dual_report = dual · job_rag 2 · company_rag 1 · 8문항",
-                info["dual_report"] == {"mode": "dual", "redis": True, "chroma": True, "job_rag": 2, "company_rag": 1} and len(qs) == 8))
+                {k: dr.get(k) for k in ("mode", "redis", "chroma", "job_rag", "company_rag")}
+                == {"mode": "dual", "redis": True, "chroma": True, "job_rag": 2, "company_rag": 1} and len(qs) == 8))
+    res.append(("D2 dual_report 사내문서 질문 집계(A17 미사용 환경) = 0 · 근거 3 · 문항 8",
+                dr.get("internal_q") == {"personality": 0, "job": 0, "company": 0} and dr.get("internal_q_total") == 0
+                and dr.get("internal_total") == 3 and dr.get("questions") == 8))
     res.append(("D2 7-B 검사 3 · 차단 0 · 로그에 조각 본문 없음",
                 info["guard_report"].get("checked") == 3 and info["guard_report"].get("blocked") == 0
                 and not any("매주 평가셋" in line for line in info["log"])))

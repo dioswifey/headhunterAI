@@ -160,7 +160,7 @@ class Env:
                        (internal_forbid, "load_terms"), (Q, "contextualize"), (Q, "contextualize_character"),
                        (Q, "contextualize_job"), (Q, "make_resume_question"), (Q, "pick_character"),
                        (QG, "REVIEW"), (config, "INTERNAL_DOCS_RAG"), (QG, "_redis_query_vector"), (QG, "_pick_redis"),
-                       (QG, "_resume_bank_refs"), (QG.db, "one")]
+                       (QG, "_pick_internal"), (QG, "_resume_bank_refs"), (QG.db, "one")]
         self._saved = [(m, n, getattr(m, n)) for m, n in self._saved]
         llm.chat_json = self.chat
         internal_store.query_public = self.query_public
@@ -176,6 +176,9 @@ class Env:
         QG.REVIEW = self.review
         config.INTERNAL_DOCS_RAG = self.rag_on
         QG._redis_query_vector = lambda s: [0.1, 0.2, 0.3]
+        # 사내문서 질문(A17)은 이 가짜 환경에 없다 → None = 백업 층(Redis)으로 내려간다. 실제 Chroma를 건드리지 않게
+        # 반드시 막아 둔다(막지 않으면 빈 질문 컬렉션이 저장소에 생긴다). 사내문서 질문 경로는 tools/test_internal_questions.py에서 검사
+        QG._pick_internal = lambda vecs, role, cat, n, used, terms: None
         QG._pick_redis = lambda v, role, cat, n, used: [{"id": None, "doc_id": f"{cat}:{i}",
                                                           "text": COMPANY_BANK if cat == "company" else f"{cat} 문항 {i}번을 설명해 주세요.",
                                                           "subcategory": "관심", "dup_group": f"{cat}{i}"} for i in range(n)]

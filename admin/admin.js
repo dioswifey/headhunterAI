@@ -402,7 +402,7 @@ function decisionCard(d, e) {
     <div class="small">${esc(e.reason || '')}</div>
     ${changed ? `<div class="small" style="margin-top:6px">AI 판정 ${RESULT_KO[e.result]} → 담당자 ${RESULT_KO[fin]}</div>` : ''}
     ${fin && hybrid && e.decided_at ? `<div class="small">확정 ${fmtDateTime(e.decided_at)} · 합불 통보 메일 발송됨</div>` : ''}
-    ${!fin && hybrid ? `<div class="row" style="margin-top:10px"><button class="btn sm primary" id="dec-ok">허용</button><button class="btn sm" id="dec-change">판정 변경 (${RESULT_KO[e.result === 'pass' ? 'fail' : 'pass']}로)</button></div>` : ''}</div>`;
+    ${!fin && hybrid ? `<div class="row" style="margin-top:10px"><button class="btn sm primary" id="dec-ok">허용</button><button class="btn sm" id="dec-change">판정 변경 (${RESULT_KO[e.result === 'pass' ? 'fail' : 'pass']}으로)</button></div>` : ''}</div>`;
 }
 
 function bindDecision(id, e) {
