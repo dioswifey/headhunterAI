@@ -416,9 +416,12 @@ function myJobRow(a) {
 /* 알림 한 줄 — 유형별 안내(2026-11-18 사용자 지시: 면접 진행상황을 '나의 면접' 블록 대신 여기로) */
 const NOTE_KO = { deadline_1d: '마감 임박', deadline_today: '오늘 마감', result: '결과 도착', apply: '신규 지원', ops: '확인 필요' };
 function myNoteRow(n) {
-  return `<div style="${ROW_STYLE}">
+  // 2026-11-18 사용자 지시: '결과 도착' 알림을 누르면 마이페이지가 아니라 그 결과 화면으로 바로 이동
+  const clickable = n.type === 'result' && n.application_id;
+  const tag = clickable ? 'button' : 'div';
+  return `<${tag} ${clickable ? `class="note-row click" data-noteapp="${n.application_id}"` : `style="${ROW_STYLE}"`}>
     <div class="row" style="gap:8px"><span class="pill ${n.read_at ? 'dim' : 'neon'}">${esc(NOTE_KO[n.type] || '알림')}</span><b>${esc(n.title)}</b></div>
-    <div class="small" style="margin-top:6px">${esc(n.body)}</div></div>`;
+    <div class="small" style="margin-top:6px">${esc(n.body)}</div></${tag}>`;
 }
 
 /* '더보기' 미니 페이지: 그 목록만 모아 띄운다. 안에서 버튼·링크를 누르면 창을 닫고 그 화면으로 간다 */
@@ -429,6 +432,7 @@ function miniPage(title, bodyHtml) {
   $$('a[href^="#/"]', bg).forEach((el) => el.addEventListener('click', () => bg.remove()));
   $$('[data-cont]', bg).forEach((b) => (b.onclick = async () => { bg.remove(); continueApplication(await get(`/api/applications/${b.dataset.cont}`)); }));
   $$('[data-devcancel]', bg).forEach((b) => (b.onclick = () => { bg.remove(); devCancelApp(b.dataset.devcancel, mypage); }));
+  $$('[data-noteapp]', bg).forEach((b) => (b.onclick = () => { bg.remove(); go(`#/result/${b.dataset.noteapp}`); }));
 }
 
 /* '내가 좋아할만한 공고' 가로 롤링(사람인 추천 공고 방식, 2026-11-18 사용자 지시).
@@ -494,6 +498,7 @@ async function mypage() {
 
   if ($('#reco-vp')) startReco($('#reco-vp'));
   $$('[data-job]').forEach((b) => (b.onclick = () => go(`#/jobs/${b.dataset.job}`)));
+  $$('[data-noteapp]').forEach((b) => (b.onclick = () => go(`#/result/${b.dataset.noteapp}`)));
   bindAppsTable(mypage);
   if ($('#more-jobs')) $('#more-jobs').onclick = () => miniPage('나의 공고', `<div class="col" style="gap:10px">${apps.map(myJobRow).join('')}</div>`);
   if ($('#more-notes')) $('#more-notes').onclick = () => miniPage('Notification', notes.map(myNoteRow).join(''));

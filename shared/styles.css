@@ -116,6 +116,9 @@ p { margin: 0 0 10px; }
 .card.more-link { border: none; background: none; display: flex; align-items: center; justify-content: center; }
 .card.more-link:hover { background: none; }
 .card.more-link span { color: var(--white); text-decoration: underline; font-weight: 600; }
+/* 클릭 가능한 알림 한 줄(2026-11-18 사용자 지시 — 결과 도착 알림을 누르면 결과 화면으로) */
+.note-row { display: block; width: 100%; text-align: left; background: none; border: none; border-bottom: 1px solid var(--line); padding: 10px 0; font: inherit; color: inherit; cursor: pointer; }
+.note-row:hover { background: var(--fill2); }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
