@@ -74,7 +74,7 @@ async function loadMe() {
   if (me && me.role !== 'applicant') me = null;
   const area = $('#auth-area');
   area.innerHTML = me
-    ? `<span class="who">${esc(me.name)} 님</span> <button class="btn sm ghost" id="logout">로그아웃</button>`
+    ? `<span class="who">${esc(me.name)} 님</span> <a class="btn sm ghost" href="#/account">계정관리</a> <button class="btn sm ghost" id="logout">로그아웃</button>`
     : `<a class="btn sm ghost" href="#/login">로그인</a> <a class="btn sm primary" href="#/signup">회원가입</a>`;
   const pdd = document.getElementById('practice-dd');
   if (pdd) { pdd.hidden = !me; if (!me) setPracticeMenu(false); }
@@ -107,6 +107,7 @@ const routes = [
   [/^\/login$/, login],
   [/^\/signup$/, signup],
   [/^\/my$/, mypage],
+  [/^\/account$/, accountView],
   [/^\/billing$/, billingView],
   [/^\/apply\/(\d+)\/consent$/, consentView],
   [/^\/apply\/(\d+)\/resume$/, resumeView],
@@ -368,35 +369,136 @@ function appsTableHtml(apps) {
         </tbody></table></div>` : '<div class="empty">아직 지원한 공고가 없습니다.</div>';
 }
 
+/* 테스트 계정 전용 '접수 취소'. 목록 카드와 '더보기' 미니 페이지가 같이 쓴다 */
+async function devCancelApp(appId, refresh) {
+  const yes = await modal({ title: '접수 취소(테스트용)', body: '이 지원 건의 응시·답변·평가 기록을 모두 지웁니다. 같은 공고에 다시 지원할 수 있게 됩니다.',
+    buttons: [{ label: '닫기', value: false }, { label: '접수 취소', value: true, primary: true }] });
+  if (!yes) return;
+  try { await post(`/api/dev/reset-my-applications?app_id=${appId}`); toast('접수를 취소했습니다.'); refresh(); } catch (e) { toast(e.message, true); }
+}
+
 function bindAppsTable(refresh) {
   $$('[data-cont]').forEach((b) => (b.onclick = async () => continueApplication(await get(`/api/applications/${b.dataset.cont}`))));
-  $$('[data-devcancel]').forEach((b) => (b.onclick = async () => {
-    const yes = await modal({ title: '접수 취소(테스트용)', body: '이 지원 건의 응시·답변·평가 기록을 모두 지웁니다. 같은 공고에 다시 지원할 수 있게 됩니다.',
-      buttons: [{ label: '닫기', value: false }, { label: '접수 취소', value: true, primary: true }] });
-    if (!yes) return;
-    try { await post(`/api/dev/reset-my-applications?app_id=${b.dataset.devcancel}`); toast('접수를 취소했습니다.'); refresh(); } catch (e) { toast(e.message, true); }
-  }));
+  $$('[data-devcancel]').forEach((b) => (b.onclick = () => devCancelApp(b.dataset.devcancel, refresh)));
 }
+
+/* 마이페이지 '나의 공고'·'나의 면접' 한 줄. 카드 안과 '더보기' 미니 페이지가 같은 모양을 쓴다 */
+const ROW_STYLE = 'padding:10px 0;border-bottom:1px solid var(--line)';
+
+function myJobRow(a) {
+  return `<div class="between" style="${ROW_STYLE}">
+    <span style="min-width:0"><b>${esc(a.title)}</b><div class="small">${esc(a.company)} · 지원일 ${fmtYMD(a.created_at)}${a.coding_enabled ? ' · 코딩테스트 포함' : ''}</div></span>
+    <span class="row" style="gap:8px">${a.attempt_id ? '<span class="pill dim">응시함</span>' : `<span class="pill neon">${STEP_KO[a.step]}</span>`}${appAction(a)}${isTestApplicant() ? `<button class="btn sm ghost" data-devcancel="${a.id}" title="테스트 계정 전용">접수 취소</button>` : ''}</span></div>`;
+}
+
+function myInterviewRow(a) {
+  const state = a.attempt_status ? ATTEMPT_KO[a.attempt_status] : '응시 가능';
+  return `<div class="between" style="${ROW_STYLE}">
+    <span style="min-width:0"><b>${esc(a.title)}</b><div class="small">${esc(a.company)} · 결과 공개 ${fmtYMD(a.result_date)}</div></span>
+    <span class="row" style="gap:8px"><span class="pill ${a.attempt_status ? 'dim' : 'neon'}">${esc(state)}</span>${appAction(a)}</span></div>`;
+}
+
+/* '더보기' 미니 페이지: 그 목록만 모아 띄운다. 안에서 버튼·링크를 누르면 창을 닫고 그 화면으로 간다 */
+function miniPage(title, bodyHtml) {
+  modal({ title, body: bodyHtml, buttons: [{ label: '닫기', value: true }] });
+  const bg = $$('.modal-bg').pop();
+  if (!bg) return;
+  $$('a[href^="#/"]', bg).forEach((el) => el.addEventListener('click', () => bg.remove()));
+  $$('[data-cont]', bg).forEach((b) => (b.onclick = async () => { bg.remove(); continueApplication(await get(`/api/applications/${b.dataset.cont}`)); }));
+  $$('[data-devcancel]', bg).forEach((b) => (b.onclick = () => { bg.remove(); devCancelApp(b.dataset.devcancel, mypage); }));
+}
+
+/* '내가 좋아할만한 공고' 가로 롤링(사람인 추천 공고 방식, 2026-11-18 사용자 지시).
+   움직임 줄이기 설정이면 멈춘 채 첫 화면만 보여 주고, 마우스를 올리면 잠시 멈춘다 */
+function startReco(vp) {
+  const track = vp.firstElementChild;
+  const items = $$(':scope > *', track);
+  if (items.length < 2) return;
+  let i = 0, paused = false;
+  const perView = () => Math.max(1, Math.round(vp.clientWidth / (items[0].offsetWidth || vp.clientWidth)));
+  const maxIndex = () => Math.max(0, items.length - perView());
+  // offsetParent가 무엇이든 틀어지지 않게 첫 카드 기준 상대 위치로 민다
+  const show = () => { track.style.transform = `translateX(${-(items[i].offsetLeft - items[0].offsetLeft)}px)`; };
+  show();
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const id = setInterval(() => { if (!paused) { i = i >= maxIndex() ? 0 : i + 1; show(); } }, 4000);
+  vp.onmouseenter = () => { paused = true; };
+  vp.onmouseleave = () => { paused = false; };
+  const onResize = () => { if (i > maxIndex()) i = 0; show(); };
+  addEventListener('resize', onResize);
+  onLeave(() => { clearInterval(id); removeEventListener('resize', onResize); });
+}
+
+const shuffle = (arr) => arr.map((v) => [Math.random(), v]).sort((x, y) => x[0] - y[0]).map((x) => x[1]);
 
 async function mypage() {
   setNav('my');
   if (!requireLogin('/my')) return;
-  const [apps, notes, resumes] = await Promise.all([get('/api/me/applications'), get('/api/me/notifications'), get('/api/me/resumes')]);
+  const [apps, notes, resumes, allJobs] = await Promise.all([
+    get('/api/me/applications'), get('/api/me/notifications'), get('/api/me/resumes'), get('/api/jobs'),
+  ]);
+  // 추천 공고: 헤드헌터랩 지점(서울·경기·인천) 접수 중 공고를 무작위로. 지원 여부와 무관하게 보여 준다
+  const open = allJobs.filter((j) => j.status === 'published' && j.role_status === 'active');
+  const branch = open.filter((j) => /^헤드헌터랩_/.test(j.company || ''));
+  const reco = shuffle(branch.length ? branch : open).slice(0, 9);
+  // 나의 면접 = 응시 기록이 있거나 바로 응시할 수 있는 지원 건
+  const mine = apps.filter((a) => a.attempt_id || a.step === 'ready');
+  const CUT = 3;
+  const blockHtml = (name, list, rowFn, moreId, emptyMsg) => `<div class="card">
+    <div class="between"><h2>${name}</h2>${list.length > CUT ? `<button class="btn sm ghost" id="${moreId}">더보기</button>` : ''}</div>
+    ${list.length ? list.slice(0, CUT).map(rowFn).join('') : `<p class="small">${emptyMsg}</p>`}
+    ${list.length > CUT ? `<p class="small" style="margin-top:10px">전체 ${list.length}건 중 ${CUT}건을 보여 드립니다.</p>` : ''}</div>`;
+
   view.innerHTML = `<div class="wrap">
-    <h1>마이페이지</h1><p class="sub">${esc(me.name)} 님의 지원 현황입니다.</p>
-    <div class="grid2" style="margin-top:20px;align-items:start">
-      <div class="card" style="grid-column:1/-1"><div class="between"><h2>지원한 공고 · 응시할 면접</h2><a class="btn sm" href="#/jobs">공고 둘러보기</a></div>
-        ${appsTableHtml(apps)}
-      </div>
-      <div class="card"><h2>알림</h2>${notes.length ? notes.map((n) => `<div style="padding:8px 0;border-bottom:1px solid var(--line)"><b>${esc(n.title)}</b><div class="small">${esc(n.body)}</div></div>`).join('') : '<p class="small">새 알림이 없습니다.</p>'}</div>
-      <div class="card"><h2>내 이력서</h2><p class="small">지원할 때 불러와 쓸 수 있습니다. 지원에 제출한 이력서는 별도로 보관됩니다.</p>
-        ${resumes.length ? resumes.map((r) => `<div class="between" style="padding:8px 0;border-bottom:1px solid var(--line)"><span>${esc(r.title)} <span class="small">${fmtYMD(r.updated_at)}</span></span><button class="btn sm ghost" data-delres="${r.id}">삭제</button></div>`).join('') : '<p class="small">등록한 이력서가 없습니다. 지원 과정에서 저장할 수 있습니다.</p>'}</div>
+    <h1>마이페이지</h1><p class="sub" style="font-size:19px;font-weight:700">${esc(me.name)} 님의 지원 현황입니다.</p>
+    <div class="between" style="margin-top:24px"><h2>내가 좋아할만한 공고</h2><a class="btn sm" href="#/jobs">공고 둘러보기</a></div>
+    ${reco.length ? `<div class="reco-vp" id="reco-vp"><div class="reco-track">${reco.map(jobCard).join('')}</div></div>`
+    : '<div class="empty">지금 접수 중인 공고가 없습니다.</div>'}
+    <div class="grid2" style="margin-top:22px;align-items:start">
+      ${blockHtml('나의 공고', apps, myJobRow, 'more-jobs', '아직 지원한 공고가 없습니다.')}
+      ${blockHtml('나의 면접', mine, myInterviewRow, 'more-ivs', '아직 응시할 면접이 없습니다.')}
     </div>
-    <p class="small" style="margin-top:28px;text-align:right"><a href="#" id="withdraw" style="color:var(--muted2)">회원 탈퇴</a></p></div>`;
-  $('#withdraw').onclick = (e) => { e.preventDefault(); withdrawFlow(); };
+    <div class="grid2" style="margin-top:16px;align-items:start">
+      <div class="card hl"><h2 class="neon">Notification</h2>
+        ${notes.length ? notes.map((n) => `<div style="${ROW_STYLE}"><b>${esc(n.title)}</b><div class="small">${esc(n.body)}</div></div>`).join('') : '<p class="small">새 알림이 없습니다.</p>'}</div>
+      <div class="card"><h2>내 이력서 관리</h2><p class="small">지원할 때 불러와 쓸 수 있습니다. 지원에 제출한 이력서는 별도로 보관됩니다.</p>
+        ${resumes.length ? resumes.map((r) => `<div class="between" style="${ROW_STYLE}"><span>${esc(r.title)} <span class="small">${fmtYMD(r.updated_at)}</span></span><button class="btn sm ghost" data-delres="${r.id}">삭제</button></div>`).join('') : '<p class="small">등록한 이력서가 없습니다. 지원 과정에서 저장할 수 있습니다.</p>'}</div>
+    </div></div>`;
+
+  if ($('#reco-vp')) startReco($('#reco-vp'));
+  $$('[data-job]').forEach((b) => (b.onclick = () => go(`#/jobs/${b.dataset.job}`)));
   bindAppsTable(mypage);
+  if ($('#more-jobs')) $('#more-jobs').onclick = () => miniPage('나의 공고', apps.map(myJobRow).join(''));
+  if ($('#more-ivs')) $('#more-ivs').onclick = () => miniPage('나의 면접', mine.map(myInterviewRow).join(''));
   $$('[data-delres]').forEach((b) => (b.onclick = async () => { await del(`/api/me/resumes/${b.dataset.delres}`); mypage(); }));
   if (notes.some((n) => !n.read_at)) post('/api/me/notifications/read');
+}
+
+/* ───────── 계정관리 (상단 '계정관리', 2026-11-18 사용자 지시 — 마이페이지 하단 회원 탈퇴를 여기로 옮김) ───────── */
+async function accountView() {
+  setNav('');
+  if (!requireLogin('/account')) return;
+  view.innerHTML = `<div class="wrap mid">
+    <h1>계정관리</h1><p class="sub" style="font-size:19px;font-weight:700">${esc(me.name)} 님의 계정 정보입니다.</p>
+    <div class="card col" style="margin-top:20px"><h2>로그인 정보</h2>
+      <dl class="kv"><dt>이름</dt><dd>${esc(me.name)}</dd><dt>이메일</dt><dd>${esc(me.email)}</dd></dl></div>
+    <div class="card col" style="margin-top:16px"><h2>비밀번호 변경</h2>
+      <p class="small">8자 이상이고, 지금 쓰는 비밀번호와 달라야 합니다.</p>
+      <input class="input" type="password" id="pw-cur" placeholder="현재 비밀번호" autocomplete="current-password">
+      <input class="input" type="password" id="pw-new" placeholder="새 비밀번호" autocomplete="new-password">
+      <div class="row"><button class="btn primary" id="pw-save">비밀번호 변경</button></div></div>
+    <div class="card col" style="margin-top:16px"><h2>회원 탈퇴</h2>
+      <p class="small">탈퇴하면 진행 중인 응시는 취소되고, 계정·이력서·지원 기록이 삭제되며 되돌릴 수 없습니다.</p>
+      <div class="row"><button class="btn ghost" id="withdraw-btn">회원 탈퇴</button></div></div>
+    <p class="small" style="margin-top:20px"><a href="#/my">← 마이페이지</a></p></div>`;
+  $('#pw-save').onclick = async () => {
+    try {
+      await post('/api/auth/change-password', { current: $('#pw-cur').value, new: $('#pw-new').value });
+      $('#pw-cur').value = ''; $('#pw-new').value = '';
+      toast('비밀번호를 변경했습니다.');
+    } catch (e) { toast(e.message, true); }
+  };
+  $('#withdraw-btn').onclick = () => withdrawFlow();
 }
 
 /* ───────── 요금제·결제 (PRD v0.9 PAY-07~12) ───────── */

@@ -138,7 +138,11 @@ RAG_DUAL_JOB = os.getenv("RAG_DUAL_JOB", "0") == "1"
 RAG_QUESTION_SOURCE = os.getenv("RAG_QUESTION_SOURCE", "chroma")
 RAG_IQ_MIN_SIM = _float("RAG_IQ_MIN_SIM", 0.30)   # 사내문서 질문 검색 유사도 하한. 질문↔공고는 조각↔공고보다 값이 낮다
                                                   # (실측: Redis 인성·기업 문항도 0.27~0.50 구간, ADLC 6.19.1)
-RAG_IQ_REWRITE = os.getenv("RAG_IQ_REWRITE", "0") == "1"   # 1이면 사내문서 질문도 면접마다 다시 쓴다(A15 경로).
+RAG_IQ_REWRITE = os.getenv("RAG_IQ_REWRITE", "0") == "1"
+FOLLOWUP_INTERNAL_REF = os.getenv("FOLLOWUP_INTERNAL_REF", "0") == "1"   # 2026-11-18: 사내문서 질문의 기대 키워드·모범답안을 꼬리질문 판단에 쓸지.
+# 기본 0(끔) — 켜면 판단 ②③은 살아나지만 같은 변경이 B-07 힌트 금지 필터도 함께 깨워
+# 160문항 중 99문항(62%)에서 꼬리질문이 조용히 생략될 수 있다(질문 밖 기대 키워드가 문항당
+# 평균 3.04개 — 구조적 상한, eval_runs/followup_phase1_2026-11-18). A/B 실측 전까지 끈다.   # 1이면 사내문서 질문도 면접마다 다시 쓴다(A15 경로).
                                                   # 기본 0 = 그대로 쓴다 — 다시 쓰기가 8/20만 성공했기 때문(QO-13)
 CONSENT_VERSION = "2026-11-09.v3"   # v2: 제3자 제공 4요소·자동화된 결정 거부권·음성 삭제·국외 보관 문구 · v3: LangSmith 국외 이전(PRD V9-14)
 

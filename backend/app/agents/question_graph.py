@@ -856,7 +856,8 @@ def bank_reference(q):
     실시간 경로이므로 어느 쪽이든 실패는 조용히 빈 값으로 둔다(꼬리질문 판단만 건너뛴다)."""
     ref = {"keywords": [], "ideal": ""}
     gm = q.get("gen_method") or ""
-    if gm.startswith("internal_q:"):
+    # FOLLOWUP_INTERNAL_REF(기본 0): B-07 힌트 금지 생략 위험 측정 전까지 이 분기를 끈다(2026-11-18)
+    if gm.startswith("internal_q:") and config.FOLLOWUP_INTERNAL_REF:
         try:
             from .. import internal_store
             qid = gm[len("internal_q:"):].split("|")[0]

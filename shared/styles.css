@@ -341,6 +341,13 @@ h1 .new-badge { margin-left: 12px; font-size: 12px; transform: translateY(-3px);
 @media (prefers-reduced-motion: reduce) { .grade-orb, .grade-orb::after { animation: none; } }
 
 .empty { padding: 32px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 12px; }
+/* 마이페이지 '내가 좋아할만한 공고' 가로 롤링(2026-11-18 사용자 지시, 사람인 추천 공고 방식).
+   카드 모양은 기존 .card.click(jobCard) 그대로 쓰고 여기서는 움직임만 담당한다. 색 추가 없음 */
+.reco-vp { overflow: hidden; margin-top: 12px; }
+.reco-track { display: flex; gap: 16px; transition: transform .45s ease; will-change: transform; }
+.reco-track > * { flex: 0 0 calc((100% - 32px) / 3); }
+@media (max-width: 820px) { .reco-track > * { flex: 0 0 100%; } }
+@media (prefers-reduced-motion: reduce) { .reco-track { transition: none; } }
 /* 화면 맨 아래 약관 링크(v0.9, 2026-11-06 사용자 승인: 작은 회색 글씨 링크 2개) */
 .legal-links { display: flex; justify-content: center; gap: 18px; padding: 28px 16px 36px; font-size: 12.5px; }
 .legal-links a { color: var(--muted2); text-decoration: none; }
