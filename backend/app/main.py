@@ -88,6 +88,15 @@ def _add_missing(sql):
 # 이미 있는 DB(로컬·Railway)에 v0.9 변경을 적용한다. 모두 IF NOT EXISTS라 여러 번 돌아도 같다. 원본은 schema.sql
 MIGRATIONS_V09 = [
     "ALTER TABLE attempt_questions ADD COLUMN IF NOT EXISTS answer_source TEXT CHECK (answer_source IN ('voice','typed','voice+typed'))",
+    # 2026-11-18 사용자 지시: 지원 건을 지우면 그 알림도 같이 지운다. 앞으로 생기는 알림은 notifications.application_id가 CASCADE로 처리하고,
+    # 이미 쌓여 있던 알림은 아래에서 ① 제목으로 지원 건을 되찾아 연결하고 ② 되찾지 못한 것(= 지원 건이 이미 삭제됨)은 지운다.
+    """UPDATE notifications n SET application_id = ap.id
+         FROM applications ap JOIN jobs j ON j.id = ap.job_id
+        WHERE n.application_id IS NULL AND n.type = 'result' AND ap.user_id = n.user_id
+          AND n.body = '[' || j.title || '] 결과를 마이페이지에서 확인할 수 있습니다.'""",
+    # 본문 형식이 아는 모양일 때만 지운다(형식이 다른 옛 알림은 지우지 않고 남긴다)
+    """DELETE FROM notifications WHERE type = 'result' AND application_id IS NULL
+        AND body LIKE '[%] 결과를 마이페이지에서 확인할 수 있습니다.'""",
 ]
 
 

@@ -75,11 +75,11 @@ def housekeeping():
     # JOB-01: 마감일 경과 공고 자동 마감
     db.run("UPDATE jobs SET status='closed', updated_at=now() WHERE status='published' AND close_date < (now() AT TIME ZONE 'Asia/Seoul')::date")
     # 결과 공개 알림 (v0.6): 합불이 확정되면(auto = 평가 직후, hybrid = 담당자 확인 후) 알린다
-    for r in db.all_("""SELECT a.id, ap.user_id, j.title FROM attempts a JOIN applications ap ON ap.id=a.application_id
+    for r in db.all_("""SELECT a.id, ap.id application_id, ap.user_id, j.title FROM attempts a JOIN applications ap ON ap.id=a.application_id
                         JOIN jobs j ON j.id=ap.job_id JOIN evaluations e ON e.attempt_id=a.id
                         WHERE e.final_result IS NOT NULL AND NOT a.publish_notified"""):
-        db.run("INSERT INTO notifications (user_id, type, title, body) VALUES (%s,'result',%s,%s)",
-               r["user_id"], "1차 결과가 공개되었습니다", f"[{r['title']}] 결과를 마이페이지에서 확인할 수 있습니다.")
+        db.run("INSERT INTO notifications (user_id, type, application_id, title, body) VALUES (%s,'result',%s,%s,%s)",
+               r["user_id"], r["application_id"], "1차 결과가 공개되었습니다", f"[{r['title']}] 결과를 마이페이지에서 확인할 수 있습니다.")
         db.run("UPDATE attempts SET publish_notified=true WHERE id=%s", r["id"])
     retention()
 

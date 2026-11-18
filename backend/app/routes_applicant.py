@@ -52,7 +52,8 @@ def apply(body: Apply, user=Depends(security.applicant)):
         return {"id": existing["id"], "existing": True}
     a = db.run("INSERT INTO applications (job_id, user_id) VALUES (%s,%s) RETURNING id", body.job_id, user["id"])
     for r in db.all_("SELECT id FROM users WHERE company_id=%s AND role='recruiter'", job["company_id"]):
-        db.run("INSERT INTO notifications (user_id, type, title, body) VALUES (%s,'apply','신규 지원',%s)", r["id"], f"[{job['title']}]에 새 지원자가 있습니다.")
+        db.run("INSERT INTO notifications (user_id, type, application_id, title, body) VALUES (%s,'apply',%s,'신규 지원',%s)",
+               r["id"], a["id"], f"[{job['title']}]에 새 지원자가 있습니다.")
     return {"id": a["id"], "existing": False}
 
 

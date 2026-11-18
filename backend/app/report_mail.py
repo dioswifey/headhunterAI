@@ -7,6 +7,7 @@
 - 기업 담당자에게는 메일을 보내지 않는다(대시보드에서 확인).
 """
 import html
+import re
 import threading
 import traceback
 from datetime import timezone
@@ -37,6 +38,73 @@ def _facts(r):
         c = db.one("SELECT coalesce(sum(passed),0) passed, coalesce(sum(total),0) total FROM coding_submissions WHERE attempt_id=%s", r["attempt_id"])
         coding = {"passed": int(c["passed"]), "total": int(c["total"]), "score": float(r["coding_score"] or 0)}
     return {"answered": qs["answered"], "base": qs["base"] or 10, "followups": qs["followups"], "coding": coding}
+
+
+HANGUL = re.compile(r"[가-힣]")
+CAT_KO = {"personality": "인성", "resume": "이력서 기반", "job": "직무 이해도", "company": "기업 이해"}
+
+
+def _model_answer(q):
+    """그 문항의 모범답안 — **모델 호출 0회**(질문 ID로 은행에서 바로 꺼낸다, 2026-11-18 A안).
+
+    갈래마다 있는 곳이 다르다:
+      · 사내문서 질문 `internal_q:` → Chroma 질문 메타의 `model_answer`(528개 전부 한국어·요지 형태)
+      · Redis 은행 `redis:` → Redis 해시. 다만 **236개 중 207개가 영문**이라(2026-11-18 실측)
+        한글이 없으면 쓰지 않는다 — 한글 리포트에 영문 모범답안을 섞지 않는다.
+      · DB `question_bank` → 컬럼 자체가 없다 · 이력서 문항 → **모범답안을 넣지 않는다**(D안):
+        본인 경험을 묻는 질문에 '정답'은 없다. 둘 다 빈 문자열이고 렌더에서 **칸을 뺀다**.
+
+    허용 수치 집합을 문장 자신으로 두는 이유: 은행에 미리 들어 있는 값이라 이 응시의 숫자로 대조하면
+    정상 모범답안이 `invented_number`로 떨어진다. 생성 때 A18이 이미 출처 조각과 토큰을 대조했다(`bad_tokens`).
+    남는 검사는 금지어·지시문 누출이고, 그건 그대로 걸린다."""
+    gm = q.get("gen_method") or ""
+    if not (gm.startswith("internal_q:") or gm.startswith("redis:")):
+        return ""
+    try:
+        from .agents import question_graph as QG
+        ideal = ((QG.bank_reference(dict(q)) or {}).get("ideal") or "").strip()
+    except Exception:  # noqa: BLE001 — 은행 조회 실패는 그 칸만 비운다(메일은 나간다)
+        return ""
+    if not ideal or not HANGUL.search(ideal):
+        return ""
+    return "" if report_guard.check_text([ideal], report_guard.number_tokens(ideal)) else ideal
+
+
+def _questions(attempt_id):
+    """문항별 분석 재료 — **모델 호출 0회**. 이미 평가 때 만들어 둔 `question_scores`를 읽는다.
+
+    기본 문항만 쓴다 — **꼬리질문은 `question_scores` 행이 없다**(채점 대상이 아니다). 개수만 따로 보여 준다.
+    `rationale`·`quote`·모범답안은 `report_guard` 검사를 통과한 것만 남기고, 못 넘으면 **그 칸을 뺀다**
+    (빈 칸이 보이면 미완성으로 읽히므로 렌더에서 아예 그리지 않는다).
+    `improvements`는 지금 비워 둔다 — '개선점'이 문항별인지 전체인지 확인되면 이 자리에 넣는다(전체는 기존 그대로)."""
+    rows = db.all_("""SELECT q.id, q.seq, q.category, q.text, q.gen_method, q.answer_text, q.answer_status
+                      FROM attempt_questions q WHERE q.attempt_id=%s AND q.parent_id IS NULL ORDER BY q.seq""", attempt_id)
+    scores = db.all_("""SELECT s.question_id, s.eval_item, s.score, s.quote, s.rationale, s.verified
+                        FROM question_scores s JOIN attempt_questions q ON q.id=s.question_id
+                        WHERE q.attempt_id=%s AND q.parent_id IS NULL ORDER BY s.question_id, s.eval_item""", attempt_id)
+    by_q = {}
+    for s in scores:
+        by_q.setdefault(s["question_id"], []).append(s)
+    out = []
+    for r in rows:
+        ss = by_q.get(r["id"]) or []
+        ans = r["answer_text"] or ""
+        allowed = report_guard.number_tokens(r["text"], ans, *[s["score"] for s in ss])
+        ans_nums = report_guard.number_tokens(ans)
+        notes, seen = [], set()
+        for s in ss:
+            t = (s["rationale"] or "").strip()
+            if t and t not in seen and not report_guard.check_text([t], allowed):
+                seen.add(t)
+                notes.append((ITEM_KO.get(s["eval_item"], s["eval_item"]), t))
+        quote = next((s["quote"].strip() for s in ss
+                      if s["verified"] and (s["quote"] or "").strip()
+                      and not report_guard.check_text([s["quote"]], ans_nums)), "")
+        out.append({"seq": r["seq"], "category": CAT_KO.get(r["category"], r["category"]), "text": r["text"],
+                    "items": [(ITEM_KO.get(s["eval_item"], s["eval_item"]), int(s["score"])) for s in ss],
+                    "quote": quote, "notes": notes, "model_answer": _model_answer(r), "improvements": [],
+                    "answered": r["answer_status"] == "answered"})
+    return out
 
 
 def _template_coach(items):
@@ -108,12 +176,42 @@ def _list(items, mark):
         '<p style="font-size:14px;color:#737373;margin:0">-</p>'
 
 
+def _chip(label, score):
+    return (f'<span style="display:inline-block;font-size:12px;color:#1a1a1a;background:#f2f2f2;border-radius:99px;'
+            f'padding:3px 9px;margin:0 4px 4px 0">{_e(label)} <b style="color:#000000">{score}</b>/5</span>')
+
+
+def _qa(qa):
+    """문항 1개 블록. **값이 없는 칸은 그리지 않는다**(빈 칸이 보이면 미완성으로 읽힌다)."""
+    parts = [f'<div style="font-size:12px;font-weight:700;color:#737373">Q{qa["seq"]} · {_e(qa["category"])}</div>'
+             f'<p style="margin:6px 0 0;font-size:14px;line-height:1.6;color:#000000;font-weight:600">{_e(qa["text"])}</p>']
+    if not qa["answered"]:
+        parts.append('<p style="margin:8px 0 0;font-size:13px;color:#8c8c8c">답변이 기록되지 않아 분석을 넣지 않았습니다.</p>')
+    if qa["items"]:
+        parts.append('<div style="margin-top:10px">' + "".join(_chip(k, v) for k, v in qa["items"]) + "</div>")
+    if qa["quote"]:
+        parts.append('<div style="margin-top:10px;padding:10px 12px;background:#f7f7f7;border-left:3px solid #d9d9d9;'
+                     f'font-size:13px;line-height:1.6;color:#404040">내 답변에서 — {_e(qa["quote"])}</div>')
+    if qa["notes"]:
+        rows = "".join(f'<li style="margin:4px 0">{_e(k)}: {_e(t)}</li>' for k, t in qa["notes"])
+        parts.append(f'<ul style="margin:10px 0 0;padding-left:18px;font-size:13px;line-height:1.7;color:#404040">{rows}</ul>')
+    if qa["improvements"]:
+        rows = "".join(f'<li style="margin:4px 0">{_e(t)}</li>' for t in qa["improvements"])
+        parts.append(f'<ul style="margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.7;color:#404040">{rows}</ul>')
+    if qa["model_answer"]:
+        parts.append('<div style="margin-top:10px;padding:12px;background:#ffffff;border:1px solid #39FF14;border-radius:10px">'
+                     '<div style="font-size:11px;font-weight:700;letter-spacing:0.4px;color:#000000">이렇게 답하면 좋습니다</div>'
+                     f'<p style="margin:6px 0 0;font-size:13px;line-height:1.7;color:#1a1a1a">{_e(qa["model_answer"])}</p></div>')
+    return ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:14px">'
+            f'<tr><td style="padding:16px;border:1px solid #e6e6e6;border-radius:12px">{"".join(parts)}</td></tr></table>')
+
+
 def _section(title, body):
     return (f'<tr><td style="padding:26px 32px 0"><div style="font-size:15px;font-weight:700;color:#000000;margin-bottom:12px">{title}</div>'
             f'{body}</td></tr>')
 
 
-def render(r, items, facts, coach):
+def render(r, items, facts, coach, qas=()):
     done = r["completed_at"].astimezone(KST) if r["completed_at"] else None
     when = done.strftime("%Y.%m.%d %H:%M") if done else ""
     cod = facts["coding"]
@@ -147,6 +245,9 @@ def render(r, items, facts, coach):
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0">{item_rows}</table>')}
   {_section("잘한 부분", _list(r["strengths"] or [], "✓"))}
   {_section("더 발전할 수 있는 부분", _list(r["improvements"] or [], None))}
+  {_section(f"질문별 분석 <span style='font-size:12px;font-weight:500;color:#8c8c8c'>(기본 질문 {len(qas)}개"
+            + (f" · 꼬리질문 {facts['followups']}개는 채점 대상이 아니라 분석에서 제외" if facts["followups"] else "") + ")</span>",
+            "".join(_qa(q) for q in qas)) if qas else ""}
   <tr><td style="padding:26px 32px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#000000;border-radius:14px">
     <tr><td style="padding:22px 22px 18px">
       <div style="font-size:12px;font-weight:700;letter-spacing:0.5px;color:#39FF14">AI 코치 코멘트</div>
@@ -161,7 +262,7 @@ def render(r, items, facts, coach):
 </table></td></tr></table></body></html>"""
 
 
-def render_text(r, items, facts, coach):
+def render_text(r, items, facts, coach, qas=()):
     lines = [f"{r['name']}님, AI 면접을 마치셨습니다", f"{r['company']} · {r['job_title']}", "",
              f"AI 면접 점수: {float(r['interview_score']):.1f} / 100", f"답변한 기본 질문: {facts['answered']} / {facts['base']}"]
     if facts["coding"]:
@@ -169,6 +270,18 @@ def render_text(r, items, facts, coach):
     lines += ["", "[항목별 점수]"] + [f"- {k}: {v:.0f}" for k, v in items]
     lines += ["", "[잘한 부분]"] + [f"- {s}" for s in r["strengths"] or []]
     lines += ["", "[더 발전할 수 있는 부분]"] + [f"- {s}" for s in r["improvements"] or []]
+    for q in qas:
+        lines += ["", f"[Q{q['seq']} · {q['category']}] {q['text']}"]
+        if not q["answered"]:
+            lines.append("답변이 기록되지 않아 분석을 넣지 않았습니다.")
+        if q["items"]:
+            lines.append("점수: " + " · ".join(f"{k} {v}/5" for k, v in q["items"]))
+        if q["quote"]:
+            lines.append(f"내 답변에서 — {q['quote']}")
+        lines += [f"- {k}: {t}" for k, t in q["notes"]]
+        lines += [f"- {t}" for t in q["improvements"]]
+        if q["model_answer"]:
+            lines += ["이렇게 답하면 좋습니다: " + q["model_answer"]]
     lines += ["", "[AI 코치 코멘트]", coach["coaching"]]
     lines += ["", f"마이페이지: {config.PUBLIC_BASE_URL}/applicant/#/my", "이 리포트는 1차 합격 여부와 관계없이 보내 드립니다."]
     return "\n".join(lines)
@@ -182,7 +295,13 @@ def send(attempt_id):
     facts = _facts(r)
     coach, writer = _coach(r, items, facts)
     try:
-        mailer.send(r["email"], f"[headhunterAI] {r['job_title']} AI 면접 리포트", render_text(r, items, facts, coach), render(r, items, facts, coach))
+        qas = _questions(attempt_id)   # 문항별 분석(모델 0회). 조회가 실패해도 메일은 나간다
+    except Exception:
+        traceback.print_exc()
+        qas = []
+    try:
+        mailer.send(r["email"], f"[headhunterAI] {r['job_title']} AI 면접 리포트",
+                    render_text(r, items, facts, coach, qas), render(r, items, facts, coach, qas))
         db.run("INSERT INTO email_logs (attempt_id, user_id, kind, to_addr, status, writer) VALUES (%s,%s,'applicant_report',%s,'sent',%s)",
                attempt_id, r["user_id"], r["email"], writer)
         return {"ok": True}
