@@ -182,7 +182,9 @@ class Env:
         QG._pick_redis = lambda v, role, cat, n, used: [{"id": None, "doc_id": f"{cat}:{i}",
                                                           "text": COMPANY_BANK if cat == "company" else f"{cat} 문항 {i}번을 설명해 주세요.",
                                                           "subcategory": "관심", "dup_group": f"{cat}{i}"} for i in range(n)]
-        QG._resume_bank_refs = lambda s, role, used: [None, None, None]
+        # 2026-11-18: 호출부가 `_resume_bank_refs(s, role, used, iq_terms)`로 바뀌었다(이력서 참고 문항도
+        # 사내문서 질문을 먼저 찾는다, M-55). 이 가짜 환경은 이력서 참고 문항을 쓰지 않으므로 인자만 맞춘다.
+        QG._resume_bank_refs = lambda s, role, used, iq_terms=None: [None, None, None]
         QG.db.one = lambda *a, **k: dict(JOB)
         return self
 

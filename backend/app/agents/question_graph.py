@@ -316,8 +316,10 @@ def retrieve(s: GenState) -> GenState:
         picks[key] = got
         used |= {_group(b) for b in got}
     if not s["resume_fallback"]:                    # 이력서 질문 3개마다 질문 은행 참고 문항(RAG)
-        picks["resume_bank"] = _resume_bank_refs(s, role, used) if s["use_llm"] else []
-        src["resume_bank"] = "redis" if picks["resume_bank"] and any(b and b.get("doc_id") for b in picks["resume_bank"]) else "-"
+        picks["resume_bank"] = _resume_bank_refs(s, role, used, iq_terms) if s["use_llm"] else []
+        _rb = [b for b in picks["resume_bank"] if b]
+        src["resume_bank"] = ("internal_q" if any(b.get("iq_id") for b in _rb)
+                              else "redis" if any(b.get("doc_id") for b in _rb) else "-")
     src["internal_q"] = iq_why
     return {"picks": picks, "query_vector": vector, "query_vectors": vectors or ([vector] if vector is not None else []),
             "mq_report": mq, "retrieve_report": dict(src),
@@ -397,9 +399,14 @@ def _enrich_character(b):
     return {**b, **{k: it[k] for k in ("char_id", "competency", "intent", "scope", "keep", "signals", "probes")}} if it else b
 
 
-def _resume_bank_refs(s, role, used):
-    """이력서 질문 짝(항목·관점)마다 그 항목 내용으로 Redis 직무 문항을 검색해 가장 가까운 1개(이미 쓴 묶음 제외).
-    실패·없음이면 None(→ 이력서만으로 생성)."""
+def _resume_bank_refs(s, role, used, iq_terms=None):
+    """이력서 질문 짝(항목·관점)마다 그 항목 내용으로 참고 문항 1개를 찾는다(이미 쓴 묶음 제외).
+
+    출처 순서는 다른 카테고리와 같다(2026-11-18, ADLC 6.19.5 · M-55):
+      ① 사내문서 질문(A17, Chroma `internal_questions_job`) → ② Redis 질문 은행(백업).
+    질문 **본체는 계속 이력서**다(RSQ-01~07) — 여기서 찾는 것은 '곁들이는 참고 문항'뿐이고,
+    참고 문항이 사내문서 출처면 그 이력서 문항도 사내문서 출처로 집계된다(M-55가 0.625 → 0.875).
+    질의 벡터는 항목 내용으로 그때그때 만들며(이력서마다 다르다), 실패·없음이면 None(→ 이력서만으로 생성)."""
     from .. import vectorstore
     pairs, refs, seen = Q.resume_pairs(s["candidates"]), [], set(used)
     for cand, _angle in pairs:
@@ -409,15 +416,25 @@ def _resume_bank_refs(s, role, used):
         try:
             from . import question_chain as QC
             vec = llm.embed([QC.QUERY_INSTRUCT + text])[0]
-            for h in vectorstore.knn(vec, k=8, role_codes=[role], categories=["job"], translated_only=True):
-                q = (h.get("question_ko") or h.get("question") or "").strip()
-                g = h.get("dup_group") or h.get("competency") or h["doc_id"]
-                if float(h.get("sim") or 0) < RESUME_BANK_MIN_SIM:
-                    break                        # 가장 가까운 것도 관련이 약하면 참고 문항 없이(이력서만으로) 생성
-                if q and g not in seen and not Q.BLOCKLIST.search(q):
+            if iq_terms is not None:                      # ① 사내문서 질문 먼저
+                got = _pick_internal([vec], role, "job", 1, seen, iq_terms)
+                if got:
+                    b = got[0]
+                    g = b.get("dup_group") or b.get("competency") or b.get("iq_id")
                     seen.add(g)
-                    ref = {"id": None, "doc_id": h["doc_id"], "text": q, "subcategory": h.get("intent_ko") or h.get("competency") or ""}
-                    break
+                    ref = {"id": None, "iq_id": b.get("iq_id"), "doc_id": b.get("doc_id"), "text": b["text"],
+                           "subcategory": b.get("subcategory") or b.get("competency") or "",
+                           "doc_refs": list(b.get("doc_refs") or []), "company_facts": list(b.get("company_facts") or [])}
+            if ref is None:                               # ② Redis 질문 은행(백업)
+                for h in vectorstore.knn(vec, k=8, role_codes=[role], categories=["job"], translated_only=True):
+                    q = (h.get("question_ko") or h.get("question") or "").strip()
+                    g = h.get("dup_group") or h.get("competency") or h["doc_id"]
+                    if float(h.get("sim") or 0) < RESUME_BANK_MIN_SIM:
+                        break                    # 가장 가까운 것도 관련이 약하면 참고 문항 없이(이력서만으로) 생성
+                    if q and g not in seen and not Q.BLOCKLIST.search(q):
+                        seen.add(g)
+                        ref = {"id": None, "doc_id": h["doc_id"], "text": q, "subcategory": h.get("intent_ko") or h.get("competency") or ""}
+                        break
         except Exception:
             ref = None
         refs.append(ref)
@@ -453,6 +470,7 @@ def generate(s: GenState) -> GenState:
     drafts, use_llm = [], s["use_llm"]
     role_name = s["job"].get("role_name") or ""
     n_iq = {"personality": 0, "job": 0, "company": 0}
+    n_iq_resume = 0                       # 이력서 문항 중 참고 문항이 사내문서 질문이었던 수(2026-11-18, M-55)
     for b in s["picks"].get("personality", []):
         if b.get("iq_id") and not config.RAG_IQ_REWRITE:          # 사내문서 질문(인성) — 그대로 출제
             n_iq["personality"] += 1
@@ -476,8 +494,18 @@ def generate(s: GenState) -> GenState:
                 ref = {"section": cand["section"], "index": cand["index"], "label": cand["label"],
                        "quote": (cand["item"].get("detail") or cand["item"].get("source") or "")[:160]}
                 r = {"text": tpl, "resume_ref": ref, "gen_method": "template"}
-            drafts.append({"category": "resume", "eval_items": Q.EVAL_ITEMS["resume"], "bank_id": None, "orig": tpl,
-                           "intent": "이력서 항목의 " + Q.ANGLES[angle], **r})
+            d = {"category": "resume", "eval_items": Q.EVAL_ITEMS["resume"], "bank_id": None, "orig": tpl,
+                 "intent": "이력서 항목의 " + Q.ANGLES[angle], **r}
+            b = banks[i] if i < len(banks) else None
+            if b and b.get("iq_id") and d.get("gen_method") == "llm":
+                # 참고 문항이 사내문서 질문(A17)이면 그 출처를 이 문항에도 남긴다(2026-11-18, M-55).
+                # iq_source=True — 근거는 A17 질문 자신이고 A18이 이미 대조했으므로, 이 면접에 주입된
+                # 조각(internal_refs)과 다시 맞추지 않는다(6.19.5의 A17 분기와 같은 이유).
+                # doc_refs를 달면 7-B 누출 관문의 검사 대상이 된다 — 사내문서가 닿는 문항은 전부 검사받는다.
+                d.update({"doc_refs": list(b.get("doc_refs") or []), "company_facts": list(b.get("company_facts") or []),
+                          "iq_source": True, "ref_text": b.get("text") or ""})
+                n_iq_resume += 1
+            drafts.append(d)
     n_rag, rag_by = 0, {"job": 0, "company": 0}
     for cat in ("job", "company"):
         for b in s["picks"].get(cat, []):
@@ -510,13 +538,14 @@ def generate(s: GenState) -> GenState:
             drafts.append(d)
     rr = s.get("retrieve_report") or {}
     redis_ok = any(rr.get(k) == "redis" for k in ("personality", "job", "company", "resume_bank"))
-    chroma_ok = bool(s.get("internal_context") and s.get("forbid_ready")) or sum(n_iq.values()) > 0
+    chroma_ok = bool(s.get("internal_context") and s.get("forbid_ready")) or sum(n_iq.values()) > 0 or n_iq_resume > 0
     mode = {(True, True): "dual", (True, False): "redis_only", (False, True): "chroma_only", (False, False): "safe"}[(redis_ok, chroma_ok)]
     total_iq = sum(n_iq.values())
     # 사내문서 출처 문항 = A17 질문 + 조각 근거가 남은 문항(이 둘은 겹치지 않는다 — A17 문항은 다시 쓰지 않으므로)
     dual = {"mode": mode, "redis": redis_ok, "chroma": chroma_ok, "job_rag": rag_by["job"],
             "company_rag": rag_by["company"], "internal_q": dict(n_iq), "internal_q_total": total_iq,
-            "internal_total": total_iq + n_rag, "questions": len(drafts)}
+            "resume_iq_ref": n_iq_resume,
+            "internal_total": total_iq + n_rag + n_iq_resume, "questions": len(drafts)}
     return {"drafts": drafts, "dual_report": dual,
             "log": s["log"] + [f"generate: {len(drafts)}문항" + (f" · 사내문서 질문 {total_iq}" if total_iq else "")
                                + (f" · 사내문서 근거 {n_rag}" if n_rag else "") + f" · RAG {mode}"]}
@@ -665,8 +694,10 @@ def guard_disclosure(s: GenState) -> GenState:
                 why.append("facts_unmatched")
             if not set(d["doc_refs"]) <= injected:
                 why.append("doc_ref_invalid")
-        snap = (s.get("snapshot") or {}) if d["category"] == "job" else {}   # 직무 Dual RAG 문항은 이력서 토큰 허용(6.18.3)
-        base = " ".join([d["orig"]] + ((d.get("company_facts") or []) if iq else []) + bodies)
+        # 직무 Dual RAG 문항(6.18.3)과 이력서 문항(2026-11-18)은 본문이 이력서라 이력서 토큰을 허용한다
+        snap = (s.get("snapshot") or {}) if d["category"] in ("job", "resume") else {}
+        # ref_text = 이력서 문항이 참고한 A17 질문 원문(A18 검증을 통과한 문장) — 거기서 온 용어를 지어낸 것으로 보지 않는다
+        base = " ".join([d["orig"], d.get("ref_text") or ""] + ((d.get("company_facts") or []) if iq else []) + bodies)
         if Q.BLOCKLIST.search(d["text"]) or Q._bad_tokens(d["text"], base, job, snap):
             why.append("rule")
         if not why and s.get("use_llm") and REVIEW:
@@ -686,10 +717,12 @@ def guard_disclosure(s: GenState) -> GenState:
                 rep["reasons"][w] = rep["reasons"].get(w, 0) + 1
             d["text"] = d["orig"]
             d["guard"] = "blocked"
-            if iq:
+            if iq and d["category"] != "resume":
                 # A17 질문이 관문에 걸렸다 = 그 질문 자체를 쓰면 안 된다. 되돌릴 은행 원문이 없으므로
                 # 문항을 버리고 백업 층(Redis·DB 은행)에서 같은 카테고리 문항으로 채운다(6.19.5).
                 d["drop"] = True
+            # 이력서 문항은 되돌릴 자리가 있다 — orig가 이력서 항목으로 만든 템플릿 질문이고(RSQ 기본 대체 경로),
+            # 은행·DB에는 resume 카테고리 문항이 없다. 그래서 교체하지 않고 템플릿으로 남긴다(문항 수 유지).
             _drop_rag(d)
         else:
             d["guard"] = "pass"

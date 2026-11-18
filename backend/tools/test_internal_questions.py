@@ -16,15 +16,19 @@
   I7  7-B가 사내문서 질문을 차단 → finalize가 백업 문항으로 바꿔 **8문항을 유지**한다
   I8  `RAG_IQ_REWRITE=1` → 사내문서 질문도 면접마다 다시 쓴다(A15 경로를 탄다)
   I9  Redis 비율 지표(M-55·M-58) 계산이 gen_method 문자열과 맞는다
+  I10 이력서 참고 문항도 사내문서 질문을 먼저 쓴다(2026-11-18, M-55 0.625 → 0.875 목표):
+      `_resume_bank_refs`를 **실제로 돌려** ① 참고 문항이 internal_q로 잡히고 ② dual_report.resume_iq_ref가 세어지고
+      ③ 이력서 문항 gen_method에 `|internal:`이 붙는지 · 역량이 모자라면 그 문항만 Redis 백업으로 내려가는지
 """
 import os
 import sys
+import types
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from tools import test_internal_rag_graph as T  # noqa: E402  (가짜 모듈 설치 포함)
 
-from app import config, internal_store, questions as Q  # noqa: E402
+from app import config, internal_store, llm, questions as Q  # noqa: E402
 from app.agents import internal_qcat as QC, internal_question_agent as IQ, question_graph as QG  # noqa: E402
 
 OK, FAIL = [], []
@@ -347,6 +351,148 @@ def t_metric():
     check("I9 M-55 미달·M-58 미달 판정", r["m55_pass"] is False and r["m58_pass"] is False, str(r))
 
 
+# ---------------- I10 이력서 참고 문항도 사내문서 질문을 먼저 (2026-11-18, M-55) ----------------
+# I4~I8 환경(T.Env)은 `_resume_bank_refs`를 통째로 가짜로 바꿔 버려서 이 경로가 한 줄도 지나가지 않았다.
+# 여기서는 **진짜 함수**를 돌린다 → 호스트에 없는 모듈만 가짜로 채운다(컨테이너에서는 진짜를 쓴다).
+_REAL_RESUME_BANK_REFS = QG._resume_bank_refs        # 어떤 Env도 켜지지 않은 지금이 진짜다
+
+try:
+    from app import vectorstore as _VS               # noqa: E402
+except Exception:                                    # noqa: BLE001 — 호스트에 redis 패키지가 없다
+    _VS = types.ModuleType("app.vectorstore")
+    _VS.knn = lambda *a, **k: []
+    sys.modules["app.vectorstore"] = _VS
+try:
+    from app.agents import question_chain as _QCH    # noqa: E402
+except Exception:                                    # noqa: BLE001 — 호스트에 langchain_core가 없다
+    _QCH = types.ModuleType("app.agents.question_chain")
+    _QCH.QUERY_INSTRUCT = "검색 질의: "
+    sys.modules["app.agents.question_chain"] = _QCH
+
+
+class ResumeIQEnv(IQEnv):
+    """`_resume_bank_refs`를 진짜로 돌리는 환경.
+
+    ref_pool = 이력서 참고 문항으로 내줄 역량 목록. `used`를 **실제로 지켜서** 한 번 쓴 역량은
+    다시 내주지 않는다 → 목록이 짧으면 뒤쪽 이력서 문항이 Redis 백업으로 내려가는 걸 재현한다.
+    iq_on=False면 사내문서 질문이 아예 없는 환경(참고 문항 전부 Redis).
+    """
+
+    def __init__(self, ref_pool=None, knn_sim=0.70, iq_on=True, **kw):
+        super().__init__(**kw)
+        self.ref_pool = ["ref0", "ref1", "ref2"] if ref_pool is None else list(ref_pool)
+        self.knn_sim, self.iq_on = knn_sim, iq_on
+        self.ref_calls = self.knn_calls = self.embed_calls = 0
+
+    def pick_internal(self, vecs, role, cat, n, used, terms):
+        # 이력서 참고 문항 호출만 가로챈다(`_resume_bank_refs`는 cat="job" · n=1로 부른다).
+        # 카테고리 문항(직무 n=2 등)은 IQEnv의 기존 가짜 그대로.
+        if not (cat == "job" and n == 1):
+            return super().pick_internal(vecs, role, cat, n, used, terms)
+        self.ref_calls += 1
+        if terms is None or not self.iq_on:
+            return None
+        left = [g for g in self.ref_pool if g not in set(used)]
+        if not left:
+            return None                              # 역량이 다 쓰였다 → 호출 쪽이 Redis 백업으로
+        g = left[0]
+        return [{"id": None, "doc_id": f"DOC-{g}", "iq_id": f"IQ-{g}",
+                 "text": f"{g} 사내문서 참고 문항을 설명해 주세요.", "intent": "의도", "competency": g,
+                 "subcategory": "의도", "dup_group": g, "sim": 0.5, "chunk_id": f"C-{g}",
+                 "doc_refs": [f"DOC-{g}#s1"], "company_facts": [], "model_answer": "요지",
+                 "expected_keywords": "가"}]
+
+    def embed(self, texts, **kw):
+        self.embed_calls += 1
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+    def knn(self, vec, k=8, **kw):
+        self.knn_calls += 1
+        # dup_group을 호출마다 다르게 → `seen` 중복 제거에 걸리지 않게(백업 경로 자체를 보려는 검사)
+        return [{"doc_id": f"ai_ax:ai-90{self.knn_calls}", "question_ko": "Redis 백업 참고 문항을 설명해 주세요.",
+                 "dup_group": f"redis-ref-{self.knn_calls}", "intent_ko": "관심", "sim": self.knn_sim}]
+
+    def __enter__(self):
+        out = super().__enter__()
+        self._saved3 = [(QG, "_resume_bank_refs", QG._resume_bank_refs), (llm, "embed", llm.embed),
+                        (_VS, "knn", getattr(_VS, "knn", None))]
+        QG._resume_bank_refs = _REAL_RESUME_BANK_REFS
+        llm.embed = self.embed
+        _VS.knn = self.knn
+        return out
+
+    def __exit__(self, *a):
+        for m, n, v in self._saved3:
+            setattr(m, n, v)
+        return super().__exit__(*a)
+
+
+def _resume_qs(qs):
+    return [q for q in qs if q["category"] == "resume"]
+
+
+def _retrieve_log(info):
+    """`generate_set`은 retrieve_report를 돌려주지 않는다(2026-11-18 확인) → 관측 가능한 건 로그 줄뿐.
+    `retrieve: … resume_bank 3(internal_q) …` 형태."""
+    return next((ln for ln in (info.get("log") or []) if ln.startswith("retrieve:")), "")
+
+
+def t_resume_internal():
+    """ⓐ 사내문서 참고 문항이 넉넉하면 이력서 3문항 전부 사내문서 출처."""
+    env = ResumeIQEnv()
+    qs, info = _run(env)
+    rq = _resume_qs(qs)
+    check("I10 8문항 · 이력서 3문항", len(qs) == 8 and len(rq) == 3, str([q["category"] for q in qs]))
+    check("I10 이력서 항목마다 참고 문항을 찾는다(3회)", env.ref_calls == 3, str(env.ref_calls))
+    check("I10 참고 문항은 사내문서 질문 — Redis 백업 미호출", env.knn_calls == 0, str(env.knn_calls))
+    check("I10 로그 resume_bank 출처 = internal_q", "resume_bank 3(internal_q)" in _retrieve_log(info),
+          _retrieve_log(info))
+    dr = info.get("dual_report") or {}
+    check("I10 dual_report.resume_iq_ref = 3", dr.get("resume_iq_ref") == 3, str(dr))
+    check("I10 internal_total = 8(카테고리 질문 5 + 이력서 3)", dr.get("internal_total") == 8, str(dr))
+    check("I10 이력서 문항 gen_method에 |internal: 조각 ID",
+          all((q.get("gen_method") or "").startswith("llm|internal:DOC-ref") for q in rq),
+          str([q.get("gen_method") for q in rq]))
+    # M-55 집계와 실제로 맞물리는지(eval_source_mix가 세는 그 문자열인지)를 같이 본다
+    from tools import eval_source_mix as M
+    r = M.summarize([{"pid": "T", "questions": [{"category": q["category"], "gen_method": q.get("gen_method")}
+                                                for q in qs]}])
+    check("I10 M-55 = 1.000(8/8) · M-58 = 0", r["internal"] == 8 and r["redis"] == 0, str(r))
+
+
+def t_resume_internal_short():
+    """ⓑ 역량이 1개뿐 → 첫 문항만 사내문서, 나머지는 Redis 백업(문항 수는 유지)."""
+    env = ResumeIQEnv(ref_pool=["ref0"])
+    qs, info = _run(env)
+    rq = _resume_qs(qs)
+    check("I10 역량 부족에도 8문항", len(qs) == 8 and len(rq) == 3, str(len(qs)))
+    check("I10 모자란 2문항만 Redis 백업 호출", env.knn_calls == 2, str(env.knn_calls))
+    dr = info.get("dual_report") or {}
+    check("I10 dual_report.resume_iq_ref = 1", dr.get("resume_iq_ref") == 1, str(dr))
+    internal = [q for q in rq if "|internal:" in (q.get("gen_method") or "")]
+    check("I10 이력서 문항 중 1개만 사내문서 출처", len(internal) == 1,
+          str([q.get("gen_method") for q in rq]))
+
+
+def t_resume_internal_off():
+    """ⓒ 사내문서 질문이 없으면 참고 문항은 전부 Redis(2026-11-16까지의 동작) — 되돌릴 길이 살아 있는지."""
+    env = ResumeIQEnv(iq_on=False)
+    qs, info = _run(env)
+    rq = _resume_qs(qs)
+    check("I10 사내문서 질문 없음 → Redis 3회", env.knn_calls == 3, str(env.knn_calls))
+    check("I10 로그 resume_bank 출처 = redis", "resume_bank 3(redis)" in _retrieve_log(info), _retrieve_log(info))
+    check("I10 dual_report.resume_iq_ref = 0", (info.get("dual_report") or {}).get("resume_iq_ref") == 0)
+    check("I10 이력서 문항에 |internal: 없음", not any("internal:" in (q.get("gen_method") or "") for q in rq),
+          str([q.get("gen_method") for q in rq]))
+
+    # 유사도 하한 미달 → 참고 문항 없이(이력서만으로) 생성, 그래도 8문항
+    env = ResumeIQEnv(iq_on=False, knn_sim=QG.RESUME_BANK_MIN_SIM - 0.05)
+    qs, info = _run(env)
+    check("I10 Redis도 하한 미달 → 참고 문항 없이 8문항", len(qs) == 8, str(len(qs)))
+    check("I10 참고 문항 없음 → 로그 resume_bank 출처 = '-'",
+          "resume_bank 3(-)" in _retrieve_log(info), _retrieve_log(info))
+
+
 def main():
     t_qcat()
     t_validate()
@@ -357,6 +503,9 @@ def main():
     t_guard_blocked()
     t_rewrite()
     t_metric()
+    t_resume_internal()
+    t_resume_internal_short()
+    t_resume_internal_off()
     print(f"\n{len(OK)}/{len(OK) + len(FAIL)}" + (f"  실패: {FAIL}" if FAIL else ""))
     return 1 if FAIL else 0
 
