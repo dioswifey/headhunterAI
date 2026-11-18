@@ -81,7 +81,28 @@ def housekeeping():
         db.run("INSERT INTO notifications (user_id, type, application_id, title, body) VALUES (%s,'result',%s,%s,%s)",
                r["user_id"], r["application_id"], "1차 결과가 공개되었습니다", f"[{r['title']}] 결과를 마이페이지에서 확인할 수 있습니다.")
         db.run("UPDATE attempts SET publish_notified=true WHERE id=%s", r["id"])
+    deadline_reminders()
     retention()
+
+
+def deadline_reminders():
+    """면접 마감 임박 알림(2026-11-18 사용자 지시). 아직 응시(완료·중단·장애중단)하지 않은 지원 건만 대상 —
+    준비 단계(동의·이력서·환경점검) 어디에 있든 상관없다. 마감일 1일 전·당일 각 1회만(중복 방지 플래그)."""
+    base = """SELECT ap.id application_id, ap.user_id, j.title FROM applications ap
+              JOIN jobs j ON j.id=ap.job_id
+              WHERE j.status='published' AND j.close_date=%s AND NOT ap.{flag}
+                AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.application_id=ap.id
+                                AND a.status IN ('completed','terminated','cancelled'))"""
+    tomorrow = "(now() AT TIME ZONE 'Asia/Seoul')::date + 1"
+    today = "(now() AT TIME ZONE 'Asia/Seoul')::date"
+    for r in db.all_(base.format(flag="deadline1d_notified") % tomorrow):
+        db.run("INSERT INTO notifications (user_id, type, application_id, title, body) VALUES (%s,'deadline_1d',%s,%s,%s)",
+               r["user_id"], r["application_id"], "면접 마감이 내일입니다", f"[{r['title']}] 지원 마감이 내일까지입니다. 서두르지 않으면 면접을 볼 수 없습니다.")
+        db.run("UPDATE applications SET deadline1d_notified=true WHERE id=%s", r["application_id"])
+    for r in db.all_(base.format(flag="deadlinetoday_notified") % today):
+        db.run("INSERT INTO notifications (user_id, type, application_id, title, body) VALUES (%s,'deadline_today',%s,%s,%s)",
+               r["user_id"], r["application_id"], "오늘이 면접 마감일입니다", f"오늘까지 [{r['title']}]의 면접 마감일입니다.")
+        db.run("UPDATE applications SET deadlinetoday_notified=true WHERE id=%s", r["application_id"])
 
 
 def retention():

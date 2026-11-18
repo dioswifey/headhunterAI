@@ -401,19 +401,24 @@ function bindAppsTable(refresh) {
 const ROW_STYLE = 'padding:10px 0;border-bottom:1px solid var(--line)';
 
 function myJobRow(a) {
-  // 2026-11-18 사용자 지시: 단계별 상세(동의 필요 등) 대신 미완료만, 버튼도 다음 단계 이름 말고 '이어서 진행하기'로 통일
+  // 2026-11-18 사용자 지시: 단계별 상세(동의 필요 등) 대신 미완료만, 버튼도 다음 단계 이름 말고 '이어서 진행하기'로 통일.
+  // 제목줄과 상태·버튼줄을 항상 위아래로 쌓는다(한 줄에 욱여넣어 좁은 화면에서 지저분하게 줄바꿈되던 것을 없앰) —
+  // 그만큼 줄 하나가 길어지니 '나의 공고'가 길면 CUT(3)로 자르고 미니 페이지로 더 보여준다(아래 mypage 참고)
+  // 2026-11-18 사용자 지시: 가로로 긴 목록 한 줄짜리라 왼쪽에 쏠려 보였다 — '내가 좋아할만한 공고'와 같은
+  // 카드 그리드로 바꿔 폭을 채운다(모던 대시보드 레이아웃)
   const status = a.attempt_id ? '<span class="pill dim">응시함</span>' : '<span class="pill dim">미완료</span>';
   const action = a.attempt_id ? appAction(a) : `<button class="btn sm primary" data-cont="${a.id}">이어서 진행하기</button>`;
-  return `<div class="between" style="${ROW_STYLE}">
-    <span style="min-width:0"><b>${esc(a.title)}</b><div class="small">${esc(a.company)} · 지원일 ${fmtYMD(a.created_at)}${a.coding_enabled ? ' · 코딩테스트 포함' : ''}</div></span>
-    <span class="row" style="gap:8px">${status}${action}${isTestApplicant() ? `<button class="btn sm ghost" data-devcancel="${a.id}" title="테스트 계정 전용">접수 취소</button>` : ''}</span></div>`;
+  return `<div class="card">
+    <b>${esc(a.title)}</b><div class="small">${esc(a.company)} · 지원일 ${fmtYMD(a.created_at)}${a.coding_enabled ? ' · 코딩테스트 포함' : ''}</div>
+    <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">${status}${action}${isTestApplicant() ? `<button class="btn sm ghost" data-devcancel="${a.id}" title="테스트 계정 전용">접수 취소</button>` : ''}</div></div>`;
 }
 
-function myInterviewRow(a) {
-  const state = a.attempt_status ? ATTEMPT_KO[a.attempt_status] : '응시 가능';
-  return `<div class="between" style="${ROW_STYLE}">
-    <span style="min-width:0"><b>${esc(a.title)}</b><div class="small">${esc(a.company)} · 결과 공개 ${fmtYMD(a.result_date)}</div></span>
-    <span class="row" style="gap:8px"><span class="pill ${a.attempt_status ? 'dim' : 'neon'}">${esc(state)}</span>${appAction(a)}</span></div>`;
+/* 알림 한 줄 — 유형별 안내(2026-11-18 사용자 지시: 면접 진행상황을 '나의 면접' 블록 대신 여기로) */
+const NOTE_KO = { deadline_1d: '마감 임박', deadline_today: '오늘 마감', result: '결과 도착', apply: '신규 지원', ops: '확인 필요' };
+function myNoteRow(n) {
+  return `<div style="${ROW_STYLE}">
+    <div class="row" style="gap:8px"><span class="pill ${n.read_at ? 'dim' : 'neon'}">${esc(NOTE_KO[n.type] || '알림')}</span><b>${esc(n.title)}</b></div>
+    <div class="small" style="margin-top:6px">${esc(n.body)}</div></div>`;
 }
 
 /* '더보기' 미니 페이지: 그 목록만 모아 띄운다. 안에서 버튼·링크를 누르면 창을 닫고 그 화면으로 간다 */
@@ -459,37 +464,39 @@ async function mypage() {
   const open = allJobs.filter((j) => j.status === 'published' && j.role_status === 'active');
   const branch = open.filter((j) => /^헤드헌터랩_/.test(j.company || ''));
   const reco = shuffle(branch.length ? branch : open).slice(0, 9);
-  // 나의 면접 = 응시 기록이 있거나 바로 응시할 수 있는 지원 건
-  const mine = apps.filter((a) => a.attempt_id || a.step === 'ready');
   const CUT = 3;
-  const blockHtml = (name, list, rowFn, moreId, emptyMsg) => `<div class="card">
-    <div class="between"><h2>${name}</h2>${list.length > CUT ? `<button class="btn sm ghost" id="${moreId}">더보기</button>` : ''}</div>
+  // 2026-11-18 사용자 지시: '나의 면접' 블록을 없애고 그 내용(진행 상황)은 Notification으로 옮긴다(아래
+  // scheduler.deadline_reminders가 마감 1일 전·당일 알림을 만든다. 결과 도착 알림은 기존 그대로).
+  // Notification·내 이력서 관리를 맨 위로, '나의 공고'는 짝이 없어졌으니 한 줄 꽉 채운 카드 하나로.
+  const blockHtml = (name, list, rowFn, moreId, emptyMsg, opt = {}) => `<div class="card${opt.hl ? ' hl' : ''}">
+    <div class="between"><h2${opt.hl ? ' class="neon"' : ''}>${name}</h2>${list.length > CUT ? `<button class="btn sm ghost" id="${moreId}">더보기</button>` : ''}</div>
     ${list.length ? list.slice(0, CUT).map(rowFn).join('') : `<p class="small">${emptyMsg}</p>`}
     ${list.length > CUT ? `<p class="small" style="margin-top:10px">전체 ${list.length}건 중 ${CUT}건을 보여 드립니다.</p>` : ''}</div>`;
 
   view.innerHTML = `<div class="wrap">
     <h1>마이페이지</h1><p class="sub" style="font-size:19px;font-weight:700">${esc(me.name)} 님의 지원 현황입니다.</p>
-    <div class="card" style="margin-top:24px">
+    <div class="grid2" style="margin-top:24px;align-items:start">
+      ${blockHtml('Notification', notes, myNoteRow, 'more-notes', '새 알림이 없습니다.', { hl: true })}
+      <div class="card"><div class="between"><h2>내 이력서 관리</h2><a class="btn sm" href="#/resume/new">+ 내 이력서 등록하기</a></div>
+        ${resumes.length ? resumes.map((r) => `<div class="between" style="${ROW_STYLE}"><span><b>${esc(r.title)}</b> <span class="small">${fmtYMD(r.updated_at)}</span></span><button class="btn sm ghost" data-delres="${r.id}">삭제</button></div>`).join('') : '<p class="small">등록한 이력서가 없습니다. 위 버튼으로 지금 등록하거나, 지원 과정에서 저장할 수 있습니다.</p>'}</div>
+    </div>
+    <div class="card" style="margin-top:16px">
       <div class="between"><h2>내가 좋아할만한 공고</h2><a class="btn sm" href="#/jobs">공고 둘러보기</a></div>
       ${reco.length ? `<div class="reco-vp" id="reco-vp" style="margin-top:12px"><div class="reco-track">${reco.map(jobCard).join('')}</div></div>`
       : '<p class="small" style="margin-top:12px">지금 접수 중인 공고가 없습니다.</p>'}
     </div>
-    <div class="grid2" style="margin-top:22px;align-items:start">
-      ${blockHtml('나의 공고', apps, myJobRow, 'more-jobs', '아직 지원한 공고가 없습니다.')}
-      ${blockHtml('나의 면접', mine, myInterviewRow, 'more-ivs', '아직 응시할 면접이 없습니다.')}
-    </div>
-    <div class="grid2" style="margin-top:16px;align-items:start">
-      <div class="card hl"><h2 class="neon">Notification</h2>
-        ${notes.length ? notes.map((n) => `<div style="${ROW_STYLE}"><b>${esc(n.title)}</b><div class="small">${esc(n.body)}</div></div>`).join('') : '<p class="small">새 알림이 없습니다.</p>'}</div>
-      <div class="card"><div class="between"><h2>내 이력서 관리</h2><a class="btn sm" href="#/resume/new">+ 내 이력서 등록하기</a></div><p class="small">지원할 때 불러와 쓸 수 있습니다. 지원에 제출한 이력서는 별도로 보관됩니다.</p>
-        ${resumes.length ? resumes.map((r) => `<div class="between" style="${ROW_STYLE}"><span><b>${esc(r.title)}</b> <span class="small">${fmtYMD(r.updated_at)}</span></span><button class="btn sm ghost" data-delres="${r.id}">삭제</button></div>`).join('') : '<p class="small">등록한 이력서가 없습니다. 위 버튼으로 지금 등록하거나, 지원 과정에서 저장할 수 있습니다.</p>'}</div>
+    <div style="margin-top:16px">
+      <div class="between"><h2>나의 공고</h2>${apps.length > CUT ? '<button class="btn sm ghost" id="more-jobs">더보기</button>' : ''}</div>
+      ${apps.length ? `<div class="grid2" style="margin-top:12px;align-items:start">${apps.slice(0, CUT).map(myJobRow).join('')}</div>`
+        : '<p class="small" style="margin-top:12px">아직 지원한 공고가 없습니다.</p>'}
+      ${apps.length > CUT ? `<p class="small" style="margin-top:10px">전체 ${apps.length}건 중 ${CUT}건을 보여 드립니다.</p>` : ''}
     </div></div>`;
 
   if ($('#reco-vp')) startReco($('#reco-vp'));
   $$('[data-job]').forEach((b) => (b.onclick = () => go(`#/jobs/${b.dataset.job}`)));
   bindAppsTable(mypage);
-  if ($('#more-jobs')) $('#more-jobs').onclick = () => miniPage('나의 공고', apps.map(myJobRow).join(''));
-  if ($('#more-ivs')) $('#more-ivs').onclick = () => miniPage('나의 면접', mine.map(myInterviewRow).join(''));
+  if ($('#more-jobs')) $('#more-jobs').onclick = () => miniPage('나의 공고', `<div class="col" style="gap:10px">${apps.map(myJobRow).join('')}</div>`);
+  if ($('#more-notes')) $('#more-notes').onclick = () => miniPage('Notification', notes.map(myNoteRow).join(''));
   $$('[data-delres]').forEach((b) => (b.onclick = async () => { await del(`/api/me/resumes/${b.dataset.delres}`); mypage(); }));
   if (notes.some((n) => !n.read_at)) post('/api/me/notifications/read');
 }
@@ -646,7 +653,7 @@ function renderEditor(state) {
   const left = state.extraction ? originalPane(state.extraction) : '';
   $('#editor').innerHTML = `${state.extraction && state.extraction.status === 'failed'
     ? '<div class="err" style="margin-bottom:14px">파일에서 내용을 충분히 읽지 못했습니다. 직접 입력해 주세요. 인식된 부분은 미리 채워 두었습니다.</div>' : ''}
-    ${state.extraction && state.extraction.status === 'review' ? '<div class="note" style="margin-bottom:14px">원문과 인식 결과를 비교해 틀린 부분을 고쳐 주세요. 점선으로 표시된 항목은 인식 신뢰도가 낮은 쪽에서 나온 것입니다. AI 질문은 확인을 마친 내용만 사용합니다.</div>' : ''}
+    ${state.extraction && state.extraction.status === 'review' ? '<div class="note" style="margin-bottom:14px">원문과 인식 결과를 비교해 틀린 부분을 고쳐 주세요.</div>' : ''}
     <div class="${left ? 'split' : ''}">${left}<div>${formHtml(state.data)}</div></div>
     <div class="card" style="margin-top:16px"><label class="check"><input type="checkbox" id="save"><span>이 내용을 마이페이지 '내 이력서'에도 저장</span></label>
       <div class="field" id="save-title-wrap" style="margin-top:10px;display:none"><label>이력서 제목 *</label><input id="save-title" placeholder="예: 백엔드 지원용 이력서" maxlength="100"></div>
@@ -755,9 +762,7 @@ function pollExtraction(id, state) {
     const x = await get(`/api/resume/extractions/${id}`);
     if (x.status === 'processing') {
       $('#progress').innerHTML = `<div class="card"><div class="between"><b><span class="spinner"></span> ${stageLabel(x.stage)}</b><span class="small">${x.progress}%</span></div>
-        <div class="bar" style="margin-top:10px"><i style="width:${x.progress}%"></i></div>
-        <div class="row" style="margin-top:10px"><button class="btn sm" id="skip-wait">기다리지 않고 다음 단계로</button></div></div>`;
-      $('#skip-wait').onclick = () => { stopped = true; skipWait(state); };
+        <div class="bar" style="margin-top:10px"><i style="width:${x.progress}%"></i></div></div>`;
       setTimeout(tick, 1000);
       return;
     }
@@ -812,7 +817,7 @@ async function envView(appId) {
           <div class="row" style="margin:8px 0"><select id="cam-sel" style="flex:1;min-width:0"><option value="">기본 카메라</option></select></div>
           <p class="small" id="cam-msg" style="display:none"></p>
           <div class="cam" id="cam" style="width:100%;max-width:320px">카메라 연결 중</div></div>
-        <div class="card"><div class="between"><h3>③ 스피커</h3><span class="pill dim" id="s-speaker">대기</span></div><p class="small">면접 때 쓸 헤드폰·스피커를 고르고 테스트음을 재생하세요. 소리가 끝까지 들렸을 때만 '들립니다'를 누르세요. 면접 질문 음성은 Windows 기본 출력 장치로 나오므로, 헤드폰을 쓰려면 Windows에서도 헤드폰을 기본 장치로 지정해 두세요.</p>
+        <div class="card"><div class="between"><h3>③ 스피커</h3><span class="pill dim" id="s-speaker">대기</span></div><p class="small">면접 때 쓸 헤드폰·스피커를 고르고 테스트음을 재생하세요. 소리가 끝까지 들렸을 때만 '들립니다'를 누르세요.</p>
           <div class="row" style="margin:8px 0" id="spk-row"><select id="spk-sel" style="flex:1;min-width:0"><option value="">기본 출력 장치</option></select></div>
           <div class="row"><button class="btn sm" id="tone">테스트음 재생</button><button class="btn sm" id="heard" disabled>들립니다</button><button class="btn sm ghost" id="not-heard" disabled>안 들립니다</button></div>
           <p class="small" id="spk-msg" style="display:none"></p></div>
@@ -878,13 +883,23 @@ async function envView(appId) {
         || (mic && outs.find((d) => d.groupId === mic.groupId && (!hfp || isHfp(d.label))));
       media.spkId = same ? same.deviceId : '';
     }
-    // 시스템이 알려 주는 장치를 거르지 않고 그대로 모두 보여 준다(Windows '기본값 -'·'커뮤니케이션 -' 항목 포함)
+    // 2026-11-18 사용자 지시: Windows가 같은 물리 장치를 '기본값 -'·'커뮤니케이션 -'·실제 항목 셋으로
+    // 나눠 알려 주는 것을 하나로 합친다(groupId 기준, 실제 항목을 우선) · 이름의 접두어도 지운다
     const put = (sel, kind, cur, base) => {
-      const opts = list.filter((d) => d.kind === kind && d.deviceId);
+      let opts = list.filter((d) => d.kind === kind && d.deviceId);
+      const isVirtual = (d) => d.deviceId === 'default' || d.deviceId === 'communications';
+      const byKey = new Map();
+      for (const d of opts) {
+        const key = d.groupId || d.deviceId;
+        const prev = byKey.get(key);
+        if (!prev || (isVirtual(prev) && !isVirtual(d))) byKey.set(key, d);
+      }
+      opts = [...byKey.values()];
       const hasDefault = opts.some((d) => d.deviceId === 'default');
-      const want = cur || (hasDefault ? 'default' : '');
-      $(sel).innerHTML = (hasDefault ? '' : `<option value="">${base}</option>`)
-        + opts.map((d, i) => `<option value="${esc(d.deviceId)}"${d.deviceId === want ? ' selected' : ''}>${esc(d.label || `${base.slice(3)} ${i + 1}`)}</option>`).join('');
+      const want = cur || (hasDefault ? 'default' : (opts[0] ? opts[0].deviceId : ''));
+      const label = (d, i) => (d.label || `${base.slice(3)} ${i + 1}`).replace(/^(기본값|커뮤니케이션)\s*-\s*/, '');
+      $(sel).innerHTML = (hasDefault || opts.length ? '' : `<option value="">${base}</option>`)
+        + opts.map((d, i) => `<option value="${esc(d.deviceId)}"${d.deviceId === want ? ' selected' : ''}>${esc(label(d, i))}</option>`).join('');
     };
     if (!$('#mic-sel')) return;
     put('#mic-sel', 'audioinput', media.micId, '기본 마이크');

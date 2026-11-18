@@ -54,6 +54,8 @@ select option:disabled { color: var(--muted2); }
 .logo .accent { color: var(--neon); }
 .top nav { display: flex; gap: 4px; }
 .top nav a { text-decoration: none; padding: 6px 12px; border-radius: var(--radius); color: var(--muted); font-weight: 600; }
+/* 영문 메뉴(2026-11-18 사용자 지시, 지원자 헤더) — 첫 페이지 메뉴와 같은 로고 글꼴(Outfit) */
+.top nav.eng a, .top nav.eng button.nav-dd-btn { font-family: var(--font-logo); font-weight: 700; font-size: 17px; letter-spacing: .04em; }
 .top nav a:hover, .top nav a.on { color: var(--white); background: var(--fill2); }
 /* 지원자 상단 '무제한 코딩 연습' 드롭다운 (로그인 시만, 클릭으로 열기/닫기). 패널·항목 모양은 첫 페이지 Features 드롭다운과 같게 */
 .nav-dd { position: relative; }

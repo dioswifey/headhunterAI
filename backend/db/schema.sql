@@ -130,6 +130,10 @@ CREATE TABLE applications (
   pregen_status     TEXT NOT NULL DEFAULT 'none' CHECK (pregen_status IN ('none','running','ready','failed')),
   pregen_questions  JSONB,                          -- 환경 점검 단계에서 미리 만든 질문 세트 (RSQ-05)
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- 면접 마감 임박 알림 중복 방지(2026-11-18 사용자 지시). 둘 다 응시 전(= interview/코딩 중이거나 끝난 attempt가
+  -- 없는 상태)인 지원 건에만, 마감일 1일 전·당일 각각 한 번만 보낸다
+  deadline1d_notified    BOOLEAN NOT NULL DEFAULT false,
+  deadlinetoday_notified BOOLEAN NOT NULL DEFAULT false,
   UNIQUE (job_id, user_id)                          -- 중복 지원 차단 (APP-02)
 );
 
