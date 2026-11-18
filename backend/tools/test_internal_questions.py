@@ -21,6 +21,8 @@
       ③ 이력서 문항 gen_method에 `|internal:`이 붙는지 · 역량이 모자라면 그 문항만 Redis 백업으로 내려가는지
   I11 A6(철학 적합성)이 되돌린 문항 처리(2026-11-18): 같은 `text == orig`가 이력서 문항에서는 "템플릿으로 되돌려졌다"
       (→ 집계에서 뺀다), A17 카테고리 문항에서는 "검증된 질문을 그대로 출제"(→ 출처 유지)라는 정반대 뜻이다
+  I12 `bank_reference`가 사내문서 질문의 `model_answer`·`expected_keywords`를 읽는다(2026-11-18) — 이게 없어서
+      꼬리질문 판단 ②(기대 키워드)·③(구체성)이 주 출처에서 돌지 않았다. 다른 출처(Redis·DB·이력서)는 그대로
 """
 import os
 import sys
@@ -559,6 +561,63 @@ def t_resume_revert_not_counted():
     check("I11 A6 통과 환경에서는 8/8 그대로", r2["internal"] == 8, str(r2))
 
 
+# ---------------- I12 bank_reference가 사내문서 질문의 모범답안·키워드를 읽는다 (2026-11-18) ----------------
+class _FakeColl:
+    """Chroma 질문 컬렉션 대역. `get(ids=…)`가 메타 1건 또는 빈 목록을 돌려준다."""
+
+    def __init__(self, meta=None):
+        self.meta, self.asked = meta, None
+
+    def get(self, ids=None, include=None):
+        self.asked = (ids, include)
+        return {"metadatas": [dict(self.meta)] if self.meta else []}
+
+
+def t_bank_reference():
+    """꼬리질문 판단 ②③의 재료를 사내문서 질문에서 꺼내는지. Chroma·모델 없이 돈다."""
+    from app import internal_store as S
+    META = {"model_answer": "핵심 지표를 먼저 말하고 근거를 덧붙이는 답변이 좋습니다.",
+            "expected_keywords": "지표 정의, 재현율|리콜, 검증 절차"}
+    saved, calls = S.question_collection, []
+
+    def use(coll):
+        def fn(cat):
+            calls.append(cat)
+            return coll
+        S.question_collection = fn
+
+    try:
+        coll = _FakeColl(META)
+        use(coll)
+        r = QG.bank_reference({"gen_method": "internal_q:IQ-job-abc-0|internal:DOC-1#s1", "category": "job"})
+        check("I12 사내문서 질문 → 모범답안을 읽는다", r["ideal"] == META["model_answer"], str(r))
+        check("I12 기대 키워드 3묶음(| = 동의어 분리)",
+              r["keywords"] == [["지표 정의"], ["재현율", "리콜"], ["검증 절차"]], str(r["keywords"]))
+        check("I12 카테고리에 맞는 컬렉션으로 조회", calls == ["job"], str(calls))
+        check("I12 `|internal:` 접미를 떼고 질문 ID만 조회", coll.asked[0] == ["IQ-job-abc-0"], str(coll.asked))
+
+        calls.clear()
+        use(_FakeColl(None))                      # 그 ID가 없음
+        r = QG.bank_reference({"gen_method": "internal_q:IQ-job-없음-9", "category": "job"})
+        check("I12 ID가 없으면 빈 값(그 판단만 건너뜀)", r == {"keywords": [], "ideal": ""}, str(r))
+
+        def boom(cat):
+            raise RuntimeError("chroma down")
+        S.question_collection = boom
+        r = QG.bank_reference({"gen_method": "internal_q:IQ-job-abc-0", "category": "job"})
+        check("I12 Chroma 오류 → 빈 값(예외 전파 없음, 면접 계속)", r == {"keywords": [], "ideal": ""}, str(r))
+
+        # 다른 출처는 건드리지 않았다
+        r = QG.bank_reference({"gen_method": "db", "category": "job"})
+        check("I12 DB 은행 출처는 그대로 빈 값", r == {"keywords": [], "ideal": ""}, str(r))
+        r = QG.bank_reference({"gen_method": "template", "category": "resume",
+                               "resume_ref": {"quote": "LangChain으로 RAG 파이프라인 구현"}})
+        check("I12 이력서 질문은 근거 항목 토큰 유지", [g[0] for g in r["keywords"]] == ["LangChain", "RAG"],
+              str(r["keywords"]))
+    finally:
+        S.question_collection = saved
+
+
 def main():
     t_qcat()
     t_validate()
@@ -573,6 +632,7 @@ def main():
     t_resume_internal_short()
     t_resume_internal_off()
     t_resume_revert_not_counted()
+    t_bank_reference()
     print(f"\n{len(OK)}/{len(OK) + len(FAIL)}" + (f"  실패: {FAIL}" if FAIL else ""))
     return 1 if FAIL else 0
 

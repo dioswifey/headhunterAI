@@ -839,7 +839,9 @@ async function envView(appId) {
       if (stopped) return;
       let a;
       try { a = await get(`/api/applications/${appId}`); } catch (_) { setTimeout(t, 2000); return; } // 일시적 오류로 폴링이 멈추면 버튼이 안 풀린다
-      const label = { running: '<span class="spinner"></span> 이력서를 바탕으로 맞춤 질문을 준비하고 있습니다. 준비가 끝나면 시작할 수 있습니다.', ready: '✓ 맞춤 질문 준비가 끝났습니다.', failed: '맞춤 질문 준비에 실패해 기본 질문 형식으로 진행합니다.', none: '<span class="spinner"></span> 맞춤 질문 준비를 시작하고 있습니다.' }[a.pregen_status];
+      // 2026-11-18 사용자 지시: 준비 중 문구를 지원자 이름을 부르는 안내로
+      const who = esc(me && me.name ? me.name : '지원자');
+      const label = { running: `<span class="spinner"></span> headhunterAI가 신중하게 ${who} 님의 면접을 준비하고 있습니다. 잠시만 기다려 주십시오.`, ready: `✓ ${who} 님의 면접 준비가 끝났습니다. 시작하실 수 있습니다.`, failed: '맞춤 질문 준비에 실패해 기본 질문 형식으로 진행합니다.', none: `<span class="spinner"></span> headhunterAI가 신중하게 ${who} 님의 면접을 준비하고 있습니다. 잠시만 기다려 주십시오.` }[a.pregen_status];
       const el = $('#pregen'); if (el) el.innerHTML = label;
       pregenReady = a.pregen_status === 'ready' || a.pregen_status === 'failed';
       refresh();

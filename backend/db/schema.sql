@@ -366,6 +366,8 @@ CREATE TABLE notifications (
   id          SERIAL PRIMARY KEY,
   user_id     INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   type        TEXT NOT NULL,
+  -- 어느 지원 건의 알림인지. 지원 건이 지워지면(접수 취소·보관 기한 만료) 알림도 함께 지워진다 (2026-11-18 사용자 지시)
+  application_id INT REFERENCES applications(id) ON DELETE CASCADE,
   title       TEXT NOT NULL,
   body        TEXT NOT NULL DEFAULT '',
   read_at     TIMESTAMPTZ,

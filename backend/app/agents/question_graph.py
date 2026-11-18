@@ -846,10 +846,27 @@ def _resume_keywords(q):
 
 def bank_reference(q):
     """판단 ②③ 재료: {'keywords': [[동의어…]…], 'ideal': 모범 답변 요지}. 없거나 조회 실패면 빈 값(그 판단만 건너뜀).
-    Redis 은행 문항(gen_method = redis:<문서 ID>)만 expected_keywords·model_answer가 있다. 이력서 질문은 근거 항목 토큰."""
+
+    출처마다 꺼내는 곳이 다르다(2026-11-18 사내문서 질문 추가):
+      · 사내문서 질문 `internal_q:<질문 ID>` → Chroma 질문 컬렉션 메타. A17이 생성 때 `model_answer`·
+        `expected_keywords`를 **528개 전부** 채워 두는데 여기서 읽지 않아, 사내문서 질문이 주 출처가 된 뒤
+        판단 ②(기대 키워드)·③(구체성)이 돌지 않고 있었다. ID로 바로 꺼내므로 임베딩·모델 호출은 0회.
+      · Redis 은행 문항 `redis:<문서 ID>` → Redis 해시(기존 그대로).
+      · 이력서 질문 → 근거 항목 토큰.
+    실시간 경로이므로 어느 쪽이든 실패는 조용히 빈 값으로 둔다(꼬리질문 판단만 건너뛴다)."""
     ref = {"keywords": [], "ideal": ""}
     gm = q.get("gen_method") or ""
-    if gm.startswith("redis:"):
+    if gm.startswith("internal_q:"):
+        try:
+            from .. import internal_store
+            qid = gm[len("internal_q:"):].split("|")[0]
+            got = internal_store.question_collection(q.get("category") or "").get(ids=[qid], include=["metadatas"])
+            m = (got.get("metadatas") or [None])[0] or {}
+            ref["keywords"] = keyword_groups(m.get("expected_keywords") or "")
+            ref["ideal"] = (m.get("model_answer") or "").strip()
+        except Exception:  # noqa: BLE001 — 컬렉션 없음·ID 없음·Chroma 오류 → 그 판단만 건너뛴다
+            pass
+    elif gm.startswith("redis:"):
         try:
             import redis
             r = redis.Redis.from_url(config.REDIS_URL, socket_timeout=REF_TIMEOUT, socket_connect_timeout=REF_TIMEOUT)
