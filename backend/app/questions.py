@@ -419,6 +419,47 @@ def grounded(question, cited, snapshot):
     return True
 
 
+def ungrounded_terms(question, cited, snapshot):
+    """`grounded`가 거절할 때 **어떤 토큰이 걸렸는지** — 관측 전용(2026-11-18).
+    판정은 `grounded`가 그대로 하고 이 함수는 사유 기록에만 쓴다(RSQ-03 로직은 건드리지 않는다).
+    규칙은 `grounded`와 같다: 영문·숫자 토큰과 cited_terms가 스냅샷 본문에 있어야 한다."""
+    text = _snapshot_text(snapshot)
+    squash = re.sub(r"\s+", "", text)
+    toks = set(re.findall(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|\d+(?:\.\d+)?%?", question))
+    toks |= {c for c in cited if c}
+    bad = []
+    for t in toks:
+        tl = t.lower().strip(".")
+        if tl and tl not in text and re.sub(r"\s+", "", tl) not in squash:
+            bad.append(t)
+    return sorted(bad)
+
+
+def _reject_reason(q, cited, snapshot):
+    """이력서 질문이 왜 템플릿으로 떨어졌는지 — **관측 전용**(판정 경로가 아니다).
+    `make_resume_question`의 검사 순서를 그대로 다시 본다. 토큰은 이력서에서 온 문자열일 수 있으므로
+    측정 산출물(그래프 State의 draft)에만 남는다 — `finalize`가 걸러서 DB·로그·외부로는 나가지 않는다."""
+    if not q:
+        return {"stage": "empty"}
+    if not one_sentence(q):
+        return {"stage": "one_sentence", "chars": len(q)}
+    hit = BLOCKLIST.search(q)
+    if hit:
+        return {"stage": "blocklist", "hit": hit.group(0)}
+    bad = ungrounded_terms(q, cited, snapshot)
+    if bad:
+        return {"stage": "grounded", "terms": bad[:8], "n_terms": len(bad), "cited": list(cited or [])[:8]}
+    return {"stage": "fit_scope"}      # 위 검사는 통과했는데 fit_scope 뒤 재검사에서 걸린 경우
+
+
+def _note_reject(why, q, out, snapshot):
+    """사유 한 건 기록. **실패해도 흐름을 멈추지 않는다** — 관측이 면접을 깨면 안 된다."""
+    try:
+        why.append(_reject_reason(q, (out or {}).get("cited_terms") or [], snapshot))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 RSQ_SCHEMA = {"type": "object", "properties": {"question": {"type": "string"}, "cited_terms": {"type": "array", "items": {"type": "string"}}},
               "required": ["question", "cited_terms"]}
 RSQ_SYSTEM = """너는 AI/AX 엔지니어 1차 면접 질문을 만드는 면접관이다.
@@ -457,10 +498,12 @@ def make_resume_question(cand, angle, snapshot, bank=None, role_name=""):
         ref["bank_doc"] = bank.get("doc_id") or (f"db:{bank['id']}" if bank.get("id") else "")
     bank_txt = f"\n질문 은행 참고 문항: {bank['text']}\n참고 문항의 평가 의도: {bank.get('subcategory') or '-'}" if bank else "\n질문 은행 참고 문항: (없음)"
     system = prompts.load("generate/resume_question_merger", role_name=role_name or "AI/AX 엔지니어")
+    why = []                  # 거절 사유 관측(2026-11-18) — 아래 판정 조건은 한 글자도 바꾸지 않았다
     for _ in range(2):  # 1회 재생성 (RSQ-03)
         try:
             out = llm.chat_json(system, f"질문 관점: {ANGLES[angle]}{bank_txt}\n이력서 항목:\n{desc}", MERGE_SCHEMA, timeout=90, temperature=0.4)
         except llm.LLMError:
+            why.append({"stage": "llm_error"})
             break
         q = out["question"].strip()
         # 2026-11-12 RAG 평가: 한 문장 검사 추가(두 문장 질문이 그대로 나가던 경로)
@@ -470,7 +513,13 @@ def make_resume_question(cand, angle, snapshot, bank=None, role_name=""):
                 if bank:
                     ref["bank_used"] = bool(out.get("used_bank"))
                 return {"text": q, "resume_ref": ref, "gen_method": "llm"}
-    return {"text": TEMPLATES[angle].format(label=cand["label"]), "resume_ref": ref, "gen_method": "template"}
+            _note_reject(why, q, out, snapshot)      # fit_scope 뒤 재검사에서 걸림
+        else:
+            _note_reject(why, q, out, snapshot)
+    r = {"text": TEMPLATES[angle].format(label=cand["label"]), "resume_ref": ref, "gen_method": "template"}
+    if why:
+        r["reject"] = why
+    return r
 
 
 def resume_questions(snapshot, use_llm=True, banks=None, role_name=""):

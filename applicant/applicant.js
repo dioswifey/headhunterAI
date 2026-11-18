@@ -595,9 +595,7 @@ function pollExtraction(id, state) {
     if (x.status === 'processing') {
       $('#progress').innerHTML = `<div class="card"><div class="between"><b><span class="spinner"></span> ${stageLabel(x.stage)}</b><span class="small">${x.progress}%</span></div>
         <div class="bar" style="margin-top:10px"><i style="width:${x.progress}%"></i></div>
-        <p class="small" style="margin-top:8px">텍스트 추출 → 문자 인식 → 항목 정리 순서로 진행됩니다. 모든 처리는 사내 서버에서만 이뤄집니다.</p>
-        <div class="row" style="margin-top:10px"><button class="btn sm" id="skip-wait">기다리지 않고 다음 단계로</button>
-          <span class="small">저장해 둔 이력서가 있으면 그 내용으로 바로 환경 점검으로 넘어가고, 없으면 직접 작성 화면을 엽니다.</span></div></div>`;
+        <div class="row" style="margin-top:10px"><button class="btn sm" id="skip-wait">기다리지 않고 다음 단계로</button></div></div>`;
       $('#skip-wait').onclick = () => { stopped = true; skipWait(state); };
       setTimeout(tick, 1000);
       return;
@@ -674,17 +672,21 @@ async function envView(appId) {
     </div></div>`;
   const mark = (k, pass, label) => { ok[k] = pass; const el = $(`#s-${k}`); if (el) { el.textContent = label || (pass ? '통과' : '실패'); el.className = 'pill ' + (pass ? 'on' : 'dim'); } refresh(); };
   let envPosted = false;
+  // 맞춤 질문(그래프 1-A) 준비가 끝나기 전에 시작하면 서버가 모델을 안 쓰는 대체 경로로 떨어져 엉뚱한 질문이 나간다
+  // → pregen_status === 'ready'(또는 'failed' = 더 기다려도 소용없음)일 때만 시작 버튼을 푼다 (2026-11-18 사용자 지시)
+  let pregenReady = false;
   async function refresh() {
     const all = Object.values(ok).every(Boolean);
     if (all && !envPosted) {
       envPosted = true;
       try { await post(`/api/applications/${appId}/env`, { ...ok, cam: camReal }); watchPregen(); } catch (e) { envPosted = false; toast(e.message, true); }
     }
-    $('#start').disabled = !(all && envPosted && $('#rules').checked);
+    $('#start').disabled = !(all && envPosted && $('#rules').checked && pregenReady);
     // 버튼이 왜 안 눌리는지 바로 보이게: 남은 항목을 적어 준다
     const names = { mic: '① 마이크', cam: '② 카메라', speaker: '③ 스피커', network: '④ 네트워크', ai: '⑤ AI 서버' };
     const left = Object.keys(names).filter((k) => !ok[k]).map((k) => names[k]);
     if (!$('#rules').checked) left.push('응시 규칙 확인');
+    if (all && envPosted && !pregenReady) left.push('맞춤 질문 준비');
     const why = $('#start-why');
     if (why) { why.textContent = left.length ? `아직 남은 항목: ${left.join(', ')}` : ''; why.style.display = left.length ? '' : 'none'; }
   }
@@ -835,9 +837,12 @@ async function envView(appId) {
     let stopped = false; onLeave(() => { stopped = true; });
     const t = async () => {
       if (stopped) return;
-      const a = await get(`/api/applications/${appId}`);
-      const label = { running: '<span class="spinner"></span> 이력서를 바탕으로 맞춤 질문을 준비하고 있습니다. 준비 중에도 시작할 수 있습니다.', ready: '✓ 맞춤 질문 준비가 끝났습니다.', failed: '맞춤 질문 준비에 실패해 기본 질문 형식으로 진행합니다.', none: '' }[a.pregen_status];
+      let a;
+      try { a = await get(`/api/applications/${appId}`); } catch (_) { setTimeout(t, 2000); return; } // 일시적 오류로 폴링이 멈추면 버튼이 안 풀린다
+      const label = { running: '<span class="spinner"></span> 이력서를 바탕으로 맞춤 질문을 준비하고 있습니다. 준비가 끝나면 시작할 수 있습니다.', ready: '✓ 맞춤 질문 준비가 끝났습니다.', failed: '맞춤 질문 준비에 실패해 기본 질문 형식으로 진행합니다.', none: '<span class="spinner"></span> 맞춤 질문 준비를 시작하고 있습니다.' }[a.pregen_status];
       const el = $('#pregen'); if (el) el.innerHTML = label;
+      pregenReady = a.pregen_status === 'ready' || a.pregen_status === 'failed';
+      refresh();
       if (a.pregen_status === 'running' || a.pregen_status === 'none') setTimeout(t, 2000);
     };
     t();
@@ -937,7 +942,8 @@ async function interviewView(attemptId) {
   /* 카메라 미리보기 창은 면접 화면에 들어올 때 한 번만 만들고, 질문·꼬리질문·답변이 바뀌어도 다시 그리지 않는다(같은 자리 고정) */
   const camFloat = document.createElement('div');
   camFloat.className = 'cam-float'; camFloat.hidden = true;
-  camFloat.innerHTML = '<div class="cam" id="cam">카메라 연결 중</div><div class="cam-note">카메라 미리보기 · 녹화·저장 안 함</div>';
+  // 미리보기 아래 안내 문구는 2026-11-18 사용자 지시로 제거(고지는 응시 동의 문구에 이미 있음). CSS .cam-note는 남겨 둠
+  camFloat.innerHTML = '<div class="cam" id="cam">카메라 연결 중</div>';
   document.body.appendChild(camFloat);
   onLeave(() => camFloat.remove());
   const placeCam = () => { const bar = document.querySelector('.devbar'); camFloat.style.top = ((bar && bar.offsetParent ? bar.offsetHeight : 0) + 16) + 'px'; };
@@ -1107,7 +1113,7 @@ async function interviewView(attemptId) {
     if (!q) return;
     current = q;
     view.innerHTML = `<div class="wrap iv-wrap" style="max-width:1000px">
-      <div class="between iv-head" style="margin-bottom:14px"><span class="logo">headhunter<span class="accent">AI</span></span>
+      <div class="between iv-head" style="margin-bottom:14px"><span class="logo"><img src="/images/headhunterAI_logo_reverse_crop.png" alt="headhunterAI"></span>
         <span class="row"><span class="pill neon">${q.seq} / ${st.total}${q.followup ? ' · 꼬리질문' : ''}</span>
         ${st.exit_count ? `<span class="pill">화면 이탈 ${st.exit_count}회</span>` : ''}</span></div>
       <div class="stage">
@@ -1244,8 +1250,8 @@ async function interviewView(attemptId) {
     let internalClip = '';
     remaining = data.remaining;
     view.innerHTML = `<div class="wrap" style="max-width:1200px">
-      <div class="between" style="margin-bottom:14px"><span class="logo">headhunter<span class="accent">AI</span></span>
-        <span class="row"><span class="pill neon">코딩테스트</span><span class="tabs lang-switch" role="group" aria-label="풀이 언어" id="langsw"><button type="button" class="on" data-lang="python">Python 3</button><button type="button" data-lang="c" title="C언어는 준비 중입니다">C · 준비 중</button><button type="button" data-lang="sql" title="SQL은 준비 중입니다">SQL · 준비 중</button></span><span class="pill" id="saved">자동 저장 대기</span><div class="timer" id="ctimer" style="width:76px;height:76px;font-size:18px">--:--</div></span></div>
+      <div class="between" style="margin-bottom:14px"><span class="logo"><img src="/images/headhunterAI_logo_reverse_crop.png" alt="headhunterAI"></span>
+        <span class="row"><span class="pill neon">코딩테스트</span><span class="tabs lang-switch" role="group" aria-label="풀이 언어" id="langsw"><button type="button" class="on" data-lang="python">Python 3 ✓</button><button type="button" data-lang="c">C</button><button type="button" data-lang="sql">SQL</button></span><div class="timer" id="ctimer" style="width:76px;height:76px;font-size:18px">--:--</div></span></div>
       <div class="tabs" id="tabs">${data.problems.map((p, i) => `<button data-i="${i}">${i + 1}. ${esc(p.title)} <span class="small">(${p.level === 'basic' ? '기초' : '응용'})</span></button>`).join('')}</div>
       <div class="grid2" style="margin-top:14px;align-items:start;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr)">
         <div class="card col" id="pdesc"></div>
@@ -1253,7 +1259,7 @@ async function interviewView(attemptId) {
           <div class="row"><button class="btn" id="run">예제 실행</button><span class="sp"></span><button class="btn primary" id="submit">최종 제출</button></div>
           <div class="out" id="out">실행 결과가 여기에 표시됩니다. 실행만으로는 제출되지 않습니다.</div></div>
       </div>
-      <p class="small" style="margin-top:12px">AI 도우미는 제공되지 않습니다. 편집기 밖에서 복사한 내용은 붙여넣을 수 없습니다. 코드는 30초마다 자동 저장됩니다.</p></div>`;
+      <p class="small" style="margin-top:12px">편집기 밖에서 복사한 내용은 붙여넣을 수 없습니다. 코드는 30초마다 자동 저장됩니다.</p></div>`;
     const code = $('#code');
     const show = (i) => {
       if (data.problems[idx]) codes[data.problems[idx].problem_id] = code.value;
@@ -1291,7 +1297,6 @@ async function interviewView(attemptId) {
         await post(`/api/attempts/${attemptId}/coding/${pid}/save`, { code: codes[pid] });
         dirty.delete(pid);
       }
-      const el = $('#saved'); if (el) el.textContent = `자동 저장 ${new Date().toLocaleTimeString('ko-KR')}`;
     };
     const autosave = setInterval(() => { if (active) saveAll().catch(() => {}); }, 30000);
     $('#run').onclick = async () => {
@@ -1350,7 +1355,7 @@ function reportBox(appId, box, opt = {}) {
         : em.status === 'failed' ? '<p class="small">리포트 메일을 보내지 못했습니다. 아래 버튼으로 다시 받아 보세요.</p>'
           : r.email_enabled ? '<p class="small">합불과 별도로, 항목별 점수와 개선점을 담은 정량 리포트를 이메일로 받을 수 있습니다.</p>'
             : '<p class="small">이메일 발송이 아직 설정되지 않았습니다.</p>';
-    box.innerHTML = `${res}${mail}${auto && !analyzing && r.email_enabled ? '<div><button class="btn" id="mail-me">결과 리포트 이메일로 받기</button></div>' : ''}`;
+    box.innerHTML = `${res}${mail}${auto && !analyzing && r.email_enabled ? `<div><button class="btn" id="mail-me">${opt.mailLabel || '결과 리포트 이메일로 받기'}</button></div>` : ''}`;
     const b = $('#mail-me', box);
     if (b) b.onclick = async () => {
       b.disabled = true;
@@ -1525,12 +1530,12 @@ async function resultView(appId) {
     <a class="btn sm ghost" href="#/my">← 마이페이지</a>
     <div class="card ${pass ? 'hl' : ''}" style="margin-top:14px"><div class="small">1차 결과 · ${esc(r.status)}</div>
       <div class="big" style="margin:8px 0;${pass ? '' : 'color:var(--white)'}">${pass ? '1차 합격' : '1차 불합격'}</div>
-      ${r.reason ? `<p>${esc(r.reason)}</p>` : ''}${r.expires_at ? `<p class="small">열람 기한: ${fmtDate(r.expires_at)}까지</p>` : ''}<div id="report-box" class="col" style="margin-top:10px"></div></div>
+      ${r.reason ? `<p>${esc(r.reason)}</p>` : ''}${r.expires_at ? `<p class="small">열람 기한: ${fmtDate(r.expires_at)}까지</p>` : ''}</div>
     ${(r.strengths || []).length || (r.improvements || []).length ? `<div class="grid2" style="margin-top:16px;align-items:start">
       <div class="card"><h2>강점</h2>${(r.strengths || []).map((s, i) => `<p><b class="neon">${i + 1}.</b> ${esc(s)}</p>`).join('')}</div>
       <div class="card"><h2>개선점</h2>${(r.improvements || []).map((s, i) => `<p><b>${i + 1}.</b> ${esc(s)}</p>`).join('')}</div></div>` : ''}
-    ${r.notice ? `<div class="note" style="margin-top:16px">${esc(r.notice)}</div>` : ''}</div>`;
-  if (r.status !== '응시 취소') reportBox(appId, $('#report-box'), { noResult: true });
+    <div id="report-box" class="col" style="margin-top:16px"></div></div>`;
+  if (r.status !== '응시 취소') reportBox(appId, $('#report-box'), { noResult: true, mailLabel: 'headhunterAI 리포트를 이메일로 받기' });
 }
 
 /* ───────── boot ───────── */

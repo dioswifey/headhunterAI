@@ -75,6 +75,34 @@ def main():
     bad = Q._bad_tokens(FAKE, BASE, JOB, {})
     res.append(("C6 _bad_tokens == ['85%']", bad == ["85%"] and not Q._tokens_ok(FAKE, BASE, JOB, {}) and Q._tokens_ok(GOOD, BASE, JOB, {})))
 
+    # C7 (2026-11-18) 거절 사유 관측이 **판정을 바꾸지 않는지** 고정한다.
+    # ungrounded_terms는 grounded의 사유 설명용이라 둘의 판단이 어긋나면 사유 기록이 거짓이 된다.
+    SNAP = {"projects": [{"name": "사내 검색 RAG", "role": "개발", "detail": "LangChain으로 파이프라인 구현",
+                          "tech": ["LangChain", "Python"], "page": 1}]}
+    cases = [("LangChain 파이프라인을 어떻게 구현했는지 설명해 주세요.", []),
+             ("Kubernetes로 배포한 과정을 설명해 주세요.", []),
+             ("Python과 LangChain을 함께 쓴 이유를 설명해 주세요.", ["LangChain"]),
+             ("정확도를 99% 올린 방법을 설명해 주세요.", []),
+             ("담당한 역할을 설명해 주세요.", []),
+             ("담당한 역할을 설명해 주세요.", ["없는용어"])]
+    mism = [q for q, cit in cases if Q.grounded(q, cit, SNAP) != (not Q.ungrounded_terms(q, cit, SNAP))]
+    res.append((f"C7 grounded ↔ ungrounded_terms 판정 일치 {len(cases)}건" + (f" 어긋남 {mism}" if mism else ""), not mism))
+    res.append(("C7 걸린 토큰을 그대로 집어낸다",
+                Q.ungrounded_terms("Kubernetes로 배포한 과정을 설명해 주세요.", [], SNAP) == ["Kubernetes"]
+                and Q.ungrounded_terms("정확도를 99% 올린 방법을 설명해 주세요.", [], SNAP) == ["99%"]))
+    # 사유 분류가 검사 순서를 그대로 따르는지
+    res.append(("C7 _reject_reason 단계 분류",
+                Q._reject_reason("", [], SNAP)["stage"] == "empty"
+                and Q._reject_reason("첫 문장입니다. 두 번째 문장을 설명해 주세요.", [], SNAP)["stage"] == "one_sentence"
+                and Q._reject_reason("실례지만 나이가 어떻게 되시나요?", [], SNAP)["stage"] == "blocklist"
+                and Q._reject_reason("Kubernetes로 배포한 과정을 설명해 주세요.", [], SNAP) ==
+                {"stage": "grounded", "terms": ["Kubernetes"], "n_terms": 1, "cited": []}
+                and Q._reject_reason("LangChain 파이프라인을 어떻게 구현했는지 설명해 주세요.", [], SNAP)["stage"] == "fit_scope"))
+    # 기록부가 터져도 흐름이 멈추지 않아야 한다(조건 2)
+    acc = []
+    Q._note_reject(acc, "질문입니다 설명해 주세요.", None, None)   # snapshot None → 내부에서 예외
+    res.append(("C7 기록 실패는 조용히 넘어간다(예외 전파 없음)", acc == []))
+
     for name, ok in res:
         print(("PASS " if ok else "FAIL ") + name)
     n = sum(ok for _, ok in res)

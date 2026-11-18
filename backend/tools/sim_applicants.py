@@ -93,6 +93,9 @@ def cmd_gen(a):
                        "gen_method": f.get("gen_method") or "", "resume_ref": f.get("resume_ref"), "bank_id": f.get("bank_id"),
                        "guard": d.get("guard"), "doc_refs": d.get("doc_refs") or [], "philosophy": d.get("philosophy"),
                        "fallback": E._is_fallback(d) if d else None, "rule_grounded": E._rule_grounded(d, job, p["snapshot"]) if d else None,
+                       # reject = 이력서 질문이 템플릿으로 떨어진 사유(2026-11-18 관측용). 지원자 문자열이 섞일 수
+                       # 있어 이 측정 산출물에만 남는다 — 제품 경로(DB·로그)에는 들어가지 않는다.
+                       "reject": d.get("reject"),
                        "rule_one_sentence": Q.one_sentence(f["text"]), "rule_blocklist": bool(Q.BLOCKLIST.search(f["text"] or "")),
                        "length": len(f["text"] or ""), "retrieval_fallback": E._is_retrieval_fallback(d) if d else None})
         picks = []

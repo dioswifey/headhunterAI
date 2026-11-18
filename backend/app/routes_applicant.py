@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from . import coding, config, db, evaluation, llm, ocr, questions, report_mail, scheduler, security, speech
@@ -357,7 +358,13 @@ def answer(attempt_id: int, body: Answer, user=Depends(security.applicant)):
 async def answer_audio(attempt_id: int, question_id: int = Form(...), text: str = Form(""), audio: UploadFile = File(None),
                        user=Depends(security.applicant)):
     """v0.9 INT-03: 답변 녹음 → Qwen3-ASR로 글로 바꿔 저장. 음성 파일은 저장하지 않는다.
-    음성 인식이 실패하면 비상 입력란 글만 쓴다(흐름은 멈추지 않음)."""
+    음성 인식이 실패하면 비상 입력란 글만 쓴다(흐름은 멈추지 않음).
+
+    2026-11-18: STT·답변 저장을 run_in_threadpool로 돌린다. 이 함수는 async def라 이벤트 루프에서
+    직접 실행되는데, speech.transcribe(CPU에서 20~60초)와 _save_answer(그래프 1-B·LLM 호출)가
+    동기 블로킹이라 그동안 **서버 전체가 멈췄다**. 그 사이 /heartbeat가 처리되지 않아
+    last_heartbeat이 15초(HEARTBEAT_LOST_SEC)를 넘기면 scheduler가 응시를 interrupted로 바꿔
+    '면접 이어가기' 화면이 떴다 — 답변이 길수록 반드시 재현됐다(실측: 한 응시에서 4회)."""
     att, q = _answer_target(attempt_id, question_id, user)
     typed = (text or "").strip()
     heard, stt_error = "", None
@@ -366,7 +373,7 @@ async def answer_audio(attempt_id: int, question_id: int = Form(...), text: str 
         if raw and len(raw) <= 20 * 1024 * 1024:
             for _ in range(3):   # INT-04: 변환 2회 재시도
                 try:
-                    heard, stt_error = speech.transcribe(raw), None
+                    heard, stt_error = await run_in_threadpool(speech.transcribe, raw), None
                     break
                 except speech.SpeechError as e:
                     stt_error = str(e)[:200]
@@ -381,7 +388,7 @@ async def answer_audio(attempt_id: int, question_id: int = Form(...), text: str 
     source = "voice+typed" if (heard and typed) else ("voice" if heard else ("typed" if typed else None))
     if stt_error:
         db.run("INSERT INTO attempt_events (attempt_id, type, detail) VALUES (%s,'stt_failed',%s)", attempt_id, db.J({"question_id": q["id"], "error": stt_error}))
-    return _save_answer(att, q, full, source, user)
+    return await run_in_threadpool(_save_answer, att, q, full, source, user)
 
 
 @router.get("/attempts/{attempt_id}/questions/{question_id}/audio")
