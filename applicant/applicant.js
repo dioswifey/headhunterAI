@@ -107,6 +107,7 @@ const routes = [
   [/^\/login$/, login],
   [/^\/signup$/, signup],
   [/^\/my$/, mypage],
+  [/^\/resume\/new$/, resumeNew],
   [/^\/account$/, accountView],
   [/^\/billing$/, billingView],
   [/^\/apply\/(\d+)\/consent$/, consentView],
@@ -189,11 +190,15 @@ async function jobs() {
     <h1>채용 공고</h1><p class="sub">${lead}</p>
     <div class="row" style="margin-top:16px;gap:10px">
       <a class="btn primary" href="#/my">마이페이지로 바로가기</a>
-      <a class="btn" style="background:var(--black);color:var(--neon);border:1.5px solid var(--neon)" href="#/practice/coding">무제한 코딩 연습 바로가기</a>
+      <a class="btn launch-btn launch-btn-dark" href="#/practice/coding">무제한 코딩 연습 바로가기</a>
     </div>
-    <div class="grid3" style="margin-top:20px">${roles.map((r) => r.status === 'active'
-      ? `<button class="card click" data-role="${r.code}"><span class="pill neon">운영 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">접수 중 공고 ${count(r.code)}개</div></button>`
-      : `<div class="card" style="opacity:.45"><span class="pill dim">준비 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">질문 은행 준비 중</div></div>`).join('')}</div></div>`;
+    <div class="grid3" style="margin-top:20px">${roles.map((r) => {
+      const n = count(r.code);
+      if (r.status === 'active') return `<button class="card click" data-role="${r.code}"><span class="pill neon">운영 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">접수 중 공고 ${n}개</div></button>`;
+      // 2026-11-18 사용자 지시: 공고는 있되 면접 질문 은행이 없는 직무 — 공고는 둘러볼 수 있게 하고, 실제 지원·면접만 막는다(더미)
+      if (n) return `<button class="card click" data-role="${r.code}"><span class="pill dim">준비 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">공고 ${n}개 · 질문 은행 준비 중</div></button>`;
+      return `<div class="card" style="opacity:.45"><span class="pill dim">준비 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">질문 은행 준비 중</div></div>`;
+    }).join('')}</div></div>`;
   $$('[data-role]').forEach((b) => (b.onclick = () => go(`#/jobs/role/${b.dataset.role}`)));
 }
 
@@ -201,10 +206,12 @@ async function jobsRole(code) {
   setNav('jobs');
   if (!roles.length) roles = await get('/api/job-roles');
   const r = roles.find((x) => x.code === code);
-  if (!r || r.status !== 'active') { go('#/jobs'); return; }
+  if (!r) { go('#/jobs'); return; }
+  // 2026-11-18 사용자 지시: 질문 은행 준비 중인 직무도 공고 둘러보기는 허용 — 지원·면접은 서버가 막는다(routes_applicant.py apply)
   view.innerHTML = `<div class="wrap">
     ${backLink('#/jobs', '직무 선택')}
-    <h1 style="margin-top:14px">${esc(r.name)}</h1><p class="sub">열려 있는 공고를 둘러보거나, 지원한 공고의 진행 상황을 확인하세요.</p>
+    <h1 style="margin-top:14px">${esc(r.name)}${r.status !== 'active' ? ' <span class="pill dim" style="font-size:13px;vertical-align:middle">준비 중</span>' : ''}</h1>
+    <p class="sub">${r.status === 'active' ? '열려 있는 공고를 둘러보거나, 지원한 공고의 진행 상황을 확인하세요.' : '공고는 둘러볼 수 있으나, 이 직무의 AI 면접은 아직 준비 중이라 지원할 수 없습니다.'}</p>
     <div class="grid2" style="margin-top:20px">
       <button class="card click" data-go="#/jobs/browse?role=${code}"><h2 style="margin:0 0 6px">현재 열려 있는 공고 둘러보기</h2><div class="sub">기업을 고른 뒤 그 기업의 공고를 봅니다. 로그인 없이 볼 수 있습니다.</div></button>
       <button class="card click" data-go="#/jobs/applied?role=${code}"><h2 style="margin:0 0 6px">내가 지원한 공고</h2><div class="sub">지원한 공고의 진행 상태와 응시할 면접을 확인합니다. 로그인이 필요합니다.</div></button>
@@ -394,9 +401,12 @@ function bindAppsTable(refresh) {
 const ROW_STYLE = 'padding:10px 0;border-bottom:1px solid var(--line)';
 
 function myJobRow(a) {
+  // 2026-11-18 사용자 지시: 단계별 상세(동의 필요 등) 대신 미완료만, 버튼도 다음 단계 이름 말고 '이어서 진행하기'로 통일
+  const status = a.attempt_id ? '<span class="pill dim">응시함</span>' : '<span class="pill dim">미완료</span>';
+  const action = a.attempt_id ? appAction(a) : `<button class="btn sm primary" data-cont="${a.id}">이어서 진행하기</button>`;
   return `<div class="between" style="${ROW_STYLE}">
     <span style="min-width:0"><b>${esc(a.title)}</b><div class="small">${esc(a.company)} · 지원일 ${fmtYMD(a.created_at)}${a.coding_enabled ? ' · 코딩테스트 포함' : ''}</div></span>
-    <span class="row" style="gap:8px">${a.attempt_id ? '<span class="pill dim">응시함</span>' : `<span class="pill neon">${STEP_KO[a.step]}</span>`}${appAction(a)}${isTestApplicant() ? `<button class="btn sm ghost" data-devcancel="${a.id}" title="테스트 계정 전용">접수 취소</button>` : ''}</span></div>`;
+    <span class="row" style="gap:8px">${status}${action}${isTestApplicant() ? `<button class="btn sm ghost" data-devcancel="${a.id}" title="테스트 계정 전용">접수 취소</button>` : ''}</span></div>`;
 }
 
 function myInterviewRow(a) {
@@ -471,8 +481,8 @@ async function mypage() {
     <div class="grid2" style="margin-top:16px;align-items:start">
       <div class="card hl"><h2 class="neon">Notification</h2>
         ${notes.length ? notes.map((n) => `<div style="${ROW_STYLE}"><b>${esc(n.title)}</b><div class="small">${esc(n.body)}</div></div>`).join('') : '<p class="small">새 알림이 없습니다.</p>'}</div>
-      <div class="card"><h2>내 이력서 관리</h2><p class="small">지원할 때 불러와 쓸 수 있습니다. 지원에 제출한 이력서는 별도로 보관됩니다.</p>
-        ${resumes.length ? resumes.map((r) => `<div class="between" style="${ROW_STYLE}"><span><b>${esc(r.title)}</b> <span class="small">${fmtYMD(r.updated_at)}</span></span><button class="btn sm ghost" data-delres="${r.id}">삭제</button></div>`).join('') : '<p class="small">등록한 이력서가 없습니다. 지원 과정에서 저장할 수 있습니다.</p>'}</div>
+      <div class="card"><div class="between"><h2>내 이력서 관리</h2><a class="btn sm" href="#/resume/new">+ 내 이력서 등록하기</a></div><p class="small">지원할 때 불러와 쓸 수 있습니다. 지원에 제출한 이력서는 별도로 보관됩니다.</p>
+        ${resumes.length ? resumes.map((r) => `<div class="between" style="${ROW_STYLE}"><span><b>${esc(r.title)}</b> <span class="small">${fmtYMD(r.updated_at)}</span></span><button class="btn sm ghost" data-delres="${r.id}">삭제</button></div>`).join('') : '<p class="small">등록한 이력서가 없습니다. 위 버튼으로 지금 등록하거나, 지원 과정에서 저장할 수 있습니다.</p>'}</div>
     </div></div>`;
 
   if ($('#reco-vp')) startReco($('#reco-vp'));
@@ -626,9 +636,10 @@ function readForm(base) {
 }
 const stripMeta = (o) => { const c = { ...o }; ['page', 'source', 'origin', 'needs_check'].forEach((k) => delete c[k]); Object.keys(c).forEach((k) => { if (Array.isArray(c[k])) c[k] = c[k].join(','); if (!c[k]) delete c[k]; }); return c; };
 
-function bindForm(state) {
-  $$('[data-add]').forEach((b) => (b.onclick = () => { state.data = readForm(state.data); state.data[b.dataset.add].push({}); renderEditor(state); }));
-  $$('[data-rm]').forEach((b) => (b.onclick = () => { state.data = readForm(state.data); const [s, i] = b.dataset.rm.split(':'); state.data[s].splice(+i, 1); renderEditor(state); }));
+function bindForm(state, onChange) {
+  onChange = onChange || renderEditor;
+  $$('[data-add]').forEach((b) => (b.onclick = () => { state.data = readForm(state.data); state.data[b.dataset.add].push({}); onChange(state); }));
+  $$('[data-rm]').forEach((b) => (b.onclick = () => { state.data = readForm(state.data); const [s, i] = b.dataset.rm.split(':'); state.data[s].splice(+i, 1); onChange(state); }));
 }
 
 function renderEditor(state) {
@@ -667,6 +678,39 @@ const givenName = (name) => (name && name.length > 1 ? name.slice(1) : name || '
 const stageLabel = (stage) => (stage === 'structure' && me && me.name)
   ? `headhunterAI가 ${esc(givenName(me.name))}님의 이력서를 꼼꼼히 읽어보고 있습니다. 잠시만 기다려주세요.`
   : (STAGE_KO[stage] || '처리 중');
+
+/* 지원·면접과 별도로 이력서만 등록(2026-11-18 사용자 지시) — 마이페이지에서 바로, 공고 지원 없이 */
+async function resumeNew() {
+  if (!requireLogin('/resume/new')) return;
+  const state = { data: blank() };
+  view.innerHTML = `<div class="wrap">
+    ${backLink('#/my', '마이페이지')}
+    <h1 style="margin-top:14px">내 이력서 등록</h1><p class="sub">지원과 별도로 이력서를 미리 저장해 두면, 지원할 때 불러와 쓸 수 있습니다.</p>
+    <div id="editor"></div></div>`;
+  renderResumeNew(state);
+}
+
+function renderResumeNew(state) {
+  $('#editor').innerHTML = `${formHtml(state.data)}
+    <div class="card" style="margin-top:16px">
+      <div class="field"><label>이력서 제목 *</label><input id="new-title" placeholder="예: 백엔드 지원용 이력서" maxlength="100"></div>
+      <div class="row" style="margin-top:8px"><button class="btn primary lg" id="save-new">저장</button></div>
+    </div>`;
+  bindForm(state, renderResumeNew);
+  $('#save-new').onclick = async () => {
+    const data = readForm(state.data);
+    const title = ($('#new-title').value || '').trim();
+    if (!title) { toast('이력서 제목을 입력해 주세요.', true); $('#new-title').focus(); return; }
+    if (!data.basic.name.trim() || !(data.education.length || data.career.length)) {
+      toast('성명과 학력 또는 경력 1건 이상은 필수입니다.', true); return;
+    }
+    try {
+      await post('/api/me/resumes', { title, data });
+      toast('이력서를 등록했습니다.');
+      go('#/my');
+    } catch (e) { toast(e.message, true); }
+  };
+}
 
 async function resumeView(appId) {
   if (!requireLogin()) return;
