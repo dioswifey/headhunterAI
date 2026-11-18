@@ -112,6 +112,10 @@ p { margin: 0 0 10px; }
 .card.hl { border-color: var(--neon-line); background: var(--neon-fill); }
 .card.click { cursor: pointer; transition: border-color .15s, background .15s; text-align: left; width: 100%; color: inherit; }
 .card.click:hover { border-color: var(--neon); background: var(--neon-fill); }
+/* '나의 공고' 그리드 마지막 빈칸의 더보기(2026-11-18 사용자 지시) — 테두리 없이 밑줄 글자만 */
+.card.more-link { border: none; background: none; display: flex; align-items: center; justify-content: center; }
+.card.more-link:hover { background: none; }
+.card.more-link span { color: var(--white); text-decoration: underline; font-weight: 600; }
 .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
 .grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }

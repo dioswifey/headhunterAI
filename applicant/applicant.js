@@ -486,10 +486,10 @@ async function mypage() {
       : '<p class="small" style="margin-top:12px">지금 접수 중인 공고가 없습니다.</p>'}
     </div>
     <div style="margin-top:16px">
-      <div class="between"><h2>나의 공고</h2>${apps.length > CUT ? '<button class="btn sm ghost" id="more-jobs">더보기</button>' : ''}</div>
-      ${apps.length ? `<div class="grid2" style="margin-top:12px;align-items:start">${apps.slice(0, CUT).map(myJobRow).join('')}</div>`
+      <h2>나의 공고 ${apps.length ? `<span class="small" style="font-weight:500">(총 지원 공고 ${apps.length}개)</span>` : ''}</h2>
+      ${apps.length ? `<div class="grid2" style="margin-top:12px;align-items:stretch">${apps.slice(0, CUT).map(myJobRow).join('')}${apps.length > CUT
+          ? '<button class="card click more-link" id="more-jobs"><span>나의 공고 더보기</span></button>' : ''}</div>`
         : '<p class="small" style="margin-top:12px">아직 지원한 공고가 없습니다.</p>'}
-      ${apps.length > CUT ? `<p class="small" style="margin-top:10px">전체 ${apps.length}건 중 ${CUT}건을 보여 드립니다.</p>` : ''}
     </div></div>`;
 
   if ($('#reco-vp')) startReco($('#reco-vp'));
