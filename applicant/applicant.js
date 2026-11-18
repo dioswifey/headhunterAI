@@ -181,8 +181,16 @@ async function jobs() {
   if (!roles.length) roles = await get('/api/job-roles');
   const list = await get('/api/jobs');
   const count = (code) => list.filter((j) => j.role_code === code && j.status === 'published').length;
+  // 2026-11-18 사용자 지시: 안내 문구를 서비스 소개 + 개인화 멘트로 교체, 마이페이지·무제한 코딩 연습 바로가기 추가
+  const lead = me
+    ? `headhunterAI는 IT 직무에 특화된 기업 1차 면접 대행 AI 면접 서비스입니다. ${esc(me.name)} 님께 맞는 공고를 아래에서 확인해 보세요.`
+    : 'headhunterAI는 IT 직무에 특화된 기업 1차 면접 대행 AI 면접 서비스입니다. 지원자님께 맞는 공고를 아래에서 확인해 보세요.';
   view.innerHTML = `<div class="wrap">
-    <h1>채용 공고</h1><p class="sub">직무를 고르세요. 현재 AI 면접은 AI/AX 엔지니어 직무만 운영합니다.</p>
+    <h1>채용 공고</h1><p class="sub">${lead}</p>
+    <div class="row" style="margin-top:16px;gap:10px">
+      <a class="btn primary" href="#/my">마이페이지로 바로가기</a>
+      <a class="btn" style="background:var(--black);color:var(--neon);border:1.5px solid var(--neon)" href="#/practice/coding">무제한 코딩 연습 바로가기</a>
+    </div>
     <div class="grid3" style="margin-top:20px">${roles.map((r) => r.status === 'active'
       ? `<button class="card click" data-role="${r.code}"><span class="pill neon">운영 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">접수 중 공고 ${count(r.code)}개</div></button>`
       : `<div class="card" style="opacity:.45"><span class="pill dim">준비 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">질문 은행 준비 중</div></div>`).join('')}</div></div>`;
@@ -451,9 +459,11 @@ async function mypage() {
 
   view.innerHTML = `<div class="wrap">
     <h1>마이페이지</h1><p class="sub" style="font-size:19px;font-weight:700">${esc(me.name)} 님의 지원 현황입니다.</p>
-    <div class="between" style="margin-top:24px"><h2>내가 좋아할만한 공고</h2><a class="btn sm" href="#/jobs">공고 둘러보기</a></div>
-    ${reco.length ? `<div class="reco-vp" id="reco-vp"><div class="reco-track">${reco.map(jobCard).join('')}</div></div>`
-    : '<div class="empty">지금 접수 중인 공고가 없습니다.</div>'}
+    <div class="card" style="margin-top:24px">
+      <div class="between"><h2>내가 좋아할만한 공고</h2><a class="btn sm" href="#/jobs">공고 둘러보기</a></div>
+      ${reco.length ? `<div class="reco-vp" id="reco-vp" style="margin-top:12px"><div class="reco-track">${reco.map(jobCard).join('')}</div></div>`
+      : '<p class="small" style="margin-top:12px">지금 접수 중인 공고가 없습니다.</p>'}
+    </div>
     <div class="grid2" style="margin-top:22px;align-items:start">
       ${blockHtml('나의 공고', apps, myJobRow, 'more-jobs', '아직 지원한 공고가 없습니다.')}
       ${blockHtml('나의 면접', mine, myInterviewRow, 'more-ivs', '아직 응시할 면접이 없습니다.')}
@@ -462,7 +472,7 @@ async function mypage() {
       <div class="card hl"><h2 class="neon">Notification</h2>
         ${notes.length ? notes.map((n) => `<div style="${ROW_STYLE}"><b>${esc(n.title)}</b><div class="small">${esc(n.body)}</div></div>`).join('') : '<p class="small">새 알림이 없습니다.</p>'}</div>
       <div class="card"><h2>내 이력서 관리</h2><p class="small">지원할 때 불러와 쓸 수 있습니다. 지원에 제출한 이력서는 별도로 보관됩니다.</p>
-        ${resumes.length ? resumes.map((r) => `<div class="between" style="${ROW_STYLE}"><span>${esc(r.title)} <span class="small">${fmtYMD(r.updated_at)}</span></span><button class="btn sm ghost" data-delres="${r.id}">삭제</button></div>`).join('') : '<p class="small">등록한 이력서가 없습니다. 지원 과정에서 저장할 수 있습니다.</p>'}</div>
+        ${resumes.length ? resumes.map((r) => `<div class="between" style="${ROW_STYLE}"><span><b>${esc(r.title)}</b> <span class="small">${fmtYMD(r.updated_at)}</span></span><button class="btn sm ghost" data-delres="${r.id}">삭제</button></div>`).join('') : '<p class="small">등록한 이력서가 없습니다. 지원 과정에서 저장할 수 있습니다.</p>'}</div>
     </div></div>`;
 
   if ($('#reco-vp')) startReco($('#reco-vp'));
@@ -628,12 +638,17 @@ function renderEditor(state) {
     ${state.extraction && state.extraction.status === 'review' ? '<div class="note" style="margin-bottom:14px">원문과 인식 결과를 비교해 틀린 부분을 고쳐 주세요. 점선으로 표시된 항목은 인식 신뢰도가 낮은 쪽에서 나온 것입니다. AI 질문은 확인을 마친 내용만 사용합니다.</div>' : ''}
     <div class="${left ? 'split' : ''}">${left}<div>${formHtml(state.data)}</div></div>
     <div class="card" style="margin-top:16px"><label class="check"><input type="checkbox" id="save"><span>이 내용을 마이페이지 '내 이력서'에도 저장</span></label>
+      <div class="field" id="save-title-wrap" style="margin-top:10px;display:none"><label>이력서 제목 *</label><input id="save-title" placeholder="예: 백엔드 지원용 이력서" maxlength="100"></div>
       <div class="row" style="margin-top:8px"><button class="btn primary lg" id="confirm">내용 확인 완료</button><span class="small">확인 완료한 이력서는 지원 시점 기준으로 고정 보관됩니다.</span></div></div>`;
   bindForm(state);
+  $('#save').onchange = () => { $('#save-title-wrap').style.display = $('#save').checked ? '' : 'none'; };
   $('#confirm').onclick = async () => {
     const data = readForm(state.data);
+    const saveOn = $('#save').checked;
+    const title = ($('#save-title').value || '').trim();
+    if (saveOn && !title) { toast('이력서 제목을 입력해 주세요.', true); $('#save-title').focus(); return; }
     try {
-      await post(`/api/applications/${state.appId}/resume`, { data, extraction_id: state.extraction ? state.extraction.id : null, save_title: $('#save').checked ? `${data.basic.name || '이력서'} (${new Date().toLocaleDateString('ko-KR')})` : null });
+      await post(`/api/applications/${state.appId}/resume`, { data, extraction_id: state.extraction ? state.extraction.id : null, save_title: saveOn ? title : null });
       toast('이력서를 확인했습니다.');
       go(`#/apply/${state.appId}/env`);
     } catch (e) { toast(e.message, true); }
