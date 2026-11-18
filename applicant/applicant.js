@@ -1468,6 +1468,7 @@ async function interviewView(attemptId) {
     const remember = () => { internalClip = code.value.substring(code.selectionStart, code.selectionEnd); };
     code.addEventListener('copy', remember); code.addEventListener('cut', remember);
     code.addEventListener('paste', (e) => {                // COD-07
+      if (isTestApplicant()) return;   // 2026-11-19 사용자 지시: 채점이 맞는지 확인하려고 정답을 붙여넣어야 함(테스트 계정 전용)
       const text = (e.clipboardData || window.clipboardData).getData('text');
       if (text !== internalClip) {
         e.preventDefault(); toast('편집기 밖에서 복사한 내용은 붙여넣을 수 없습니다.', true);
