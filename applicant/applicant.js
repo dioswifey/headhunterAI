@@ -1522,8 +1522,10 @@ async function resultView(appId) {
   setNav('my');
   const r = await get(`/api/applications/${appId}/result`);
   if (!r.published) {
-    const why = r.decision_mode === 'hybrid' && r.analysis_status === 'done' ? '기업 담당자가 AI 판정을 확인한 뒤 공개되며, 확정되면 합불 결과를 이메일로도 안내드립니다.' : 'AI 분석이 끝나면 공개됩니다.';
-    view.innerHTML = `<div class="wrap narrow"><div class="card col"><h1>결과 공개 전입니다</h1><p>${why}</p><div id="report-box" class="col"></div><a class="btn" href="#/my">마이페이지로</a></div></div>`;
+    // 2026-11-18 사용자 지시: 업계 표준 안내 문구(서버가 회사·지원자 이름을 넣어 내려준다)
+    const head = r.headline || '결과 공개 전입니다';
+    const why = r.message || (r.decision_mode === 'hybrid' && r.analysis_status === 'done' ? '기업 담당자가 AI 판정을 확인한 뒤 공개되며, 확정되면 합불 결과를 이메일로도 안내드립니다.' : 'AI 분석이 끝나면 공개됩니다.');
+    view.innerHTML = `<div class="wrap mid"><div class="card col"><h1>${esc(head)}</h1><p>${esc(why)}</p><div id="report-box" class="col"></div><a class="btn" href="#/my">마이페이지로</a></div></div>`;
     reportBox(appId, $('#report-box'));
     return;
   }
@@ -1532,10 +1534,8 @@ async function resultView(appId) {
     <a class="btn sm ghost" href="#/my">← 마이페이지</a>
     <div class="card ${pass ? 'hl' : ''}" style="margin-top:14px"><div class="small">1차 결과 · ${esc(r.status)}</div>
       <div class="big" style="margin:8px 0;${pass ? '' : 'color:var(--white)'}">${pass ? '1차 합격' : '1차 불합격'}</div>
-      ${r.reason ? `<p>${esc(r.reason)}</p>` : ''}${r.expires_at ? `<p class="small">열람 기한: ${fmtDate(r.expires_at)}까지</p>` : ''}</div>
-    ${(r.strengths || []).length || (r.improvements || []).length ? `<div class="grid2" style="margin-top:16px;align-items:start">
-      <div class="card"><h2>강점</h2>${(r.strengths || []).map((s, i) => `<p><b class="neon">${i + 1}.</b> ${esc(s)}</p>`).join('')}</div>
-      <div class="card"><h2>개선점</h2>${(r.improvements || []).map((s, i) => `<p><b>${i + 1}.</b> ${esc(s)}</p>`).join('')}</div></div>` : ''}
+      ${r.message ? `<p style="margin:10px 0 0">${esc(r.message)}</p>` : ''}${r.expires_at ? `<p class="small">열람 기한: ${fmtDate(r.expires_at)}까지</p>` : ''}</div>
+    <!-- 강점·개선점은 화면에서 빼고 리포트 메일로만 보낸다 (2026-11-18 사용자 지시) -->
     <div id="report-box" class="col" style="margin-top:16px"></div></div>`;
   if (r.status !== '응시 취소') reportBox(appId, $('#report-box'), { noResult: true, mailLabel: 'headhunterAI 리포트를 이메일로 받기' });
 }

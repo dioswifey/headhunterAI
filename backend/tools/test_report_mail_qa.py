@@ -134,6 +134,14 @@ def main():
     check("M3 지어낸 수치 든 사유도 걸러진다(Q2 '97%' 문장 제외)",
           all("97" not in t for _, t in q2["notes"]), str(q2["notes"]))
     check("M2+M3 → Q2는 남는 사유가 0개", q2["notes"] == [], str(q2["notes"]))
+    check("M9 사유가 0개면 인용도 빼고 점수만 남긴다(2026-11-18 결정)",
+          q2["quote"] == "" and q2["items"], f"quote={q2['quote']!r} items={q2['items']}")
+    check("M9 걸러진 건수가 기록된다(Q2 사유 2건·사유 전부 탈락)",
+          q2["filtered"] == {"notes": 2, "quote": True, "all_notes_dropped": True}, str(q2["filtered"]))
+    check("M9 정상 문항은 걸러진 것 없음(Q1)",
+          q1["filtered"] == {"notes": 0, "quote": False, "all_notes_dropped": False}, str(q1["filtered"]))
+    check("M9 점수 행이 없는 문항은 all_notes_dropped=False(Q5)",
+          q5["filtered"]["all_notes_dropped"] is False, str(q5["filtered"]))
     check("M2 금지어 든 인용은 빠진다(Q3 '출신 학교')", q3["quote"] == "", repr(q3["quote"]))
     check("M1 정상 사유·인용은 남는다(Q1)", len(q1["notes"]) == 2 and q1["quote"], str(q1))
 

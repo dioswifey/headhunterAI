@@ -581,8 +581,13 @@ def practice_sql_answer(pid: int, body: SqlAnswer, user=Depends(security.applica
 # ---------- 결과 (RPT-03~05) ----------
 def _result_row(app_id):
     return db.one("""SELECT a.id attempt_id, a.status, a.analysis_status, a.publish_at, e.public_feedback, e.final_result, e.decided_at,
-                     coalesce(a.criteria_snapshot->>'decision_mode', 'auto') decision_mode
-                     FROM attempts a LEFT JOIN evaluations e ON e.attempt_id=a.id WHERE a.application_id=%s""", app_id)
+                     coalesce(a.criteria_snapshot->>'decision_mode', 'auto') decision_mode,
+                     c.name company, u.name applicant_name
+                     FROM attempts a
+                     JOIN applications ap ON ap.id=a.application_id
+                     JOIN jobs j ON j.id=ap.job_id JOIN companies c ON c.id=j.company_id
+                     JOIN users u ON u.id=ap.user_id
+                     LEFT JOIN evaluations e ON e.attempt_id=a.id WHERE a.application_id=%s""", app_id)
 
 
 @router.get("/applications/{app_id}/result")
@@ -592,9 +597,26 @@ def result(app_id: int, user=Depends(security.applicant)):
     row = _result_row(app_id)
     if not row:
         raise HTTPException(404, "응시 기록이 없습니다.")
+    who, comp = row["applicant_name"], row["company"]
     if not row["public_feedback"] or not row["final_result"]:
-        return {"published": False, "decision_mode": row["decision_mode"], "analysis_status": row["analysis_status"]}
+        # hybrid: 담당자 확정 전 (2026-11-18 사용자 지시 — 업계 표준 안내 문구)
+        return {"published": False, "decision_mode": row["decision_mode"], "analysis_status": row["analysis_status"],
+                "company": comp, "applicant_name": who,
+                "headline": f"{comp} 1차 면접을 마치셨습니다",
+                "message": (f"{who} 님, {comp} 1차 면접에 응해 주셔서 감사합니다. 수고 많으셨습니다."
+                            f" 현재 {comp}에서 평가를 진행하고 있으며, 결과는 수일 내로 개별 안내드릴 예정입니다.")}
     pub = {k: v for k, v in row["public_feedback"].items() if k != "result"}
+    # 확정 통보 문구 (2026-11-18 사용자 지시). 강점·개선점은 화면에서 빼고 리포트 메일로만 보낸다.
+    passed = row["final_result"] == "pass"
+    pub.pop("strengths", None); pub.pop("improvements", None); pub.pop("notice", None)
+    pub["headline"] = f"{comp} 1차 전형 결과를 안내드립니다"
+    pub["message"] = (f"{who} 님, {comp} 1차 면접에 응해 주셔서 감사합니다."
+                      f" 평가 결과 1차 전형에 합격하셨습니다. 이후 채용 절차는 {comp}에서 개별적으로 안내드릴 예정입니다."
+                      if passed else
+                      f"{who} 님, {comp} 1차 면접에 응해 주셔서 감사합니다."
+                      f" 신중히 검토하였으나 이번 전형에서는 함께하지 못하게 되었습니다."
+                      f" 지원해 주신 관심에 깊이 감사드리며, 더 좋은 기회로 다시 뵙기를 바랍니다.")
+    pub["company"], pub["applicant_name"] = comp, who
     return {"published": True, "result": row["final_result"], "decided_at": row["decided_at"].isoformat(),
             "expires_at": (row["publish_at"] + timedelta(days=7)).isoformat() if row["publish_at"] else None, **pub}
 

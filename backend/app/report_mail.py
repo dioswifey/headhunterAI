@@ -54,9 +54,13 @@ def _model_answer(q):
       · DB `question_bank` → 컬럼 자체가 없다 · 이력서 문항 → **모범답안을 넣지 않는다**(D안):
         본인 경험을 묻는 질문에 '정답'은 없다. 둘 다 빈 문자열이고 렌더에서 **칸을 뺀다**.
 
-    허용 수치 집합을 문장 자신으로 두는 이유: 은행에 미리 들어 있는 값이라 이 응시의 숫자로 대조하면
-    정상 모범답안이 `invented_number`로 떨어진다. 생성 때 A18이 이미 출처 조각과 토큰을 대조했다(`bad_tokens`).
-    남는 검사는 금지어·지시문 누출이고, 그건 그대로 걸린다."""
+    **검사 범위가 다른 문장들과 같지 않다(2026-11-18 승인)** — 분명히 적어 둔다:
+    `rationale`·`quote`는 허용 수치를 '이 응시의 질문·답변·점수'로 두지만, 모범답안은 **그 문장 자신**으로 둔다.
+    모범답안은 이 응시와 무관하게 은행에 미리 들어 있는 값이라, 응시 숫자로 대조하면 정상 모범답안이
+    전부 `invented_number`로 떨어진다(검사가 아니라 오작동이 된다). 생성 때 A18이 이미 출처 조각과
+    토큰을 대조했다(`internal_question_agent.validate`의 `bad_tokens`).
+    → 모범답안에 실제로 적용되는 것은 **금지어(FORBIDDEN)와 지시문 누출 검사뿐**이다.
+    "모범답안도 똑같이 수치 검사를 했다"고 읽지 말 것."""
     gm = q.get("gen_method") or ""
     if not (gm.startswith("internal_q:") or gm.startswith("redis:")):
         return ""
@@ -70,41 +74,71 @@ def _model_answer(q):
     return "" if report_guard.check_text([ideal], report_guard.number_tokens(ideal)) else ideal
 
 
-def _questions(attempt_id):
-    """문항별 분석 재료 — **모델 호출 0회**. 이미 평가 때 만들어 둔 `question_scores`를 읽는다.
+def build_questions(rows, scores_by_q):
+    """문항별 분석 재료 — **순수 함수 · DB·모델 호출 0회.** 실서비스(`_questions`)와 측정 도구가 **같은 함수**를 쓴다
+    (측정이 보는 메일과 실제로 나가는 메일이 달라지면 그 측정은 의미가 없다).
 
-    기본 문항만 쓴다 — **꼬리질문은 `question_scores` 행이 없다**(채점 대상이 아니다). 개수만 따로 보여 준다.
-    `rationale`·`quote`·모범답안은 `report_guard` 검사를 통과한 것만 남기고, 못 넘으면 **그 칸을 뺀다**
-    (빈 칸이 보이면 미완성으로 읽히므로 렌더에서 아예 그리지 않는다).
-    `improvements`는 지금 비워 둔다 — '개선점'이 문항별인지 전체인지 확인되면 이 자리에 넣는다(전체는 기존 그대로)."""
+    rows        : [{id, seq, category, text, gen_method, answer_text, answer_status}] — **기본 문항만**
+                  (꼬리질문은 `question_scores` 행이 없다 = 채점 대상이 아니다. 개수만 따로 보여 준다)
+    scores_by_q : {question_id: {eval_item: {score, quote, verified, rationale}}}
+
+    `rationale`·`quote`·모범답안은 `report_guard` 검사를 통과한 것만 남기고, 못 넘으면 **그 칸을 뺀다**.
+    사유가 하나도 안 남으면 **인용까지 뺀다**(2026-11-18 사용자 결정) — '내 답변 조각 + 설명 없음'은
+    지원자에게 미완성으로 읽힌다. 걸러진 건수는 `filtered`에 남겨 측정에서 셀 수 있게 한다.
+    `improvements`는 비워 둔다 — '개선점'이 문항별인지 전체인지 확인되면 이 리스트만 채우면 된다."""
+    out = []
+    for r in rows:
+        sc = scores_by_q.get(r["id"]) or {}
+        ss = [(k, v) for k, v in sc.items() if isinstance(v, dict)]
+        ans = r.get("answer_text") or ""
+        allowed = report_guard.number_tokens(r.get("text") or "", ans, *[v.get("score") for _, v in ss])
+        ans_nums = report_guard.number_tokens(ans)
+        notes, seen, n_drop = [], set(), 0
+        for item, v in ss:
+            t = (v.get("rationale") or "").strip()
+            if not t or t in seen:
+                continue
+            if report_guard.check_text([t], allowed):
+                n_drop += 1
+                continue
+            seen.add(t)
+            notes.append((ITEM_KO.get(item, item), t))
+        quote, q_drop = "", False
+        for _, v in ss:
+            t = (v.get("quote") or "").strip()
+            if not (v.get("verified") and t):
+                continue
+            if report_guard.check_text([t], ans_nums):
+                q_drop = True
+                continue
+            quote = t
+            break
+        if not notes:                       # 사유가 전부 걸러졌으면 인용도 보여 주지 않는다
+            quote = ""
+        ma = _model_answer(r)
+        out.append({"seq": r.get("seq"), "category": CAT_KO.get(r.get("category"), r.get("category")),
+                    "text": r.get("text") or "",
+                    "items": [(ITEM_KO.get(k, k), int(v.get("score") or 0)) for k, v in ss],
+                    "quote": quote, "notes": notes, "model_answer": ma, "improvements": [],
+                    "answered": r.get("answer_status") == "answered",
+                    # 측정용: 관문에 걸려 빠진 칸 수. all_notes_dropped = 사유가 0개로 남은 문항
+                    "filtered": {"notes": n_drop, "quote": bool(q_drop or (not notes and ss)),
+                                 "all_notes_dropped": bool(ss and not notes)}})
+    return out
+
+
+def _questions(attempt_id):
+    """DB에서 기본 문항·점수를 읽어 `build_questions`에 넘긴다(쿼리 2개, 모델 0회)."""
     rows = db.all_("""SELECT q.id, q.seq, q.category, q.text, q.gen_method, q.answer_text, q.answer_status
                       FROM attempt_questions q WHERE q.attempt_id=%s AND q.parent_id IS NULL ORDER BY q.seq""", attempt_id)
     scores = db.all_("""SELECT s.question_id, s.eval_item, s.score, s.quote, s.rationale, s.verified
                         FROM question_scores s JOIN attempt_questions q ON q.id=s.question_id
                         WHERE q.attempt_id=%s AND q.parent_id IS NULL ORDER BY s.question_id, s.eval_item""", attempt_id)
     by_q = {}
-    for s in scores:
-        by_q.setdefault(s["question_id"], []).append(s)
-    out = []
-    for r in rows:
-        ss = by_q.get(r["id"]) or []
-        ans = r["answer_text"] or ""
-        allowed = report_guard.number_tokens(r["text"], ans, *[s["score"] for s in ss])
-        ans_nums = report_guard.number_tokens(ans)
-        notes, seen = [], set()
-        for s in ss:
-            t = (s["rationale"] or "").strip()
-            if t and t not in seen and not report_guard.check_text([t], allowed):
-                seen.add(t)
-                notes.append((ITEM_KO.get(s["eval_item"], s["eval_item"]), t))
-        quote = next((s["quote"].strip() for s in ss
-                      if s["verified"] and (s["quote"] or "").strip()
-                      and not report_guard.check_text([s["quote"]], ans_nums)), "")
-        out.append({"seq": r["seq"], "category": CAT_KO.get(r["category"], r["category"]), "text": r["text"],
-                    "items": [(ITEM_KO.get(s["eval_item"], s["eval_item"]), int(s["score"])) for s in ss],
-                    "quote": quote, "notes": notes, "model_answer": _model_answer(r), "improvements": [],
-                    "answered": r["answer_status"] == "answered"})
-    return out
+    for s in scores or []:
+        by_q.setdefault(s["question_id"], {})[s["eval_item"]] = {
+            "score": s["score"], "quote": s["quote"], "verified": s["verified"], "rationale": s["rationale"]}
+    return build_questions(rows or [], by_q)
 
 
 def _template_coach(items):

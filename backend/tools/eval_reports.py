@@ -255,8 +255,18 @@ def run_one(att):
         facts = {"answered": len(att["blocks"]), "base": len(att["blocks"]), "followups": 0, "coding": None}
         coach, writer = report_mail._coach(r, items, facts)
         t3 = time.time()
-        html_body = report_mail.render(r, items, facts, coach)
-        text_body = report_mail.render_text(r, items, facts, coach)
+        # ⚠ 측정 정의 변경(2026-11-18): 이 날부터 메일 본문에 **문항별 분석 + 모범답안**이 들어간다.
+        # 실제 발송 메일과 같은 것을 재기 위해 qas를 넘긴다 — `report_mail.build_questions`를 제품 경로와
+        # **같은 함수로** 쓴다(DB 대신 메모리 scores_by_q). 따라서 mail_text·mail_html_len을 비롯해
+        # 본문 길이·문장 수에 기대는 지표는 **2026-11-17 이전 수치와 직접 비교하면 안 된다**(모집단이 다름).
+        # 이전과 비교해야 하면 qas=() 로 호출한 값을 따로 재야 한다.
+        qas = report_mail.build_questions(
+            [{"id": b["q"]["id"], "seq": b["q"].get("seq"), "category": b["q"].get("category"),
+              "text": b["q"].get("text"), "gen_method": b["q"].get("gen_method") or "",
+              "answer_text": b["q"].get("answer_text"), "answer_status": "answered"} for b in att["blocks"]],
+            s["scores_by_q"])
+        html_body = report_mail.render(r, items, facts, coach, qas)
+        text_body = report_mail.render_text(r, items, facts, coach, qas)
         rec.update({
             "ok": True, "error": None,
             "scores_by_q": {str(k): v for k, v in s["scores_by_q"].items()},
@@ -265,6 +275,12 @@ def run_one(att):
             "summary_template": summary_template,
             "coaching": coach.get("coaching", ""), "actions": coach.get("actions", []), "coach_writer": writer, "coach_reject": coach.get("reject"),
             "mail_text": text_body, "mail_html_len": len(html_body),
+            # 문항별 분석이 관문에 걸려 빠진 건수(2026-11-18) — 사유가 전부 걸러진 문항이 몇 개인지 본다
+            "qa_filtered": {"questions": len(qas),
+                            "all_notes_dropped": sum(1 for q in qas if q["filtered"]["all_notes_dropped"]),
+                            "notes_dropped": sum(q["filtered"]["notes"] for q in qas),
+                            "quote_dropped": sum(1 for q in qas if q["filtered"]["quote"]),
+                            "model_answer": sum(1 for q in qas if q["model_answer"])},
             "sec": {"evaluate": round(t1 - t0, 1), "summarize": round(t2 - t1, 1), "coach": round(t3 - t2, 1), "total": round(t3 - t0, 1)},
         })
     except Exception as e:  # noqa: BLE001 — 생성 실패도 측정 대상(M-43)
