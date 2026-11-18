@@ -1713,9 +1713,9 @@ async function resultView(appId) {
   const pass = r.result === 'pass';
   view.innerHTML = `<div class="wrap mid">
     <a class="btn sm ghost" href="#/my">← 마이페이지</a>
-    <div class="card ${pass ? 'hl' : ''}" style="margin-top:14px"><div class="small">1차 결과 · ${esc(r.status)}</div>
-      <div class="big" style="margin:8px 0;${pass ? '' : 'color:var(--white)'}">${pass ? '1차 합격' : '1차 불합격'}</div>
-      ${r.message ? `<p style="margin:10px 0 0">${esc(r.message)}</p>` : ''}${r.expires_at ? `<p class="small">열람 기한: ${fmtDate(r.expires_at)}까지</p>` : ''}</div>
+    <div class="card ${pass ? 'hl' : ''}" style="margin-top:14px">
+      <div class="big" style="${pass ? '' : 'color:var(--white)'}">${pass ? '1차 합격' : '1차 불합격'}</div>
+      ${r.message ? `<p style="margin:14px 0 0;line-height:1.9">${r.message.split(/(?<=[.!?])\s+/).map(esc).join('<br><br>')}</p>` : ''}</div>
     <!-- 강점·개선점은 화면에서 빼고 리포트 메일로만 보낸다 (2026-11-18 사용자 지시) -->
     <div id="report-box" class="col" style="margin-top:16px"></div></div>`;
   if (r.status !== '응시 취소') reportBox(appId, $('#report-box'), { noResult: true, mailLabel: 'headhunterAI 리포트를 이메일로 받기' });
