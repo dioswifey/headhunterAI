@@ -137,6 +137,7 @@ const T = {
       { ic: 'O', h: '이력서 인식', p: 'PDF 텍스트 추출과 Tesseract OCR(한국어·영어)을 함께 씁니다.' },
       { ic: 'S', h: '격리된 코드 실행', p: '코딩테스트 코드는 네트워크가 차단된 별도 컨테이너에서 시간·메모리 제한을 두고 실행합니다.' },
     ],
+    aboutTechInbound: '지원자 이력서 · 답변 · 코드',
     aboutTechResult: '지원자의 이력서·답변·코드는 서버 밖으로 나가지 않습니다',
     pricingTitle: ['Simple pricing.', '필요한 만큼만'],
     pricingLead: '주 10회 미만은 무료로 쓰고, 더 자주 쓰거나 IT 직군 모의면접·맞춤 코딩테스트가 필요하면 Advanced를 고르세요.',
@@ -291,6 +292,7 @@ const T = {
       { ic: 'O', h: 'Résumé recognition', p: 'PDF text extraction combined with Tesseract OCR (Korean and English).' },
       { ic: 'S', h: 'Isolated code execution', p: 'Coding-test code runs in a separate network-blocked container with time and memory limits.' },
     ],
+    aboutTechInbound: 'Applicant résumé · answers · code',
     aboutTechResult: 'Applicant résumés, answers and code never leave our servers',
     pricingTitle: ['Simple pricing.', 'Pay for what you use'],
     pricingLead: 'Free for fewer than 10 uses a week. Choose Advanced if you use it more often or need IT mock interviews and custom coding tests.',
@@ -379,17 +381,23 @@ function cards(list) {
 /* About 페이지 다이어그램(2026-11-18 사용자 지시 — 카드 6개를 그냥 나열하지 말고 시각화).
    SVG 대신 HTML+CSS로 짜서 한국어·영어 길이가 달라도 자동으로 줄바꿈된다(반응형). */
 function flowDiagram(list) {
+  // 2026-11-18 사용자 지시: 원형 번호 아이콘 삭제, 화살표로 잇는 흐름만 남긴다
   return `<div class="flow">${list.map((c, i) => `
     ${i ? '<div class="flow-arrow" aria-hidden="true">→</div>' : ''}
-    <div class="card2 flow-step">${c.ic ? `<div class="ic">${esc(c.ic)}</div>` : ''}<h3>${esc(c.h)}</h3><p>${esc(c.p)}</p></div>`).join('')}</div>`;
+    <div class="card2 flow-step"><h3>${esc(c.h)}</h3><p>${esc(c.p)}</p></div>`).join('')}</div>`;
 }
 
-function stackDiagram(list, result) {
-  return `<div class="stack">
-    <div class="stack-row">${list.map(c => `
-      <div class="card2">${c.ic ? `<div class="ic">${esc(c.ic)}</div>` : ''}<h3>${esc(c.h)}</h3><p>${esc(c.p)}</p></div>`).join('')}</div>
-    <div class="stack-join" aria-hidden="true">↓ ↓ ↓</div>
-    <div class="stack-result">${esc(result)}</div>
+/* '기술 구성'은 카드가 아니라 보안 경계 다이어그램으로(2026-11-18 사용자 지시 — 더 creative하게).
+   바깥에서 들어오는 지원자 데이터 → 점선 경계 안 3개 구성 요소를 거침 → 밖으로 나가는 화살표는 없다(밀봉) */
+function perimeterDiagram(list, inbound, result) {
+  return `<div class="perimeter-wrap">
+    <div class="perimeter-in" aria-hidden="true"><span>${esc(inbound)}</span><span class="perimeter-in-arrow">↓</span></div>
+    <div class="perimeter">
+      <div class="perimeter-row">${list.map((c, i) => `
+        ${i ? '<div class="perimeter-sep" aria-hidden="true"></div>' : ''}
+        <div class="perimeter-node"><h3>${esc(c.h)}</h3><p>${esc(c.p)}</p></div>`).join('')}</div>
+    </div>
+    <div class="perimeter-seal">${esc(result)}</div>
   </div>`;
 }
 
@@ -412,7 +420,7 @@ function about() {
     <section class="sec"><h2>${esc(L.aboutChangeH)}</h2>${L.aboutChange.map(p => `<p style="max-width:760px;color:var(--muted)">${esc(p)}</p>`).join('')}
       <p style="max-width:760px;color:var(--muted2);font-size:13px;margin-top:18px">${esc(L.aboutSource)}</p></section>
     <section class="sec"><h2>${esc(L.aboutPrinciplesH)}</h2>${flowDiagram(L.aboutPrinciples)}</section>
-    <section class="sec"><h2>${esc(L.aboutTechH)}</h2>${stackDiagram(L.aboutTech, L.aboutTechResult)}</section>
+    <section class="sec"><h2>${esc(L.aboutTechH)}</h2>${perimeterDiagram(L.aboutTech, L.aboutTechInbound, L.aboutTechResult)}</section>
   </div>`;
 }
 
