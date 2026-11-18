@@ -417,10 +417,10 @@ function about() {
   const L = t();
   return `<div class="wrap">${head(L.aboutTitle, L.aboutLead)}
     <section class="sec"><h2>${esc(L.aboutWhyH)}</h2>${L.aboutWhy.map(p => `<p style="max-width:760px;margin:0 auto 16px;color:var(--muted)">${esc(p)}</p>`).join('')}</section>
-    <section class="sec"><h2>${esc(L.aboutChangeH)}</h2>${L.aboutChange.map(p => `<p style="max-width:760px;margin:0 auto 16px;color:var(--muted)">${esc(p)}</p>`).join('')}
-      <p style="max-width:760px;margin:18px auto 0;color:var(--muted2);font-size:13px">${esc(L.aboutSource)}</p></section>
+    <section class="sec"><h2>${esc(L.aboutChangeH)}</h2>${L.aboutChange.map(p => `<p style="max-width:760px;margin:0 auto 16px;color:var(--muted)">${esc(p)}</p>`).join('')}</section>
     <section class="sec"><h2>${esc(L.aboutPrinciplesH)}</h2>${flowDiagram(L.aboutPrinciples)}</section>
     <section class="sec"><h2>${esc(L.aboutTechH)}</h2>${perimeterDiagram(L.aboutTech, L.aboutTechInbound, L.aboutTechResult)}</section>
+    <p class="note" style="max-width:760px;margin:40px auto 0;text-align:left">${esc(L.aboutSource)}</p>
   </div>`;
 }
 
