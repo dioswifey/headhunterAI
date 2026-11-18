@@ -674,7 +674,9 @@ def guard_disclosure(s: GenState) -> GenState:
             drafts.append(d)
             continue
         iq = bool(d.get("iq_source"))                     # A17 질문: text == orig가 정상이라 아래 지름길을 타지 않는다
-        if not iq and d["text"] == d["orig"]:              # A6이 은행 원문으로 되돌림 → 사내문서를 쓰지 않은 문장
+        # 이력서 문항만 예외(2026-11-18): A17 질문을 참고만 하므로 text == orig는 "정상"이 아니라
+        # "A6이 템플릿으로 되돌렸다"는 뜻이다(:611) — 그 문장에는 사내문서 내용이 없어 집계에서 뺀다.
+        if (not iq or d["category"] == "resume") and d["text"] == d["orig"]:
             drafts.append(_drop_rag(d))
             continue
         rep["checked"] += 1

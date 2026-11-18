@@ -19,6 +19,8 @@
   I10 이력서 참고 문항도 사내문서 질문을 먼저 쓴다(2026-11-18, M-55 0.625 → 0.875 목표):
       `_resume_bank_refs`를 **실제로 돌려** ① 참고 문항이 internal_q로 잡히고 ② dual_report.resume_iq_ref가 세어지고
       ③ 이력서 문항 gen_method에 `|internal:`이 붙는지 · 역량이 모자라면 그 문항만 Redis 백업으로 내려가는지
+  I11 A6(철학 적합성)이 되돌린 문항 처리(2026-11-18): 같은 `text == orig`가 이력서 문항에서는 "템플릿으로 되돌려졌다"
+      (→ 집계에서 뺀다), A17 카테고리 문항에서는 "검증된 질문을 그대로 출제"(→ 출처 유지)라는 정반대 뜻이다
 """
 import os
 import sys
@@ -493,6 +495,70 @@ def t_resume_internal_off():
           "resume_bank 3(-)" in _retrieve_log(info), _retrieve_log(info))
 
 
+# ---------------- I11 A6 되돌림: 이력서는 집계에서 빼고 A17은 유지 (2026-11-18) ----------------
+class PhilFailEnv(ResumeIQEnv):
+    """A6(철학 적합성)이 **전부 거절**하는 환경 → 모든 문항이 `orig`로 되돌아간다.
+
+    이때 같은 `text == orig`가 두 가지 **정반대** 뜻을 갖는다:
+      · 이력서 문항  → "A6이 순수 템플릿으로 되돌렸다"(사내문서 내용 0) → 집계에서 **빼야** 한다
+      · A17 카테고리 → "검증된 질문을 그대로 출제했다"(정상)            → 출처를 **유지해야** 한다
+    2026-11-18 수정(`question_graph.py:679`)이 이 둘을 가르는지 검사한다.
+    """
+
+    def __init__(self, **kw):
+        kw.setdefault("review", True)        # A6를 켜야 되돌림 경로를 탄다(QGRAPH_REVIEW)
+        super().__init__(**kw)
+
+    def chat(self, system, user, schema, **kw):
+        props = schema.get("properties") or {}
+        if "scores" in props:                # A6 — 거절 + 고쳐 쓴 문장도 주지 않음 → orig로 되돌림
+            self.prompts.append(system)
+            return {"scores": [1] * 6, "pass": False, "problems": ["시험용 거절"], "revised_question": ""}
+        return super().chat(system, user, schema, **kw)
+
+
+def t_resume_revert_not_counted():
+    from tools import eval_source_mix as M
+    env = PhilFailEnv()
+    qs, info = _run(env)
+    rq = _resume_qs(qs)
+    cat = [q for q in qs if q["category"] in ("job", "company")]
+    gm_r = [q.get("gen_method") or "" for q in rq]
+    gm_c = [q.get("gen_method") or "" for q in cat]
+    check("I11 A6 전부 거절해도 8문항", len(qs) == 8, str(len(qs)))
+
+    # ⓐ 잡아야 하는 경우 — 되돌려진 이력서 문항
+    check("I11 되돌린 이력서 문항은 생성 문장이 사라짐",
+          not any("이력서 질문입니다" in q["text"] for q in rq), str([q["text"][:22] for q in rq]))
+    check("I11 되돌린 이력서 문항 gen_method = template", all(g == "template" for g in gm_r), str(gm_r))
+    check("I11 되돌린 이력서 문항에 |internal: 없음 ← 이번 수정의 핵심",
+          not any("|internal:" in g for g in gm_r), str(gm_r))
+
+    # ⓑ 건드리면 안 되는 경우 — A17 카테고리 문항(text == orig가 정상)
+    check("I11 A17 직무2·기업1 = 3문항 출처 유지(|internal:)",
+          len(cat) == 3 and all("|internal:" in g for g in gm_c), str(gm_c))
+    check("I11 A17 문항은 질문 문장 그대로", all("사내문서 질문" in q["text"] for q in cat),
+          str([q["text"][:22] for q in cat]))
+
+    # 7-B는 되돌려진 이력서 문항을 **검사 대상에서 뺀다**(차단이 아니라 제외).
+    # 검사 대상 5 = A17 인성 2 + 직무 2 + 기업 1(인성도 `_internal_draft`가 doc_refs를 단다).
+    # 이력서 3문항은 지름길에서 걸러져 `checked`에 들어가지 않는다 — 8 − 3 = 5.
+    gr = info.get("guard_report") or {}
+    check("I11 7-B 검사 5건(A17 5문항만, 이력서 3 제외) · 차단 0",
+          gr.get("checked") == 5 and gr.get("blocked") == 0, str(gr))
+
+    r = M.summarize([{"pid": "T", "questions": [{"category": q["category"], "gen_method": q.get("gen_method")}
+                                                for q in qs]}])
+    check("I11 M-55 = 5/8(인성2+직무2+기업1만) · 이력서 0", r["internal"] == 5, str(r))
+
+    # 같은 환경에서 A6만 통과시키면 이력서 3문항이 다시 집계된다(수정이 과도하지 않다는 확인)
+    env2 = ResumeIQEnv(review=True)
+    qs2, _ = _run(env2)
+    r2 = M.summarize([{"pid": "T", "questions": [{"category": q["category"], "gen_method": q.get("gen_method")}
+                                                 for q in qs2]}])
+    check("I11 A6 통과 환경에서는 8/8 그대로", r2["internal"] == 8, str(r2))
+
+
 def main():
     t_qcat()
     t_validate()
@@ -506,6 +572,7 @@ def main():
     t_resume_internal()
     t_resume_internal_short()
     t_resume_internal_off()
+    t_resume_revert_not_counted()
     print(f"\n{len(OK)}/{len(OK) + len(FAIL)}" + (f"  실패: {FAIL}" if FAIL else ""))
     return 1 if FAIL else 0
 

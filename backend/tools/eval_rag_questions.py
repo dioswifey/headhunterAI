@@ -236,6 +236,10 @@ def _jobs():
 
 # ---------------- 1. 생성 ----------------
 def _pick_source(b):
+    # iq_id가 먼저다(2026-11-18 수정) — 사내문서 질문(A17)도 doc_id(사내문서 ID)를 같이 들고 오므로
+    # doc_id부터 보면 전부 "redis"로 찍힌다. 제품 코드 `question_graph._bank_fields`와 같은 순서로 맞춘다.
+    if b.get("iq_id"):
+        return "internal_q"
     if b.get("doc_id"):
         return "redis"
     if b.get("char_id"):
@@ -759,11 +763,18 @@ def cmd_report(a):
     def m31(rows):
         v = [r["relevance"] for r in rows]
         return {**summ(v, [r["set_id"] for r in rows]), "p_ge3": prop([x >= 3 for x in v], [r["set_id"] for r in rows])}
+    # ⚠ 정의 변경 주의(2026-11-18): `_pick_source`가 사내문서 질문(A17)을 `internal_q`로 따로 찍기 시작했다.
+    # 그 전에는 A17 질문도 `doc_id`가 있어 **redis로 섞여 들어갔다**(A17은 2026-11-17 신설이므로 11-13 이전
+    # 측정에는 A17 질문이 아예 없어 영향 없음). 따라서 **2026-11-17 이후 실행의 M-31 `redis` 값은
+    # 11-13 이전 보고서 수치와 직접 비교하면 안 된다** — 모집단이 다르다(그때는 A17 포함, 지금은 제외).
+    # 11-13 이전과 비교할 때는 `all`을 쓰거나 `by_key_source`의 redis + internal_q를 합쳐서 본다.
     redis_rows = [r for r in rel if r["source"] == "redis"]
     M["M-31"] = {"name": "검색 관련도", "target": "평균 ≥4.0 · P(≥3) ≥0.90", "redis": m31(redis_rows), "all": m31(rel),
                  "by_key": {k: m31([r for r in rel if r["key"] == k]) for k in sorted({r["key"] for r in rel})},
+                 # 2026-11-18: 출처 목록에 internal_q 추가 — `_pick_source`가 사내문서 질문을 따로 찍게 고쳤으므로
+                 # 이 목록에 넣지 않으면 그 행들이 by_key_source에서 조용히 빠진다(전에는 redis로 섞여 들어갔다).
                  "by_key_source": {f"{k}/{s}": m31([r for r in rel if r["key"] == k and r["source"] == s])
-                                   for k in sorted({r["key"] for r in rel}) for s in ("redis", "db", "md") if any(r["key"] == k and r["source"] == s for r in rel)},
+                                   for k in sorted({r["key"] for r in rel}) for s in ("internal_q", "redis", "db", "md") if any(r["key"] == k and r["source"] == s for r in rel)},
                  "by_role_redis": {ro: m31([r for r in redis_rows if next(s for s in sets if s["set_id"] == r["set_id"])["role_code"] == ro])
                                    for ro in sorted({s["role_code"] for s in sets})},
                  "sim_vs_relevance": [[r["sim"], r["relevance"]] for r in redis_rows if r.get("sim") is not None]}

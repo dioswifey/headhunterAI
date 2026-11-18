@@ -99,9 +99,11 @@ def cmd_gen(a):
         for key, items in (st.get("picks") or {}).items():
             for b in items or []:
                 if b:
+                    # iq_id = 사내문서 질문(A17) ID. 2026-11-18 추가 — 이게 없으면 참고 문항이 사내문서였는지
+                    # Redis였는지 gen.json만으로 가를 수 없다(doc_id는 양쪽 다 있다, M-55 분해용).
                     picks.append({"key": key, "category": "job" if key in ("resume_fallback", "resume_bank") else key,
-                                  "source": E._pick_source(b), "doc_id": b.get("doc_id"), "sim": b.get("sim"), "text": b.get("text"),
-                                  "intent": b.get("subcategory") or ""})
+                                  "source": E._pick_source(b), "doc_id": b.get("doc_id"), "iq_id": b.get("iq_id"),
+                                  "sim": b.get("sim"), "text": b.get("text"), "intent": b.get("subcategory") or ""})
         hits = [{k2: h.get(k2) for k2 in ("ref", "doc_id", "sec", "doc_title", "sec_title", "disclosure", "dept", "sim")}
                 for h in (st.get("internal_hits") or [])]
         out["people"].append({"pid": p["pid"], "label": p.get("label"), "profile": p.get("profile"), "job_id": job["id"],
@@ -109,7 +111,8 @@ def cmd_gen(a):
                               "job_title": job["title"], "snapshot": p["snapshot"], "seconds": sec, "error": err,
                               "log": st.get("log", []), "keyword_report": st.get("keyword_report", {}),
                               "internal_hits": hits, "internal_refs": st.get("internal_refs", []),
-                              "guard_report": st.get("guard_report", {}), "questions": qs, "picks": picks})
+                              "guard_report": st.get("guard_report", {}), "dual_report": st.get("dual_report", {}),
+                              "questions": qs, "picks": picks})
         _dump(a.out, out)
         n_int = sum(1 for q in qs if "|internal:" in (q["gen_method"] or ""))
         print(f"{p['pid']} {job['company_name']}/{job['role_code']}: {len(qs)}문항 {sec}s 사내문서근거 {n_int} {err or ''}", flush=True)
