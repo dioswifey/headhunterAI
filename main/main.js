@@ -6,7 +6,7 @@ const view = document.getElementById('view');
 const T = {
   ko: {
     heroTitle: '인재를 발견하는 새로운 기준,',
-    heroLead: '이력서를 올리면 AI가 내용을 읽고 나에게 맞춘 질문으로 1차 면접을 진행합니다. 기업은 같은 기준과 근거로 1차 결과를 받아 봅니다.',
+    heroLead: '지원자는 이력서를 올리면 그 내용에서 나온 질문으로 1차 면접을 봅니다. 기업은 모든 지원자를 같은 기준으로 본 1차 결과를, 점수마다 답변 근거를 붙여서 받습니다.',
     startApplicant: '지원자로 시작하기 →',
     loginCompany: '기업 담당자 로그인',
     soon: '준비 중',
@@ -150,7 +150,7 @@ const T = {
     contactName: '김소현',
     contactRole: 'Founder of headhunterAI',
     contactEmailLabel: '이메일',
-    contactFoot: '보내 주신 메일은 대표자가 직접 확인하고 답장합니다.',
+    contactFoot: '궁금한 점이나 불편한 점은 이메일로 문의 부탁드립니다.',
     sourcesTitle: ['이 사이트가', '인용한 자료'],
     sourcesLead: 'About 페이지의 수치와 연구 결과가 어디에서 왔는지 모아 둔 곳입니다.',
     sources: [
@@ -211,7 +211,7 @@ const T = {
   },
   en: {
     heroTitle: 'A new standard for discovering talent,',
-    heroLead: 'Upload your résumé and the AI reads it, then runs a first-round interview with questions made for you. Companies get first-round results built on the same criteria and evidence.',
+    heroLead: 'Applicants upload a résumé and answer questions drawn from it. Employers get a first round run on one set of criteria, with the answer behind every score.',
     startApplicant: 'Start as an applicant →',
     loginCompany: 'Recruiter sign-in',
     soon: 'Coming soon',
@@ -344,7 +344,7 @@ const T = {
     contactName: 'Sohyun Kim',
     contactRole: 'Founder of headhunterAI',
     contactEmailLabel: 'Email',
-    contactFoot: 'Every email comes straight to me and I reply myself.',
+    contactFoot: 'For questions or concerns, please reach out by email.',
     sourcesTitle: ['What this site', 'cites'],
     sourcesLead: 'Where the figures and research findings on the About page come from.',
     sources: [
