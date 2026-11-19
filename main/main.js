@@ -6,7 +6,7 @@ const view = document.getElementById('view');
 const T = {
   ko: {
     heroTitle: '인재를 발견하는 새로운 기준,',
-    heroLead: '지원자는 이력서를 올리면 그 내용에서 나온 질문으로 1차 면접을 봅니다. 기업은 모든 지원자를 같은 기준으로 본 1차 결과를, 점수마다 답변 근거를 붙여서 받습니다.',
+    heroLead: '지원자의 가능성이 기업의 기회로 이어지도록. headhunterAI는 프라이빗 AI 기술로 더 공정하고 간편한 채용 경험을 만듭니다.',
     startApplicant: '지원자로 시작하기 →',
     loginCompany: '기업 담당자 로그인',
     soon: '준비 중',
@@ -211,7 +211,7 @@ const T = {
   },
   en: {
     heroTitle: 'A new standard for discovering talent,',
-    heroLead: 'Applicants upload a résumé and answer questions drawn from it. Employers get a first round run on one set of criteria, with the answer behind every score.',
+    heroLead: 'So that a candidate’s potential becomes a company’s opportunity. headhunterAI builds a fairer, simpler hiring experience on private AI.',
     startApplicant: 'Start as an applicant →',
     loginCompany: 'Recruiter sign-in',
     soon: 'Coming soon',
