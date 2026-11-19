@@ -211,7 +211,7 @@ const T = {
   },
   en: {
     heroTitle: 'A new standard for discovering talent,',
-    heroLead: 'So that a candidate’s potential becomes a company’s opportunity. headhunterAI builds a fairer, simpler hiring experience on private AI.',
+    heroLead: 'Turning candidate potential into company opportunity. headhunterAI makes early hiring fairer and simpler — powered by private AI.',
     startApplicant: 'Start as an applicant →',
     loginCompany: 'Recruiter sign-in',
     soon: 'Coming soon',
