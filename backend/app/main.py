@@ -18,6 +18,8 @@ async def lifespan(_app):
     _migrate()
     seed.seed()
     seed.ensure_demo_companies()
+    seed.activate_all_roles()     # 2026-11-19: 직무 '준비 중'으로 공고가 막히지 않게
+    seed.ensure_extra_jobs()      # 2026-11-19: 프론트엔드·모바일·DevOps·데이터 엔지니어 공고
     seed.sync_recruiter_names()
     _load_banks()
     scheduler.start()

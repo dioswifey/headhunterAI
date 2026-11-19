@@ -202,3 +202,87 @@ def sync_recruiter_names():
     """기업 담당자 계정 이름 = 소속 기업명 (PRD v0.9 ACC-07). 회사 이름이 바뀌어도 맞춰 둔다."""
     db.run("""UPDATE users u SET name=c.name FROM companies c
               WHERE u.company_id=c.id AND u.role='recruiter' AND u.name<>c.name""")
+
+
+# 2026-11-19 사용자 지시 — 직무 7개 전부 공고가 보여야 한다(화면에서 '준비 중'만 뜨면 안 됨).
+# 프론트엔드·모바일·DevOps·데이터 엔지니어 공고를 **없으면** 넣는다(제목 기준, 이미 있으면 그대로).
+# 공고는 둘러볼 수 있고, 질문 은행이 없는 직무의 지원·면접은 서버가 막는다(routes_applicant.apply).
+EXTRA_JOBS = [
+    {
+     'role_code': 'frontend',
+     'title': '프론트엔드 개발자 (사내 AI 콘솔)',
+     'company_intro': 'AI 기능과 복잡한 데이터를 구성원이 직관적으로 활용할 수 있는 웹 경험으로 구현하는 역할입니다.',
+     'duties': '- 사내 AI 콘솔의 주요 화면과 사용자 흐름을 설계하고 개발합니다.\n- AI 응답과 작업 진행 상태를 실시간으로 보여주는 인터페이스를 구현합니다.\n- 공통 컴포넌트와 상태 관리 구조를 정비해 제품의 일관성과 확장성을 높입니다.\n- 렌더링 성능과 오류를 분석하고 사용성과 운영 안정성을 개선합니다.\n- 기획 및 백엔드 담당자와 협업해 요구사항을 기능으로 구체화합니다.\n- 테스트와 코드 리뷰를 통해 프론트엔드 개발 품질을 지속적으로 높입니다.',
+     'requirements': '- React와 TypeScript를 활용해 웹 서비스를 개발한 경험이 필요합니다.\n- 비동기 API 연동과 복잡한 상태를 안정적으로 관리할 수 있어야 합니다.\n- 재사용성과 유지보수성을 고려해 컴포넌트 구조를 설계할 수 있어야 합니다.\n- 웹 표준과 접근성 및 반응형 UI에 대한 기본 이해가 필요합니다.\n- 문제를 주도적으로 정의하고 협업 과정에서 기술적 판단을 명확히 설명할 수 있어야 합니다.',
+     'preferred': '- LLM 또는 AI 에이전트 기반 제품의 사용자 화면을 개발한 경험을 우대합니다.\n- WebSocket이나 SSE를 활용해 실시간 데이터를 처리한 경험을 우대합니다.\n- 재사용 가능한 UI 자산을 표준화하고 이를 조직 내에서 지속적으로 관리·확장해 본 분을 우대합니다.\n- 프론트엔드 성능 측정과 오류 모니터링을 바탕으로 개선한 경험을 우대합니다.\n- AI 코딩 도구를 개발과 테스트 및 문서화 과정에 적용한 경험을 우대합니다.',
+     'employment_type': '정규직',
+     'location': '서울 강남구',
+     'headcount': 2,
+     'status': 'published',
+    },
+    {
+     'role_code': 'mobile',
+     'title': '모바일 앱 개발자 (지원자용 앱)',
+     'company_intro': '헤드헌터랩의 지원자용 앱에서 구직자가 채용 정보를 탐색하고 지원 과정을 원활하게 이어갈 수 있도록 모바일 경험을 개발합니다. 기획·디자인·백엔드 담당자와 협업해 기능 정의부터 출시 후 개선까지 제품 전반에 참여합니다.',
+     'duties': '- 지원자의 채용 정보 탐색과 지원 흐름을 이해하고 모바일 기능으로 구현합니다.\n- 기획·디자인·백엔드 담당자와 요구사항과 기술적 범위를 조율합니다.\n- 서버 데이터와 앱 상태를 안정적으로 연동하고 다양한 예외 상황을 처리합니다.\n- Android와 iOS 앱의 빌드·검수·스토어 배포 및 버전 관리를 수행합니다.\n- 로그와 사용자 데이터를 바탕으로 오류와 성능 문제를 분석해 개선합니다.',
+     'requirements': '- 안드로이드 또는 iOS 환경에서 지원자용 모바일 앱을 구현하고 실제 출시까지 이끌어 본 분을 모십니다.\n- 모바일 UI와 비동기 데이터 흐름 및 상태 관리에 대한 이해가 필요합니다.\n- REST API 연동과 오류 처리 및 디버깅 역량을 갖춘 분이어야 합니다.\n- 사용자 관점에서 요구사항을 해석하고 적절한 구현 방안을 제안할 수 있어야 합니다.\n- 직군 간 협업 과정에서 진행 상황과 기술적 쟁점을 명확하게 공유할 수 있어야 합니다.',
+     'preferred': '- 모바일 앱의 설계부터 출시와 운영 개선까지 전 과정을 경험한 분을 우대합니다.\n- 채용·구직 또는 사용자 계정과 지원 절차를 다루는 서비스 개발 경험이 있으면 좋습니다.\n- 앱 성능과 안정성 및 아키텍처를 개선한 경험이 있는 분을 우대합니다.\n- Android·iOS 환경에서 네이티브 기능을 직접 구현했거나 앱에 통합해 본 분을 우대합니다.\n- 분석 이벤트를 설계하고 데이터를 근거로 제품을 개선한 경험을 우대합니다.',
+     'employment_type': '정규직',
+     'location': '서울 강남구',
+     'headcount': 1,
+     'status': 'published',
+    },
+    {
+     'role_code': 'devops',
+     'title': 'DevOps·클라우드 엔지니어',
+     'company_intro': '헤드헌터랩의 서비스를 안정적으로 운영할 수 있도록 클라우드 인프라와 배포 환경을 설계하고 개선합니다. 자동화와 관측 가능성을 바탕으로 개발 생산성, 시스템 신뢰성, 비용 효율을 함께 높이는 역할입니다.',
+     'duties': '- 클라우드 인프라를 설계하고 안정적으로 운영합니다.\n- 컨테이너 기반 실행 환경과 오케스트레이션 체계를 구축하고 관리합니다.\n- CI/CD 파이프라인과 배포 프로세스를 자동화합니다.\n- 모니터링·로깅·알림 체계를 고도화하고 장애에 대응합니다.\n- IaC를 활용해 인프라 변경 사항을 일관되게 관리합니다.\n- 클라우드 보안과 비용 현황을 점검하고 개선 과제를 실행합니다.',
+     'requirements': '- DevOps·SRE·클라우드 인프라 분야의 실무 경험이 있으신 분을 찾습니다.\n- 퍼블릭 클라우드 환경을 직접 구축하거나 운영해 본 경험이 필요합니다.\n- 배포·통합 파이프라인과 인프라 구성을 코드 기반으로 설계하고 운영 효율을 높여 본 역량을 갖춘 분을 찾습니다.\n- 시스템 지표와 로그를 바탕으로 장애 원인을 분석할 수 있어야 합니다.\n- 개발 조직과 기술적 의사결정을 명확하게 공유할 수 있어야 합니다.',
+     'preferred': '- 서비스 안정성과 확장성을 고려해 인프라 구조를 개선한 경험이 있으신 분을 우대합니다.\n- 관측 가능성 체계를 구축하거나 운영 지표를 개선에 활용한 경험이 있으신 분을 우대합니다.\n- 클라우드 보안 강화 또는 취약점 대응 경험이 있으신 분을 우대합니다.\n- 인프라 비용을 분석하고 최적화한 경험이 있으신 분을 우대합니다.\n- 반복되는 운영 업무를 자동화하거나 내부 도구로 개선한 경험이 있으신 분을 우대합니다.',
+     'employment_type': '정규직',
+     'location': '서울 강남구',
+     'headcount': 1,
+     'status': 'published',
+    },
+    {
+     'role_code': 'data_eng',
+     'title': '데이터 엔지니어 (적재 파이프라인)',
+     'company_intro': '헤드헌터랩의 다양한 데이터 소스를 안정적으로 수집하고 적재하는 파이프라인을 설계·운영합니다. 데이터의 신뢰성과 활용성을 높일 수 있는 저장 구조와 운영 체계를 함께 구축합니다.',
+     'duties': '- 배치 및 스트리밍 기반의 데이터 수집·적재 파이프라인을 설계하고 운영합니다.\n- 원천 데이터의 특성에 맞는 스키마와 저장 구조를 설계합니다.\n- 워크플로우 자동화와 모니터링을 통해 파이프라인의 안정성을 개선합니다.\n- 데이터 누락·중복·지연 등 품질 문제를 탐지하고 원인을 해결합니다.\n- 내부 데이터 요구사항을 정리해 활용 가능한 테이블과 데이터 마트로 구현합니다.',
+     'requirements': '- 3년 이상 데이터 엔지니어로서 적재 흐름을 설계·구현했거나 백엔드 기반의 데이터 처리 체계를 개발한 경험, 또는 그에 상응하는 실무 역량을 갖춘 분을 찾습니다.\n- Python과 SQL을 활용해 데이터 수집·변환 로직을 구현할 수 있어야 합니다.\n- RDB 환경에 맞춰 데이터 구조를 설계하고 실제 서비스에서 안정적으로 관리해 본 경험을 갖춘 분을 찾습니다.\n- 대규모 데이터를 정기 수집 방식이나 실시간 처리 방식으로 안정적으로 적재하는 흐름을 설계하고 실제 서비스 환경에서 관리해 본 분을 찾습니다.\n- 파이프라인 장애와 데이터 이상을 분석해 해결할 수 있어야 합니다.',
+     'preferred': '- Airflow를 비롯한 오케스트레이션 플랫폼으로 데이터 적재 흐름을 설계·운영해 본 분을 우선적으로 고려합니다.\n- Kafka 또는 CDC 기반의 실시간 데이터 처리 경험을 우대합니다.\n- 데이터 웨어하우스나 데이터 레이크를 설계하고 운영한 경험을 우대합니다.\n- 데이터 품질 검증과 모니터링 체계를 구축한 경험을 우대합니다.',
+     'employment_type': '정규직',
+     'location': '서울 강남구',
+     'headcount': 1,
+     'status': 'published',
+    },
+]
+
+
+def ensure_extra_jobs():
+    """직무별 공고가 비어 있지 않게 채운다. 여러 번 돌려도 중복되지 않는다."""
+    from datetime import datetime
+    today = datetime.now(KST).date()
+    c = db.one("SELECT id, intro FROM companies WHERE name=%s", "헤드헌터랩")
+    if not c:
+        return
+    for jb in EXTRA_JOBS:
+        if db.one("SELECT 1 FROM jobs WHERE title=%s", jb["title"]):
+            continue
+        if not db.one("SELECT 1 FROM job_roles WHERE code=%s", jb["role_code"]):
+            continue
+        j = db.run("""INSERT INTO jobs (company_id, role_code, title, company_intro, duties, requirements, preferred,
+                      employment_type, location, headcount, open_date, close_date, status)
+                      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                   c["id"], jb["role_code"], jb["title"], jb.get("company_intro") or c["intro"],
+                   jb.get("duties"), jb.get("requirements"), jb.get("preferred"),
+                   jb.get("employment_type") or "정규직", jb.get("location") or "서울 강남구",
+                   jb.get("headcount") or 1, today - timedelta(days=3), today + timedelta(days=30),
+                   jb.get("status") or "published")
+        db.run("INSERT INTO eval_criteria (job_id, coding_enabled) VALUES (%s,%s)", j["id"], False)
+
+
+def activate_all_roles():
+    """직무 상태를 모두 active로 — 공고 둘러보기가 '준비 중'으로 막히지 않게(2026-11-19 사용자 지시).
+    AI 면접 자체의 가능 여부는 질문 은행 유무로 결정되며, 지원 차단은 서버가 따로 한다."""
+    db.run("UPDATE job_roles SET status='active' WHERE status<>'active'")
