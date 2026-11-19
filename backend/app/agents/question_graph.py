@@ -261,7 +261,7 @@ def _iq_terms():
         return None, type(e).__name__
 
 
-def _pick_internal(vectors, role_code, cat, n, used, terms):
+def _pick_internal(vectors, role_code, cat, n, used, terms, min_sim=None):
     """① 사내문서 질문 컬렉션(A17)에서 후보 n개 — 2026-11-17 사용자 지시로 **1순위 출처**(ADLC 6.19.5).
     질문은 이미 A18 검증을 통과한 한 문장이라 Redis 문항과 같은 모양으로 돌아온다.
     꺼짐·부족·오류면 None → 호출 쪽이 Redis 질문 은행(백업)으로 내려간다."""
@@ -270,9 +270,72 @@ def _pick_internal(vectors, role_code, cat, n, used, terms):
     try:
         from . import internal_question_agent as IQ
         return IQ.search_questions(vectors if len(vectors) > 1 else vectors[0], cat, n, used,
-                                   role_code=role_code, forbid_terms=terms)
+                                   role_code=role_code, forbid_terms=terms, min_sim=min_sim)
     except Exception:  # noqa: BLE001 — 컬렉션 없음·Chroma 오류 → 백업 층으로
         return None
+
+
+# 2026-11-19 사용자 지시(전제조건 2) — **공고 관련성**도 직무 일치와 같은 1차 필터다.
+# 사고: "LLM 서비스" AI/AX 공고에 사내 콜센터 프로젝트 문서에서 나온 "상담사에게 어떻게 유도하는지"
+# 질문이 나갔다. 직무 태그(dept_ai_ax)는 맞았지만 **공고 내용과는 무관**했다.
+#
+# 어휘 겹침으로는 못 가린다(실측: 그 질문이 공고와 '답변'·'생성' 같은 흔한 말로 통과했다).
+# 그래서 **공고 본문 벡터와 질문 벡터의 코사인**으로 자른다. 2026-11-19 실측(AI/AX LLM 공고 기준):
+#   무관 0.236 · 0.420 · 0.521   |   관련 0.653 · 0.658 · 0.693   → 경계 0.58이 둘을 정확히 가른다.
+POSTING_MIN_SIM = 0.58
+
+
+def _posting_vector(job):
+    """공고 본문 벡터(면접 1건에서 여러 번 쓰므로 State가 아니라 짧은 캐시로 들고 있는다)."""
+    key = (job.get("id"), job.get("title"))
+    hit = _PV_CACHE.get(key)
+    if hit is not None:
+        return hit
+    from . import question_chain as QC
+    txt = " ".join(str(job.get(k) or "") for k in
+                   ("title", "role_name", "summary", "duties", "requirements", "preferred", "description"))[:1500]
+    if not txt.strip():
+        return None
+    vec = llm.embed([QC.QUERY_INSTRUCT + txt])[0]
+    if len(_PV_CACHE) > 32:
+        _PV_CACHE.clear()
+    _PV_CACHE[key] = vec
+    return vec
+
+
+_PV_CACHE = {}
+
+
+def _cos(a, b):
+    import math
+    s = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a)) or 1.0
+    nb = math.sqrt(sum(x * x for x in b)) or 1.0
+    return s / (na * nb)
+
+
+def _filter_by_posting(cands, job, cat):
+    """공고 본문과 유사도가 낮은 후보를 버린다. 전부 버려지면 None(→ 백업 층).
+    임베딩·공고 벡터를 못 구하면 **막지 않는다**(면접이 멈추면 안 된다)."""
+    if not cands:
+        return cands
+    try:
+        jv = _posting_vector(job)
+        if jv is None:
+            return cands
+        from . import question_chain as QC
+        qvs = llm.embed([QC.QUERY_INSTRUCT + (c.get("text") or "") for c in cands])
+    except Exception as e:  # noqa: BLE001 — 임베딩 실패 → 거르지 않고 그대로 간다
+        log.info("공고 관련성 검사 생략(%s): %s", cat, type(e).__name__)
+        return cands
+    kept = []
+    for c, qv in zip(cands, qvs):
+        sim = _cos(jv, qv)
+        if sim >= POSTING_MIN_SIM:
+            kept.append(c)
+        else:
+            log.info("공고 무관 질문 제외(%s, sim=%.3f): %s", cat, sim, (c.get("text") or "")[:50])
+    return kept or None
 
 
 def retrieve(s: GenState) -> GenState:
@@ -299,6 +362,7 @@ def retrieve(s: GenState) -> GenState:
         if vector is not None:
             vecs = vectors if (vectors and len(vectors) > 1) else [vector]
             got = _pick_internal(vecs, role, cat, n, used, iq_terms)        # ① 사내문서 질문(주 출처)
+            got = _filter_by_posting(got, s["job"], cat)                    # 공고 무관이면 버린다(전제조건 2)
             how = "internal_q" if got else None
             if not got:
                 try:
@@ -417,7 +481,10 @@ def _resume_bank_refs(s, role, used, iq_terms=None):
             from . import question_chain as QC
             vec = llm.embed([QC.QUERY_INSTRUCT + text])[0]
             if iq_terms is not None:                      # ① 사내문서 질문 먼저
-                got = _pick_internal([vec], role, "job", 1, seen, iq_terms)
+                # 2026-11-19 사용자 지시 — 이력서 항목과 **상관없는** 사내문서 질문이 붙는 사고
+                # (Mercari 가격예측 이력서에 '신상품 출시 후 경과 일수'(수요예측 문서) 질문이 합성됨).
+                # 원인: 사내문서 경로가 전역 하한 0.30만 썼다. Redis 경로와 **같은 0.60**을 쓴다.
+                got = _pick_internal([vec], role, "job", 1, seen, iq_terms, min_sim=RESUME_BANK_MIN_SIM)
                 if got:
                     b = got[0]
                     g = b.get("dup_group") or b.get("competency") or b.get("iq_id")

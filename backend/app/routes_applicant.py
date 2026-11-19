@@ -312,7 +312,9 @@ def _state(att):
         if q:
             st["question"] = {"id": q["id"], "seq": q["seq"], "text": q["text"], "time_limit": q["time_limit"],
                               "followup": q["parent_id"] is not None, "category": q["category"]}
-        st["total"] = questions.BASE_TOTAL
+        answered = db.one("SELECT count(*) n FROM attempt_questions WHERE attempt_id=%s AND answer_status != 'pending'", att["id"])["n"]
+        st["step"] = answered + 1  # 지금까지 답한 횟수 + 지금 답하는 중인 1개 (꼬리질문 포함)
+        st["total"] = questions.BASE_TOTAL + att["followups_used"]  # 꼬리질문이 생기면 분모도 같이 늘어난다
     if att["phase"] == "coding":
         if att["status"] == "interrupted":
             st["remaining"] = att["coding_remaining"]

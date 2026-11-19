@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard-dynamic-subset.css">
-<link rel="stylesheet" href="/shared/styles.css">
+<link rel="stylesheet" href="/shared/styles.css?v=20261119zk">
 </head>
 <body>
 <header class="top" id="top">
@@ -29,10 +29,24 @@
   <span class="sp"></span>
   <span id="auth-area"></span>
 </header>
+<!-- 지원자 접이식 사이드 메뉴 (2026-11-19 사용자 지시) — 로그인했을 때만 보이고, 면접·응시 단계에서는 숨긴다 -->
+<aside class="sidenav" id="sidenav" hidden>
+  <button type="button" class="sidenav-toggle" id="sidenav-toggle" aria-expanded="true" aria-controls="sidenav-body" title="메뉴 접기/펴기"><span aria-hidden="true">«</span><span class="sr">메뉴 접기/펴기</span></button>
+  <nav class="sidenav-body" id="sidenav-body" aria-label="지원자 메뉴">
+    <a href="#/jobs" data-side="jobs"><b>채용 공고</b><span>Jobs</span></a>
+    <a href="#/my" data-side="my"><b>마이페이지</b><span>My Page</span></a>
+    <a href="#/practice/coding" data-side="coding"><b>알고리즘 연습</b><span>Python · C</span></a>
+    <a href="#/practice/sql" data-side="sql"><b>SQL 연습</b><span>SQLD 유형</span></a>
+    <a href="/#/pricing"><b>요금제</b><span>Pricing</span></a>
+    <div class="sidenav-sep" role="separator"></div>
+    <a href="#/account" data-side="account"><b>계정관리</b></a>
+    <button type="button" id="side-logout"><b>로그아웃</b></button>
+  </nav>
+</aside>
 <main id="view"></main>
 <footer class="legal-links" id="legal-foot"><a href="/terms">이용약관</a><a href="/privacy"><b>개인정보 처리방침</b></a></footer>
-<script src="/shared/api.js"></script>
-<script src="/applicant/applicant.js"></script>
+<script src="/shared/api.js?v=20261119zk"></script>
+<script src="/applicant/applicant.js?v=20261119zk"></script>
 <script src="/shared/hero-globe.js"></script>
 </body>
 </html>

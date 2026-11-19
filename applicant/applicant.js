@@ -48,6 +48,64 @@ function setNav(key) {
   if (b) b.classList.toggle('on', /^#\/practice\//.test(location.hash));
 }
 
+/* ───────── 접이식 사이드 메뉴 (2026-11-19 사용자 지시) ─────────
+   로그인한 지원자에게만 보이고, 면접·응시 단계(/apply/*, /interview/*)에서는 숨긴다.
+   접었는지 여부는 localStorage에 남겨 다음 방문에도 유지한다. */
+const SIDE_KEY = 'hh.side';
+const sideHidden = (path) => /^\/(apply|interview)\//.test(path);
+
+function setSideOpen(open) {
+  const el = document.getElementById('sidenav');
+  if (!el) return;
+  el.classList.toggle('off', !open);
+  document.body.classList.toggle('side-off', !open);
+  const btn = document.getElementById('sidenav-toggle');
+  if (btn) btn.setAttribute('aria-expanded', String(open));
+  try { localStorage.setItem(SIDE_KEY, open ? '1' : '0'); } catch (_) { /* 저장 못 해도 동작엔 지장 없음 */ }
+}
+
+/* 사이드 메뉴가 시작할 세로 위치 = 헤더(개발 바 포함)의 아래쪽.
+   헤더는 sticky라 스크롤하면 위로 붙으므로 스크롤할 때마다 다시 잰다. */
+function sideTop() {
+  const top = document.getElementById('top');
+  if (!top) return;
+  const b = Math.max(0, Math.round(top.getBoundingClientRect().bottom));
+  document.documentElement.style.setProperty('--top-h', `${b}px`);
+}
+
+function syncSideNav(path) {
+  const el = document.getElementById('sidenav');
+  if (!el) return;
+  const cur = path || location.hash.slice(1) || '/';
+  const show = !!me && !sideHidden(cur);
+  el.hidden = !show;
+  document.body.classList.toggle('side-on', show);
+  if (!show) return;
+  sideTop();
+  const h = `#${cur}`;
+  el.querySelectorAll('a[href^="#/"]').forEach((a) => {
+    const href = a.getAttribute('href');
+    a.classList.toggle('on', h === href || h.startsWith(`${href}/`));
+  });
+}
+
+(function initSideNav() {
+  const el = document.getElementById('sidenav');
+  if (!el) return;
+  // 좁은 화면에서는 메뉴가 본문을 덮으므로 처음엔 접어 둔다(한 번 접거나 편 뒤에는 그 선택을 따른다)
+  let open = window.innerWidth > 1100;
+  try { const v = localStorage.getItem(SIDE_KEY); if (v !== null) open = v !== '0'; } catch (_) { /* 기본값 사용 */ }
+  setSideOpen(open);
+  // 덮는 화면에서는 메뉴를 고르면 바로 접는다
+  el.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => { if (window.innerWidth <= 1100) setSideOpen(false); }));
+  document.getElementById('sidenav-toggle').addEventListener('click', () => setSideOpen(el.classList.contains('off')));
+  document.getElementById('side-logout').addEventListener('click', async () => {
+    await post('/api/auth/logout'); me = null; location.href = '/';
+  });
+  window.addEventListener('resize', () => syncSideNav());
+  window.addEventListener('scroll', () => { if (!el.hidden) sideTop(); }, { passive: true });
+})();
+
 // 상단 '무제한 코딩 연습' 드롭다운: 클릭으로 열기/닫기, 바깥 클릭·Esc·항목 선택·화면 이동 시 닫힘
 function setPracticeMenu(open) {
   const dd = document.getElementById('practice-dd');
@@ -69,6 +127,12 @@ function setPracticeMenu(open) {
 
 // 지원자 테스트 계정(시드 이지원): 접수 취소 버튼이 보인다. 서버도 이 계정만 허용(config.TEST_APPLICANT_EMAIL)
 const isTestApplicant = () => !!(me && me.email === 'applicant@headhunter.ai');
+/* 전체 화면 전환. 테스트 계정(이지원)은 건너뛴다 — 스크린샷·창 전환을 자유롭게 하려고
+   (2026-11-19 사용자 지시, 화면 이탈 감지는 이미 테스트 계정만 꺼져 있다) */
+async function goFullscreen() {
+  if (isTestApplicant()) return;
+  try { await document.documentElement.requestFullscreen(); } catch (_) { /* fullscreen not allowed */ }
+}
 async function loadMe() {
   me = await get('/api/auth/me');
   if (me && me.role !== 'applicant') me = null;
@@ -80,8 +144,10 @@ async function loadMe() {
   if (pdd) { pdd.hidden = !me; if (!me) setPracticeMenu(false); }
   const reset = document.getElementById('dev-reset');
   if (reset) reset.hidden = !isTestApplicant();
+  syncSideNav();
   const lo = $('#logout');
-  if (lo) lo.onclick = async () => { await post('/api/auth/logout'); me = null; await loadMe(); go('#/'); };
+  // 2026-11-19 사용자 지시 — 로그아웃하면 지원자 홈(#/)이 아니라 공통 첫 페이지로 나간다
+  if (lo) lo.onclick = async () => { await post('/api/auth/logout'); me = null; location.href = '/'; };
 }
 
 function requireLogin(next) {
@@ -128,6 +194,7 @@ async function router() {
   const raw = location.hash.slice(1) || '/';
   const [path, qs] = raw.split('?');
   const params = new URLSearchParams(qs || '');
+  syncSideNav(path);
   for (const [re, fn] of routes) {
     const m = path.match(re);
     if (m) {
@@ -141,6 +208,9 @@ async function router() {
 
 /* ───────── 공통 메인 (랜딩) ───────── */
 async function landing() {
+  // 로그인 안 한 상태로 지원자 홈에 들어오면 공통 첫 페이지로 보낸다 (2026-11-19 사용자 지시)
+  // — 로그인 전 기본 화면은 /applicant/가 아니라 / 다.
+  if (!me) { location.replace('/'); return; }
   setNav('');
   view.innerHTML = `
   <div class="wrap hero-wrap">
@@ -404,13 +474,21 @@ function myJobRow(a) {
   // 2026-11-18 사용자 지시: 단계별 상세(동의 필요 등) 대신 미완료만, 버튼도 다음 단계 이름 말고 '이어서 진행하기'로 통일.
   // 제목줄과 상태·버튼줄을 항상 위아래로 쌓는다(한 줄에 욱여넣어 좁은 화면에서 지저분하게 줄바꿈되던 것을 없앰) —
   // 그만큼 줄 하나가 길어지니 '나의 공고'가 길면 CUT(3)로 자르고 미니 페이지로 더 보여준다(아래 mypage 참고)
-  // 2026-11-18 사용자 지시: 가로로 긴 목록 한 줄짜리라 왼쪽에 쏠려 보였다 — '내가 좋아할만한 공고'와 같은
-  // 카드 그리드로 바꿔 폭을 채운다(모던 대시보드 레이아웃)
+  // 2026-11-19 사용자 지시(B): '나의 공고'와 '나의 면접'을 한 줄 양쪽 두 블록으로 되돌렸다 →
+  // 블록 안에 들어가므로 카드가 아니라 가벼운 한 줄(제목줄 + 상태·버튼줄)로 쌓는다
   const status = a.attempt_id ? '<span class="pill dim">응시함</span>' : '<span class="pill dim">미완료</span>';
   const action = a.attempt_id ? appAction(a) : `<button class="btn sm primary" data-cont="${a.id}">이어서 진행하기</button>`;
-  return `<div class="card">
+  return `<div style="${ROW_STYLE}">
     <b>${esc(a.title)}</b><div class="small">${esc(a.company)} · 지원일 ${fmtYMD(a.created_at)}${a.coding_enabled ? ' · 코딩테스트 포함' : ''}</div>
-    <div class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap">${status}${action}${isTestApplicant() ? `<button class="btn sm ghost" data-devcancel="${a.id}" title="테스트 계정 전용">접수 취소</button>` : ''}</div></div>`;
+    <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">${status}${action}${isTestApplicant() ? `<button class="btn sm ghost" data-devcancel="${a.id}" title="테스트 계정 전용">접수 취소</button>` : ''}</div></div>`;
+}
+
+/* '나의 면접' 한 줄 — 응시 기록이 있거나 바로 응시할 수 있는 지원 건 (2026-11-19 사용자 지시로 블록 복구) */
+function myInterviewRow(a) {
+  const state = a.attempt_status ? ATTEMPT_KO[a.attempt_status] : '응시 가능';
+  return `<div style="${ROW_STYLE}">
+    <b>${esc(a.title)}</b><div class="small">${esc(a.company)} · 결과 공개 ${fmtYMD(a.result_date)}</div>
+    <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap"><span class="pill ${a.attempt_status ? 'dim' : 'neon'}">${esc(state)}</span>${appAction(a)}</div></div>`;
 }
 
 /* 알림 한 줄 — 유형별 안내(2026-11-18 사용자 지시: 면접 진행상황을 '나의 면접' 블록 대신 여기로) */
@@ -468,6 +546,8 @@ async function mypage() {
   const open = allJobs.filter((j) => j.status === 'published' && j.role_status === 'active');
   const branch = open.filter((j) => /^헤드헌터랩_/.test(j.company || ''));
   const reco = shuffle(branch.length ? branch : open).slice(0, 9);
+  // 나의 면접 = 응시 기록이 있거나 바로 응시할 수 있는 지원 건 (2026-11-19 사용자 지시로 블록 복구)
+  const mine = apps.filter((a) => a.attempt_id || a.step === 'ready');
   const CUT = 3;
   // 2026-11-18 사용자 지시: '나의 면접' 블록을 없애고 그 내용(진행 상황)은 Notification으로 옮긴다(아래
   // scheduler.deadline_reminders가 마감 1일 전·당일 알림을 만든다. 결과 도착 알림은 기존 그대로).
@@ -477,7 +557,7 @@ async function mypage() {
     ${list.length ? list.slice(0, CUT).map(rowFn).join('') : `<p class="small">${emptyMsg}</p>`}
     ${list.length > CUT ? `<p class="small" style="margin-top:10px">전체 ${list.length}건 중 ${CUT}건을 보여 드립니다.</p>` : ''}</div>`;
 
-  view.innerHTML = `<div class="wrap">
+  view.innerHTML = `<div class="wrap my-wrap">
     <h1>마이페이지</h1><p class="sub" style="font-size:19px;font-weight:700">${esc(me.name)} 님의 지원 현황입니다.</p>
     <div class="grid2" style="margin-top:24px;align-items:start">
       ${blockHtml('Notification', notes, myNoteRow, 'more-notes', '새 알림이 없습니다.', { hl: true })}
@@ -489,18 +569,18 @@ async function mypage() {
       ${reco.length ? `<div class="reco-vp" id="reco-vp" style="margin-top:12px"><div class="reco-track">${reco.map(jobCard).join('')}</div></div>`
       : '<p class="small" style="margin-top:12px">지금 접수 중인 공고가 없습니다.</p>'}
     </div>
-    <div style="margin-top:16px">
-      <h2>나의 공고 ${apps.length ? `<span class="small" style="font-weight:500">(총 지원 공고 ${apps.length}개)</span>` : ''}</h2>
-      ${apps.length ? `<div class="grid2" style="margin-top:12px;align-items:stretch">${apps.slice(0, CUT).map(myJobRow).join('')}${apps.length > CUT
-          ? '<button class="card click more-link" id="more-jobs"><span>나의 공고 더보기</span></button>' : ''}</div>`
-        : '<p class="small" style="margin-top:12px">아직 지원한 공고가 없습니다.</p>'}
+    <div class="grid2" style="margin-top:16px;align-items:start">
+      ${blockHtml(`나의 공고 ${apps.length ? `<span class="small" style="font-weight:500">(총 지원 공고 ${apps.length}개)</span>` : ''}`,
+    apps, myJobRow, 'more-jobs', '아직 지원한 공고가 없습니다.')}
+      ${blockHtml('나의 면접', mine, myInterviewRow, 'more-ivs', '아직 응시할 면접이 없습니다.')}
     </div></div>`;
 
   if ($('#reco-vp')) startReco($('#reco-vp'));
   $$('[data-job]').forEach((b) => (b.onclick = () => go(`#/jobs/${b.dataset.job}`)));
   $$('[data-noteapp]').forEach((b) => (b.onclick = () => go(`#/result/${b.dataset.noteapp}`)));
   bindAppsTable(mypage);
-  if ($('#more-jobs')) $('#more-jobs').onclick = () => miniPage('나의 공고', `<div class="col" style="gap:10px">${apps.map(myJobRow).join('')}</div>`);
+  if ($('#more-jobs')) $('#more-jobs').onclick = () => miniPage('나의 공고', apps.map(myJobRow).join(''));
+  if ($('#more-ivs')) $('#more-ivs').onclick = () => miniPage('나의 면접', mine.map(myInterviewRow).join(''));
   if ($('#more-notes')) $('#more-notes').onclick = () => miniPage('Notification', notes.map(myNoteRow).join(''));
   $$('[data-delres]').forEach((b) => (b.onclick = async () => { await del(`/api/me/resumes/${b.dataset.delres}`); mypage(); }));
   if (notes.some((n) => !n.read_at)) post('/api/me/notifications/read');
@@ -1032,7 +1112,7 @@ async function envView(appId) {
   }
 
   $('#start').onclick = async () => {
-    try { await document.documentElement.requestFullscreen(); } catch (_) { /* fullscreen not allowed */ }
+    await goFullscreen();
     try {
       const r = await post(`/api/applications/${appId}/attempt`);
       go(`#/interview/${r.attempt_id}`);
@@ -1090,7 +1170,7 @@ async function interviewView(attemptId) {
       const r = await post(`/api/attempts/${attemptId}/events`, { type: 'exit', detail: { kind } });
       if (r.action === 'cancelled') { st = await get(`/api/attempts/${attemptId}`); reporting = false; return render(); }
       await modal({ title: '화면 이탈이 감지되었습니다 (1회)', body: '한 번 더 이탈하면 면접이 취소됩니다.<br>확인을 누르면 전체 화면으로 돌아가 같은 질문부터 다시 진행합니다.', buttons: [{ label: '확인하고 계속', value: true, primary: true }] });
-      try { await document.documentElement.requestFullscreen(); } catch (_) { /* ignore */ }
+      await goFullscreen();
       reporting = false;
       resumeAfterWarning();
     } catch (_) { reporting = false; }
@@ -1285,7 +1365,7 @@ async function interviewView(attemptId) {
       $('#resume').disabled = !okDev;
     });
     $('#resume').onclick = async () => {
-      try { await document.documentElement.requestFullscreen(); } catch (_) { /* ignore */ }
+      await goFullscreen();
       st = await post(`/api/attempts/${attemptId}/resume`);
       render();
     };
@@ -1297,11 +1377,11 @@ async function interviewView(attemptId) {
     current = q;
     view.innerHTML = `<div class="wrap iv-wrap" style="max-width:1000px">
       <div class="between iv-head" style="margin-bottom:14px"><span class="logo"><img src="/images/headhunterAI_logo_reverse_crop.png" alt="headhunterAI"></span>
-        <span class="row"><span class="pill neon">${q.seq} / ${st.total}${q.followup ? ' · 꼬리질문' : ''}</span>
+        <span class="row"><span class="pill neon">${st.step} / ${st.total}${q.followup ? ' · 꼬리질문' : ''}</span>
         ${st.exit_count ? `<span class="pill">화면 이탈 ${st.exit_count}회</span>` : ''}</span></div>
       <div class="stage">
         <div class="between" style="align-items:flex-start;gap:20px">
-          <div style="flex:1;min-width:260px" class="col"><div class="small">${q.followup ? '꼬리질문' : `질문 ${q.seq}`}</div><div class="qbox" id="qtext">${esc(q.text)}</div></div>
+          <div style="flex:1;min-width:260px" class="col"><div class="small">${q.followup ? '' : `질문 ${q.seq}`}</div><div class="qbox" id="qtext">${esc(q.text)}</div></div>
           <div class="col" style="justify-items:center"><div class="timer idle" id="timer">${q.time_limit}</div></div>
         </div>
         <div id="phase" class="small">질문을 읽어 드리고 있습니다…</div>
@@ -1314,7 +1394,8 @@ async function interviewView(attemptId) {
     wave = null;
     ensureCamera().then(() => { attachCam(); if ($('#wave')) { wave = startWave($('#wave'), $('#voice-label')); if (!$('#done').disabled) wave.listen(true); } });
     $('#done').onclick = () => submitAnswer();
-    $('#ans').addEventListener('paste', (e) => e.preventDefault());
+    // 2026-11-19 사용자 지시: 테스트 계정(이지원)은 질문·꼬리질문 품질 확인용으로 답변 붙여넣기 허용
+    $('#ans').addEventListener('paste', (e) => { if (!isTestApplicant()) e.preventDefault(); });
     active = true;
     present(q);
   }
@@ -1395,7 +1476,7 @@ async function interviewView(attemptId) {
         st = await HH.api(`/api/attempts/${attemptId}/answer-audio`, { method: 'POST', body: fd });
         if (st.stt_retry) {   // INT-04: 음성 변환 장애 → 감점 없이 같은 질문 다시
           await modal({ title: '음성을 글로 바꾸지 못했습니다', body: '시스템 문제로 답변 음성을 인식하지 못했습니다. 감점 없이 같은 질문에 다시 답해 주세요.', buttons: [{ label: '다시 답하기', value: true, primary: true }] });
-          try { await document.documentElement.requestFullscreen(); } catch (_) { /* ignore */ }
+          await goFullscreen();
           $('#done').disabled = true; ans.disabled = true; ans.value = '';
           $('#timer').textContent = current.time_limit;
           return present(current);
@@ -1424,10 +1505,21 @@ async function interviewView(attemptId) {
     }
   }
 
+  /* 문제 지문을 문단으로 나눈다 — 한 덩어리로 붙어 있어 읽기 어려웠다 (2026-11-19 사용자 지시).
+     [입력·출력]·[제한 사항]·[예시 설명] 같은 머리말 앞에서 끊고, 그 안에서는 '- '로 시작하는 항목도 줄로 나눈다. */
+  function paras(text) {
+    const t = String(text || '').replace(/[ 	]*\[([^\]]{1,20})\][ 	]*/g, '@@[$1]@@');
+    return t.split('@@').map((blk) => blk.trim()).filter(Boolean).map((blk) => {
+      const lines = blk.replace(/\s+-\s/g, '@LN@- ').split('@LN@').filter(Boolean);
+      return lines.length > 1 ? '<p>' + lines.map(esc).join('<br>') + '</p>' : '<p>' + esc(blk) + '</p>';
+    }).join('');
+  }
+
   async function renderCoding() {
     stopVideo(); // 코딩 단계는 카메라 미리보기 없음 → 카메라 트랙을 끄고 마이크만 유지(2026-11-16 사용자 결정)
     const data = await get(`/api/attempts/${attemptId}/coding`);
     let idx = 0;
+    const seen = new Set();
     const codes = Object.fromEntries(data.problems.map((p) => [p.problem_id, p.code]));
     const dirty = new Set();
     let internalClip = '';
@@ -1438,9 +1530,10 @@ async function interviewView(attemptId) {
       <div class="tabs" id="tabs">${data.problems.map((p, i) => `<button data-i="${i}">${i + 1}. ${esc(p.title)} <span class="small">(${p.level === 'basic' ? '기초' : '응용'})</span></button>`).join('')}</div>
       <div class="grid2" style="margin-top:14px;align-items:start;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr)">
         <div class="card col" id="pdesc"></div>
-        <div class="col"><textarea class="editor" id="code" spellcheck="false"></textarea>
-          <div class="row"><button class="btn" id="run">예제 실행</button><span class="sp"></span><button class="btn primary" id="submit">최종 제출</button></div>
-          <div class="out" id="out">실행 결과가 여기에 표시됩니다. 실행만으로는 제출되지 않습니다.</div></div>
+        <div class="col"><textarea class="editor code-editor" id="code" spellcheck="false"></textarea>
+          <div class="run-head"><span class="small">실행 결과</span><button type="button" class="btn sm ghost" id="run">예제 실행</button></div>
+          <div class="out" id="out">실행 결과가 여기에 표시됩니다. 실행만으로는 제출되지 않습니다.</div>
+          <div class="row" style="margin-top:12px"><span class="sp"></span><button class="btn" id="next">다음 문제 →</button><button class="btn primary" id="submit">최종 제출</button></div></div>
       </div>
       <p class="small" style="margin-top:12px">편집기 밖에서 복사한 내용은 붙여넣을 수 없습니다. 코드는 30초마다 자동 저장됩니다.</p></div>`;
     const code = $('#code');
@@ -1449,11 +1542,21 @@ async function interviewView(attemptId) {
       idx = i;
       const p = data.problems[i];
       $$('#tabs button').forEach((b) => b.classList.toggle('on', +b.dataset.i === i));
-      $('#pdesc').innerHTML = `<h2>${esc(p.title)}</h2><p>${esc(p.statement)}</p><div class="small">함수 이름: <span class="mono neon">${esc(p.func_name)}</span></div>
+      $('#pdesc').innerHTML = `<h2>${esc(p.title)}</h2>${paras(p.statement)}<div class="small">함수 이름: <span class="mono neon">${esc(p.func_name)}</span></div>
         <h3 style="margin-top:8px">입출력 예시</h3>${p.examples.map((e) => `<div class="out" style="min-height:0">입력: ${esc(JSON.stringify(e.input))}\n출력: ${esc(JSON.stringify(e.expected))}</div>`).join('')}`;
       code.value = codes[p.problem_id];
+      seen.add(i);
+      const last = i >= data.problems.length - 1;
+      $('#next').hidden = last;
+      $('#next').textContent = `다음 문제 (${i + 2}/${data.problems.length}) →`;
+      // 아직 안 본 문제가 있으면 최종 제출을 강조하지 않는다(실수로 먼저 누르는 것 방지)
+      const allSeen = seen.size >= data.problems.length;
+      $('#submit').classList.toggle('primary', allSeen);
+      $('#submit').classList.toggle('ghost', !allSeen);
     };
     $$('#tabs button').forEach((b) => (b.onclick = () => show(+b.dataset.i)));
+    // 2026-11-19 사용자 지시: 탭만으로는 다음 문제가 있는 줄 몰라 1번만 풀고 최종 제출하는 사고가 남 → 명시적 '다음 문제' 버튼
+    $('#next').onclick = () => show(Math.min(idx + 1, data.problems.length - 1));
     show(0);
     // 언어는 고를 수 있게 두되 실제로 채점되는 언어는 Python 3만 (2026-11-11 사용자 지시)
     const pickLang = (b) => {
@@ -1500,7 +1603,11 @@ async function interviewView(attemptId) {
       render();
     };
     $('#submit').onclick = async () => {
-      const okGo = await modal({ title: '최종 제출할까요?', body: '제출하면 수정할 수 없고 응시가 완료됩니다. 두 문제 모두 현재 코드로 채점됩니다.', buttons: [{ label: '취소', value: false }, { label: '최종 제출', value: true, primary: true }] });
+      const unseen = data.problems.length - seen.size;
+      const warn = unseen > 0
+        ? `<b style="color:var(--neon)">아직 열어 보지 않은 문제가 ${unseen}개 있습니다.</b><br>지금 제출하면 그 문제들은 빈 코드로 채점됩니다.<br><br>`
+        : '';
+      const okGo = await modal({ title: '최종 제출할까요?', body: `${warn}제출하면 수정할 수 없고 응시가 완료됩니다. ${data.problems.length}문제 모두 현재 코드로 채점됩니다.`, buttons: [{ label: '취소', value: false }, { label: '최종 제출', value: true, primary: true }] });
       if (okGo) finalSubmit();
     };
     let tick;

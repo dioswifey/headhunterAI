@@ -115,7 +115,11 @@ HEARTBEAT_LOST_SEC = 15          # 5초 주기 × 3회 누락
 CODING_MINUTES = 60
 QUESTION_SECONDS = 90
 FOLLOWUP_SECONDS = 60
-MAX_FOLLOWUPS = 4
+# A17 사내문서 질문 **생성** 제공자 (2026-11-19 사용자 지시, 외부 AI 예외 ⑥).
+# openai = 오프라인 사전 생성만 OpenAI로. 지원자 데이터는 보내지 않는다. 임베딩·면접 중 호출은 그대로 로컬.
+IQ_GEN_PROVIDER = os.getenv("IQ_GEN_PROVIDER", "openai")
+
+MAX_FOLLOWUPS = 2   # 2026-11-19 사용자 지시: 본질문 8 + 꼬리질문 최대 2 = 전체 10개를 넘지 않는다(안 나와도 됨)
 QGRAPH_REVIEW = os.getenv("QGRAPH_REVIEW", "1") == "1"   # 그래프 1 A5·A6 모델 검수(0이면 규칙만)
 # 사내문서 RAG를 그래프 1-A 기업 문항에 붙이는 스위치(ADLC v0.7 6.13.7 · P-4, 2026-11-13 구현).
 # 0이면 retrieve_internal이 빈 컨텍스트를 돌려주고 guard_disclosure는 할 일이 없다(v0.6과 같은 질문 구성).

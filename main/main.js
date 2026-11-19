@@ -13,6 +13,14 @@ const T = {
     // Features 드롭다운의 4개 서비스 페이지 (#/features/<id>). 드롭다운 라벨(한·영)은 언어 전환과 관계없이 SERVICE_LABELS를 쓴다
     services: {
       'coding-practice': {
+        // 2026-11-19 사용자 지시 — 기존 제목 2줄을 지우고 영문 한 줄 제목 + 본문 2문단 + 오른쪽 그림 구성으로 바꿈
+        hero: {
+          title: 'UNLIMITED CODING EXERCISES',
+          body: [
+            'IT 분야의 커리어를 준비하는 일과 코딩 역량을 쌓는 일이 한 곳에서 이어지기를 바랐습니다. 최신 채용 흐름을 반영한 알고리즘 문제와 SQL 문제를 부담 없이, 횟수 제한 없이 풀어 볼 수 있는 공간을 만든 이유입니다.',
+            '연습의 가치는 맞고 틀림에서 끝나지 않습니다. headhunterAI coach의 분석이 더해질 때, 문제를 푸는 시간은 그대로 쌓이는 역량이 됩니다.',
+          ],
+        },
         title: ['무제한 코딩 연습', '원하는 만큼, 원하는 언어로'],
         lead: '공고가 없어도 IT 직군 코딩 문제를 반복해서 풀어 볼 수 있습니다. 언어를 고르고, 바로 실행해 보고, 실제 코딩테스트와 같은 방식으로 채점받습니다.',
         status: '지금은 알고리즘 문제를 Python으로 로그인 후 횟수 제한 없이 풀 수 있습니다(공개 예제 실행 · 숨은 테스트까지 채점, Junior·Senior 레벨). SQLD 유형 SQL 문제(제1·2과목 4지선다)도 풀 수 있습니다. C언어는 준비 중이며, 내용은 출시 전 바뀔 수 있습니다.',
@@ -23,7 +31,7 @@ const T = {
             { h: '실전과 같은 채점', p: '공개 예제로 먼저 실행해 보고, 제출하면 숨은 테스트케이스까지 통과율로 채점합니다. 코드는 외부와 차단된 환경에서 실행됩니다.' },
             { h: '기록은 나만', p: '연습 결과와 코드는 본인만 보고, 기업에는 전달되지 않습니다. 실전 응시 횟수에도 영향을 주지 않습니다.' },
           ] },
-          { h: '진행 순서', cards: [
+          { h: 'headhunterAI와 함께하는 취업준비', rail: true, cards: [
             { h: '1. 언어와 유형 고르기', p: '연습할 언어와 문제 유형, 난이도를 고릅니다.' },
             { h: '2. 풀고 실행하기', p: '편집기에서 코드를 쓰고 공개 예제로 바로 실행해 봅니다.' },
             { h: '3. 제출하고 채점받기', p: '통과한 테스트 수와 실패한 경우를 확인합니다.' },
@@ -47,17 +55,15 @@ const T = {
         },
       },
       'career-consulting': {
-        title: ['headhunter 취업 컨설팅', '내 면접을 숫자로 보고, 다음을 준비'],
-        lead: '내 이력서에 맞춘 AI 면접을 보고, 항목별 점수와 잘한 점·발전할 점, 다음 면접까지 해 볼 연습 과제를 받아 봅니다.',
-        status: 'AI 면접 후 정량 리포트 이메일은 지금 받을 수 있습니다. 공고 없이 보는 직무별 모의면접(AI/AX · 백엔드 · 데이터 분석)은 준비 중입니다.',
+        title: ['headhunterAI 취업 컨설팅', '내 면접결과 100% 맞춤 분석'],
         sections: [
-          { h: '받을 수 있는 것', cards: [
+          { h: 'headhunterAI 서비스', rail: true, cards: [
             { h: '내 이력서 맞춤 질문', p: '확인한 이력서의 경력·프로젝트를 근거로 질문이 나오고, 답변이 모호하면 더 구체적으로 묻는 꼬리질문이 이어집니다.' },
             { h: '정량 리포트', p: 'AI 면접 점수와 5개 항목(직무 전문성·논리성·내용 관련성·전달력·조직 적합성)의 100점 환산 점수를 한 장으로 받습니다.' },
             { h: 'AI 코치 코멘트', p: '가장 높은 항목과 낮은 항목을 짚고, 다음 면접 전까지 해 볼 연습 과제 2~3개를 제안합니다. 확정된 점수만 근거로 씁니다.' },
             { h: '직무별 모의면접', p: 'AI/AX 엔지니어 · 백엔드 개발자 · 데이터 분석가 직무를 골라 실전과 같은 방식으로 연습합니다. (준비 중)' },
           ] },
-          { h: '진행 순서', cards: [
+          { h: 'headhunterAI와 함께하는 취업준비', rail: true, cards: [
             { h: '1. 이력서 확인', p: '이력서를 올리면 내용을 읽어 정리하고, 직접 확인한 내용만 씁니다.' },
             { h: '2. AI 면접', p: '질문 8개와 꼬리질문에 답합니다. 기본 질문 90초, 꼬리질문 60초.' },
             { h: '3. 리포트 받기', p: '분석이 끝나면 버튼 한 번으로 정량 리포트를 이메일로 받습니다. 합격 여부와는 별개입니다.' },
@@ -77,7 +83,7 @@ const T = {
             { h: '코딩테스트', p: '공고마다 사용 여부와 반영 비중을 정합니다. 지금은 Python 기본 문제를 제공하고, 유형·언어를 고르는 맞춤 코딩테스트는 준비 중입니다.' },
             { h: '합불 결정 방식 선택', p: '자동: AI 판정을 바로 확정. 반자동: 담당자가 \'허용\' 또는 \'판정 변경\'을 한 번 눌러 확정. 점수는 어느 쪽도 바뀌지 않습니다.' },
           ] },
-          { h: '진행 순서', cards: [
+          { h: 'headhunterAI와 함께하는 취업준비', rail: true, cards: [
             { h: '1. 공고와 기준 설정', p: '공고를 쓰고 평가 항목 가중치, 합격선, 코딩테스트, 결정 방식을 정합니다.' },
             { h: '2. 지원자 응시', p: '지원자는 이력서 확인과 장치 점검 후 AI 면접과 코딩테스트를 봅니다.' },
             { h: '3. AI 평가', p: '응시가 끝나면 문항별 점수·근거·강점·개선점이 정리됩니다.' },
@@ -108,46 +114,89 @@ const T = {
       },
     },
     statusH: '지금 제공 범위',
-    aboutTitle: ['면접의 첫 단계를', '더 투명하게'],
-    aboutLead: 'headhunterAI는 1차 면접을 AI로 진행하되, 판단 과정을 지원자와 기업이 모두 이해할 수 있게 만드는 서비스입니다. 중소·중견 기업 그룹, 스타트업 창업자, 인원이 적은 HR팀이 headhunterAI로 초기 지원자 선별의 힘든 일을 덜어 냅니다.',
-    aboutWhyH: '만든 이유',
-    aboutWhy: [
-      '면접은 지난 100년 동안 크게 바뀌지 않았지만, 지금은 빠르게 바뀌고 있습니다. 미국 기업의 절반 이상이 채용에 AI 도구를 쓰고, Fortune 500 기업에서는 94~98%에 이릅니다. 반면 인원이 적은 HR팀에게 1차 면접은 여전히 손이 많이 가는 일입니다. 공석 하나를 채우는 데 연봉의 3~4배가 든다고 보는 기업도 많습니다.',
-      '사람의 평가도 생각보다 흔들립니다. 미국 기술직 지원자 3,296명을 대상으로 한 현장 실험(Avery 외, 2026)에서 전문 채용 담당자의 점수는 평가한 시간대에 따라 달라졌고, 첫 질문의 답변에 끌려 나머지 답변도 비슷하게 매겼으며, 점수를 가운데로 몰아 주는 경향이 있었습니다. 같은 면접을 AI가 평가했을 때는 이런 패턴이 나타나지 않았고, 12개월 뒤 실제 취업 성과를 사람 점수나 이력서 지표보다 두 배 이상 잘 예측했습니다.',
-      '하지만 같은 연구는 경고도 남겼습니다. 면접관 없이 혼자 답하는 비대면 면접은 다음 단계로 넘어가는 지원자를 약 53% 줄였고, 우수한 지원자도 예외가 아니었습니다. 원인은 기술 자체가 아니라 "공정하지 않을 것 같다", "경쟁이 지나치게 넓을 것 같다"는 인식이었고, 면접이 구조화되어 있고 공정하게 설계되었다는 것을 분명히 알리면 이 이탈을 줄일 수 있다고 연구진은 제안합니다.',
-      'headhunterAI는 이 두 결과를 함께 담으려고 만들었습니다. AI 평가의 일관성은 살리고, 지원자가 과정을 믿지 못해 떠나는 일은 줄이는 것. 그래서 질문 구성과 응시 규칙을 미리 알리고, 점수에는 답변 속 근거를 붙이고, 합불은 정해진 규칙이 결정하게 했습니다.',
+    // ── About (2026-11-19 사용자 지시로 전면 재구성) ──
+    // 옛 헤드라인('면접의 첫 단계를 더 투명하게')은 삭제. 유니콘이 페이지를 연다.
+    // 흐름: 영감받은 태도 → 채용에서 본 문제 → 그 태도를 제품으로 구현하는 방식
+    aboutEyebrow: '유니콘 기업의 도전 정신에서 시작하다',
+    // 2026-11-19 사용자 지시: 제목은 한국어판도 영문과 같은 문장을 쓴다
+    aboutHeadline: 'Great potential deserves to be seen.',
+    // **…** 만 font-weight 600으로 강조. 영문판과 강조 위치를 맞춘다
+    aboutIntro: [
+      '**작은 팀의 대담한 생각**, 익숙한 방식에 질문을 던지는 용기, 더 나은 방법을 찾는 끊임없는 시도. 우리는 유니콘 기업을 성장시킨 이러한 태도에서 영감을 받았습니다.',
+      '지원자의 가능성이 기업의 기회로 이어지도록. headhunterAI는 프라이빗 AI 기술로 더 공정하고 간편한 채용 경험을 만듭니다.',
     ],
-    aboutChangeH: '만들고 싶은 변화',
-    aboutChange: [
-      '작은 팀도 큰 기업과 같은 기준으로: 같은 구조의 질문 8개와 같은 평가 기준을 모든 지원자에게 적용해, 평가하는 시간이나 순서에 따라 결과가 달라지지 않게 합니다. HR 인원이 적은 기업도 1차 선별을 일관되게 운영할 수 있습니다.',
-      '지원자가 떠나지 않는 AI 면접: 질문 구성(인성·이력서·직무·기업), 꼬리질문 개수, 답변 시간을 응시 전에 보여 주고, 합불과 별개로 항목별 점수 리포트를 받을 수 있게 합니다. 과정이 보이면 공정하지 않다는 인식으로 이탈하는 일을 줄일 수 있다고 봅니다.',
-      '판단은 끝까지 사람과 규칙이: AI는 점수와 인용만 내고, 반자동 공고는 담당자가 확인해야 결과가 공개됩니다. 나이·가족·학벌 같은 질문은 차단하고, 지원자가 확인한 이력서 내용만 씁니다.',
-      '준비할 기회도 함께: 기업만 AI를 쓰는 것이 아니라 지원자도 무제한 코딩 연습과 리포트로 같은 단계를 미리 준비하고 돌아볼 수 있게 합니다.',
+    // 유니콘 밴드 — 왼쪽 글귀 / 오른쪽 그림 (2026-11-19 사용자 지시)
+    aboutBand: [
+      '**headhunterAI**로\n기업 인재 채용의 방식을 다시 씁니다.',
+      '**headhunterAI coach**로\n미래의 인재들에게 단단한 버팀목이 되어 줍니다.',
     ],
-    aboutSource: '출처: Avery, M., Ip, E., Leibbrandt, A., Vecci, J. (2026). "A Brave New World of Hiring: A Natural Field Experiment on How Asynchronous Interviews and AI Assessment Reshape Recruitment." CESifo Working Paper No. 12573 (SSRN 6482825). 미국 기술직 지원자 대상 연구이며, 기업 AI 도입률·공석 비용은 이 논문이 인용한 Brookings(2025)·Fuller 외(2021)·Navarra(2022) 자료입니다.',
-    aboutPrinciplesH: '일하는 방식',
-    aboutPrinciples: [
-      { ic: '1', h: 'AI는 점수와 근거만', p: 'AI는 항목별 점수와 답변 인용을 내고, 합산·합불·상태 변경은 코드의 규칙이 처리합니다.' },
-      { ic: '2', h: '확인한 이력서만', p: '이력서는 지원자가 직접 확인한 내용만 질문과 평가에 씁니다. 나이·가족·학벌 같은 질문은 차단합니다.' },
-      { ic: '3', h: '결과는 확정되는 대로', p: '자동 공고는 분석 직후, 반자동 공고는 담당자가 확인한 뒤 결과를 공개합니다. 합불과 별개로 항목별 점수를 담은 리포트를 이메일로 받을 수 있습니다.' },
+    aboutPricingCta: 'headhunterAI 요금제 바로가기',
+    aboutBeliefH: '그 믿음이 채용에서 뜻하는 것',
+    aboutBelief: [
+      '가능성이 가장 많이 묻히는 자리가 1차 전형입니다. 인원이 적은 팀에게 1차 면접은 여전히 사람이 하나하나 해야 하는 일이고, 공석 하나를 메우는 데 연봉의 3~4배가 든다고 보는 기업도 많습니다. 빨리 훑고 넘어갈 수밖에 없는 구조입니다.',
+      '그렇게 쫓길 때 사람의 판단은 생각보다 일정하지 않습니다. 미국 기술직 지원자 3,296명을 대상으로 한 현장 실험(Avery, 2026)에서 채용 담당자의 점수는 평가한 시간대에 따라 흔들렸고, 첫 답변에 끌려갔고, 가운데 점수로 몰렸습니다. 같은 면접을 AI가 평가했을 때는 그런 현상이 나타나지 않았습니다. 다만 같은 연구는 경고도 남겼습니다 — 면접관 없이 혼자 답하는 비대면 면접에서는 다음 단계로 넘어가는 지원자가 약 53% 줄었고, 우수한 지원자도 예외가 아니었습니다. 과정이 공정해 보이지 않았기 때문입니다.',
+      '그래서 두 결과를 함께 담았습니다. 모든 지원자가 같은 질문 구조와 같은 평가 기준을 거치고, 8문항 중 3개는 지원자 본인의 이력서에서 나옵니다. 응시 규칙과 꼬리질문 개수, 답변 시간은 시작 전에 모두 알려 드립니다. 이탈을 줄이는 것은 저희가 지향하는 목표이고, 아직 측정한 결과는 아닙니다.',
     ],
-    aboutTechH: '기술 구성',
+    aboutPracticeH: '우리의 원칙',
+    aboutPractice: [
+      { h: '같은 질문, 같은 기준', p: '모든 지원자가 같은 8문항 구조로 답하고 같은 루브릭으로 채점됩니다. 누구를 언제 먼저 봤는지에 따라 결과가 달라지지 않습니다.' },
+      { h: '근거를 따라갈 수 있는 결과', p: 'AI는 항목별 점수와 답변에서 그대로 따온 근거를 냅니다. 합산과 합불은 모델이 아니라 코드에 적힌 규칙이 결정합니다.' },
+      { h: '최종 판단은 기업이', p: '분석이 끝나면 바로 공개할지, 담당자가 확인한 뒤 공개할지 공고마다 고릅니다. 지원자는 항목별 리포트를 메일로 요청할 수 있습니다.' },
+    ],
+    // 출처는 About 페이지 각주가 아니라 맨 아래 'source' 링크(#/sources)로 모았다 (2026-11-19 사용자 지시)
+    // 대표자 연락처 (#/contact) — 2026-11-19 사용자 지시
+    contactTitle: ['대표자 연락처', 'Founder of headhunterAI'],
+    contactLead: '서비스·제휴·채용 문의는 아래 메일로 보내 주세요.',
+    contactName: '김소현',
+    contactRole: 'Founder of headhunterAI',
+    contactEmailLabel: '이메일',
+    contactFoot: '보내 주신 메일은 대표자가 직접 확인하고 답장합니다.',
+    sourcesTitle: ['이 사이트가', '인용한 자료'],
+    sourcesLead: 'About 페이지의 수치와 연구 결과가 어디에서 왔는지 모아 둔 곳입니다.',
+    sources: [
+      {
+        h: '주 연구 — 비대면 면접과 AI 평가 현장 실험',
+        cite: 'Avery, M., Ip, E., Leibbrandt, A., Vecci, J. (2026). "A Brave New World of Hiring: A Natural Field Experiment on How Asynchronous Interviews and AI Assessment Reshape Recruitment." CESifo Working Paper No. 12573 (SSRN 6482825).',
+        note: '미국 기술직 지원자 3,296명을 대상으로 한 현장 실험입니다. About 페이지의 다음 내용이 이 연구에서 나왔습니다 — 전문 채용 담당자의 점수가 평가한 시간대에 따라 달라지고 첫 질문의 답변에 끌렸으며 가운데로 몰렸다는 점, 같은 면접을 AI가 평가했을 때는 그 패턴이 나타나지 않고 12개월 뒤 취업 성과를 사람 점수·이력서 지표보다 두 배 이상 잘 예측했다는 점, 면접관 없이 혼자 답하는 비대면 면접이 다음 단계로 넘어가는 지원자를 약 53% 줄였다는 점. 모두 이 연구의 결과이며 headhunterAI로 측정한 수치가 아닙니다.',
+      },
+      {
+        h: '기업 AI 도입률 · 공석 비용 수치',
+        cite: 'Brookings (2025) · Fuller 외 (2021) · Navarra (2022).',
+        note: '"미국 기업의 절반 이상, Fortune 500에서는 94~98%"라는 도입률과 "공석 하나를 채우는 데 연봉의 3~4배"라는 비용 수치의 출처입니다. 위 Avery 외(2026) 논문이 인용한 자료이며, 개별 수치가 어느 자료에서 나왔는지는 그 논문의 표기를 따릅니다.',
+      },
+    ],
+    aboutTechH: '우리의 시스템',
     aboutTech: [
-      { ic: 'L', h: '자체 서버의 언어 모델', p: '면접 질문과 평가는 서비스 서버에서 직접 운영하는 오픈 모델(Qwen3)로 처리하며, 외부 AI API로 이력서·답변을 보내지 않습니다.' },
-      { ic: 'O', h: '이력서 인식', p: 'PDF 텍스트 추출과 Tesseract OCR(한국어·영어)을 함께 씁니다.' },
-      { ic: 'S', h: '격리된 코드 실행', p: '코딩테스트 코드는 네트워크가 차단된 별도 컨테이너에서 시간·메모리 제한을 두고 실행합니다.' },
+      { ic: 'L', h: '자체 서버의 언어 모델', p: '질문 생성과 평가, 음성 인식을 직접 운영하는 오픈 모델(Qwen3)로 처리합니다.' },
+      { ic: 'O', h: '이력서 인식', p: 'PDF 텍스트 추출과 Tesseract OCR(한국어·영어)을 같은 환경에서 함께 씁니다.' },
+      { ic: 'S', h: '격리된 코드 실행', p: '코딩테스트 코드는 별도 컨테이너에서 시간·메모리·동시 실행 제한을 두고 실행합니다.' },
     ],
-    aboutTechInbound: '지원자 이력서 · 답변 · 코드',
-    aboutTechResult: '지원자의 이력서·답변·코드는 서버 밖으로 나가지 않습니다',
-    pricingTitle: ['Simple pricing.', '필요한 만큼만'],
-    pricingLead: '주 10회 미만은 무료로 쓰고, 더 자주 쓰거나 IT 직군 모의면접·맞춤 코딩테스트가 필요하면 Advanced를 고르세요.',
+    aboutTechInbound: '지원자의 이력서',
+    aboutTechResult: '지원자의 답변·영상·코드는 저희 서버에만 있습니다',
+    // 첫 페이지 Features 섹션 (2026-11-19 사용자 지시) — 히어로 아래로 스크롤하면 브랜드 소개 → Features
+    homeFeaturesH: 'Features',
+    homeDemos: [
+      { label: '지원자 대시보드',
+        desc: '지원한 공고와 면접 진행 상황, 결과 알림을 한 화면에서 봅니다.',
+        cta: '공고 둘러보기', href: '/applicant/#/jobs', img: '/images/demo_dashboard.png', rail: true },
+      { label: '무제한 코딩 연습',
+        desc: '최신 채용 흐름을 반영한 알고리즘·SQL 문제를 횟수 제한 없이 풀어 봅니다. 공개 예제로 실행해 보고 숨은 테스트까지 채점받습니다.',
+        cta: '연습 화면 보기', href: '#/features/coding-practice', img: '/images/demo_coding.png' },
+      { label: 'headhunterAI만의 정성적 리포트',
+        desc: '점수만 주고 끝내지 않습니다. 문항마다 내 답변을 그대로 인용해, 다섯 항목이 왜 그 점수인지 문장으로 설명합니다.',
+        cta: '취업 컨설팅 보기', href: '#/features/career-consulting', shots: ['/images/demo_report_1.png', '/images/demo_report_2.png', '/images/demo_report_3.png'] },
+    ],
+    // Pricing 히어로 (2026-11-19 사용자 지시): 유리 박스 'Subscription' → 흰 제목 2줄, 끝의 'is now.'만 네온
+    pricingEyebrow: 'Subscription',
+    pricingHead: ['The best time to bring headhunterAI', 'to your system'],
+    pricingHeadAccent: 'is now.',
     segApplicant: '지원자', segCompany: '기업',
     perMonth: '/월', free: '무료',
     plans: {
       applicant: [
-        { name: 'Basic', tag: 'FREE', desc: '공고에 지원해 AI 1차 면접을 봅니다.', price: 0, sub: '주 10회 미만 이용',
+        { name: 'Basic', tag: 'FREE', desc: '공고에 지원해 AI 1차 면접을 봅니다.', price: 0, sub: '주 1회 이하 이용',
           items: ['공고 지원 · AI 1차 면접', '이력서 자동 인식', '결과 공개(합불 · 강점 · 개선점)'], cta: '무료로 시작하기', href: '/applicant/#/jobs' },
-        { name: 'Advanced', tag: 'RECOMMENDED', rec: true, desc: '실전 전에 IT 직군 모의면접과 코딩 연습을 충분히 합니다.', price: 9900, sub: '주 10회 이상 이용',
+        { name: 'Advanced', tag: 'RECOMMENDED', rec: true, desc: '실전 전에 IT 직군 모의면접과 코딩 연습을 충분히 합니다.', price: 9900, sub: '주 2회 이상 이용',
           items: ['Basic의 모든 기능', 'IT 직군 모의면접 (AI/AX · 백엔드 · 데이터 분석)', '언어 선택 코딩 연습 (Python · C · SQL)', '연습 기록 모아 보기'] },
       ],
       company: [
@@ -159,7 +208,6 @@ const T = {
     },
     payReady: '결제 준비 중',
     paySubscribe: '네이버페이로 구독하기',
-    pricingNote: 'Advanced 결제(네이버페이 · 토스페이먼츠)는 준비 중입니다. 표시 가격은 출시 전 바뀔 수 있습니다.',
   },
   en: {
     heroTitle: 'A new standard for discovering talent,',
@@ -169,6 +217,13 @@ const T = {
     soon: 'Coming soon',
     services: {
       'coding-practice': {
+        hero: {
+          title: 'UNLIMITED CODING EXERCISES',
+          body: [
+            'Finding your next role in tech and sharpening your coding skill belong in the same place. That is why we built one — algorithm and SQL problems that follow current hiring trends, open to practise as often as you like.',
+            'Practice is worth more than right or wrong. With analysis from headhunterAI coach, the hours you put into a problem become skill that stays with you.',
+          ],
+        },
         title: ['Unlimited Coding Practice', 'As much as you want, in your language'],
         lead: 'Practise IT coding problems again and again — no job post needed. Pick a language, run your code right away, and get graded the same way as a real coding test.',
         status: 'Algorithm problems in Python are available now after sign-in, with no limit on runs (public examples, then hidden tests on submit; Junior and Senior levels). SQLD-style SQL problems (Parts 1 and 2, multiple choice) are available too. C is coming, and details may change before launch.',
@@ -179,7 +234,7 @@ const T = {
             { h: 'Graded like the real thing', p: 'Run against public examples first, then submit to be scored on hidden test cases too. Code runs in an isolated, network-blocked environment.' },
             { h: 'Private by default', p: 'Your results and code are only visible to you and never shared with companies. Practice does not count toward real attempts.' },
           ] },
-          { h: 'How it works', cards: [
+          { h: 'Preparing with headhunterAI', rail: true, cards: [
             { h: '1. Pick language and type', p: 'Choose the language, problem type and difficulty.' },
             { h: '2. Solve and run', p: 'Write code in the editor and run it against public examples.' },
             { h: '3. Submit and get graded', p: 'See how many tests passed and where it failed.' },
@@ -202,17 +257,15 @@ const T = {
         },
       },
       'career-consulting': {
-        title: ['headhunter Career Consulting', 'See your interview in numbers, prepare the next one'],
-        lead: 'Take an AI interview fitted to your résumé, then get per-item scores, what went well, what to improve, and practice tasks for your next interview.',
-        status: 'The quantitative report email after an AI interview is available now. Role-based mock interviews without a job post (AI/AX · Backend · Data analysis) are coming soon.',
+        title: ['headhunterAI Career Consulting', 'Your interview result, analysed for you'],
         sections: [
-          { h: 'What you get', cards: [
+          { h: 'headhunterAI services', rail: true, cards: [
             { h: 'Questions fitted to your résumé', p: 'Questions are grounded in the experience and projects you confirmed, and vague answers get a follow-up asking for specifics.' },
             { h: 'Quantitative report', p: 'Your AI interview score and five item scores (expertise · logic · relevance · delivery · fit) on a 100-point scale, on one page.' },
             { h: 'AI coach comments', p: 'Highlights your strongest and weakest items and suggests 2–3 practice tasks before your next interview, based only on finalised scores.' },
             { h: 'Role-based mock interviews', p: 'Pick AI/AX engineer, backend developer or data analyst and practise the way the real interview works. (Coming soon)' },
           ] },
-          { h: 'How it works', cards: [
+          { h: 'Preparing with headhunterAI', rail: true, cards: [
             { h: '1. Confirm your résumé', p: 'Upload it, we organise the content, and only what you confirm is used.' },
             { h: '2. AI interview', p: 'Answer 8 questions plus follow-ups: 90 seconds each, 60 for follow-ups.' },
             { h: '3. Get the report', p: 'When analysis is done, one click sends the quantitative report to your email. It is separate from the pass/fail result.' },
@@ -226,13 +279,13 @@ const T = {
         lead: 'Post a job and the AI runs a first-round interview fitted to each résumé, then produces scores and first-round results using the criteria you set.',
         status: '',
         sections: [
-          { h: 'What you get', cards: [
+          { h: 'headhunterAI services', rail: true, cards: [
             { h: 'AI interviews fitted to your post', p: '8 questions: 2 personality · 3 résumé · 2 role · 1 company. Every question is retrieved from our question bank using the job post and résumé, then rewritten to fit your company intro, duties and the applicant\'s résumé.' },
             { h: 'Evidence-based evaluation', p: 'The AI gives 0–5 scores per item with quotes taken verbatim from answers. Totals and pass/fail use the weights and pass mark set on the post.' },
             { h: 'Coding test', p: 'Turn it on per post and set its weight. A basic Python test is available today; custom tests by type and language are coming soon.' },
             { h: 'Choose how decisions are made', p: "Automatic: the AI decision is final right away. Semi-automatic: a recruiter finalises it with one click on 'Approve' or 'Change decision'. Scores never change." },
           ] },
-          { h: 'How it works', cards: [
+          { h: 'Preparing with headhunterAI', rail: true, cards: [
             { h: '1. Set up the post', p: 'Write the post and set item weights, pass mark, coding test and decision mode.' },
             { h: '2. Applicants take it', p: 'After a résumé check and device check, applicants take the AI interview and coding test.' },
             { h: '3. AI evaluation', p: 'Scores, evidence, strengths and improvements are compiled per question.' },
@@ -263,46 +316,80 @@ const T = {
       },
     },
     statusH: 'Available today',
-    aboutTitle: ['Making the first interview', 'more transparent'],
-    aboutLead: 'headhunterAI runs first-round interviews with AI while keeping the reasoning understandable for both applicants and companies. Small and mid-sized corporate groups, startup founders, and lean HR teams use headhunterAI to handle the heavy lifting of early-stage applicant screening.',
-    aboutWhyH: 'Why we built it',
-    aboutWhy: [
-      'Job interviews barely changed for a century, and now they are changing fast. More than half of U.S. firms use AI tools in hiring, rising to 94–98% among Fortune 500 companies. For lean HR teams, though, the first interview round is still heavy manual work, and many employers estimate that filling a vacancy costs three to four times the position\'s salary.',
-      'Human judgment is also less steady than it looks. In a field experiment with 3,296 U.S. tech job applicants (Avery et al., 2026), professional recruiters\' scores shifted with the time of day, were anchored by the answer to the first question, and were compressed toward the middle. When AI evaluated the same interviews, these patterns did not appear, and its scores predicted job success 12 months later at least twice as well as human scores or CV-based metrics.',
-      'The same study also carries a warning. One-way asynchronous interviews cut application continuation by about 53%, including among the most qualified applicants. The cause was not the technology itself but the perception that the process was unfair and overly competitive, and the authors suggest employers can reduce this drop-off by clearly signalling that interviews are structured and designed to be fair.',
-      'We built headhunterAI to take both findings seriously: keep the consistency of AI evaluation, and stop applicants from walking away because they cannot trust the process. That is why we show the question structure and interview rules up front, attach evidence from the answer to every score, and let fixed rules decide pass or fail.',
+    aboutEyebrow: 'Inspired by unicorns',
+    aboutHeadline: 'Great potential deserves to be seen.',
+    aboutIntro: [
+      'We’re inspired by the spirit of unicorn companies — startups that grew from a handful of people into something that reshaped an entire industry: **small teams with bold ideas**, the courage to challenge familiar systems, and the ambition to create something better.',
+      'That spirit shapes headhunterAI — helping companies **look beyond familiar profiles** and giving candidates a clearer opportunity to show what they can do.',
     ],
-    aboutChangeH: 'The change we want to lead',
-    aboutChange: [
-      'Big-company standards for small teams: every applicant gets the same eight structured questions and the same criteria, so results do not depend on when or in what order they were reviewed. Even companies with a small HR team can run a consistent first round.',
-      'AI interviews applicants do not abandon: the question mix (personality, résumé, role, company), follow-up limit and answer time are shown before the interview, and applicants can receive a per-item score report separate from pass/fail. A visible process should reduce drop-off driven by perceived unfairness.',
-      'People and rules keep the final say: the AI only produces scores and quotes, and semi-automatic posts publish results only after a recruiter confirms them. Questions about age, family or school background are blocked, and only résumé content the applicant has confirmed is used.',
-      'A chance to prepare, too: AI is not only on the employer\'s side. Applicants can practise with unlimited coding problems and review their reports to prepare for the same step.',
+    aboutBand: [
+      '**headhunterAI** rewrites how companies\nfind and hire talent.',
+      '**headhunterAI coach** stands behind\nthe people who will become that talent.',
     ],
-    aboutSource: 'Source: Avery, M., Ip, E., Leibbrandt, A., Vecci, J. (2026). "A Brave New World of Hiring: A Natural Field Experiment on How Asynchronous Interviews and AI Assessment Reshape Recruitment." CESifo Working Paper No. 12573 (SSRN 6482825). The study covers U.S. tech job applicants; employer AI adoption and vacancy cost figures are from Brookings (2025), Fuller et al. (2021) and Navarra (2022) as cited in the paper.',
-    aboutPrinciplesH: 'How we work',
-    aboutPrinciples: [
-      { ic: '1', h: 'AI scores, rules decide', p: 'The AI provides per-item scores and quotes; totals, pass/fail and status changes are handled by rules in code.' },
-      { ic: '2', h: 'Only confirmed résumés', p: 'Only résumé content the applicant has confirmed is used. Questions about age, family or school background are blocked.' },
-      { ic: '3', h: 'Results as soon as they are final', p: 'Automatic posts publish right after analysis; semi-automatic posts after recruiter review. A report with per-item scores can be emailed separately from pass/fail.' },
+    aboutPricingCta: 'See headhunterAI pricing',
+    aboutBeliefH: 'What that belief means for hiring',
+    aboutBelief: [
+      'The first round is where potential gets missed. For a lean team it is still manual work, and employers often put the cost of an unfilled role at three to four times its salary — so the pressure is to skim.',
+      'Under that pressure human judgment is less steady than it looks. In a field experiment with 3,296 U.S. tech applicants (Avery, 2026), professional recruiters’ scores drifted with the time of day, were anchored by the first answer, and clustered toward the middle. AI scoring of the same interviews showed none of those patterns. The same study is also a warning: one-way asynchronous interviews cut application continuation by about 53%, strongest applicants included, because the process read as unfair.',
+      'So we built for both findings. Every applicant gets the same question structure and the same criteria, with three of the eight questions drawn from their own résumé. The rules, the follow-up limit and the answer time are shown before anyone starts. Reducing drop-off is what we are aiming for, not something we have measured yet.',
     ],
-    aboutTechH: 'Under the hood',
+    aboutPracticeH: 'Our principles',
+    aboutPractice: [
+      { h: 'The same questions, the same criteria', p: 'Every applicant answers the same eight-question structure and is scored against the same rubric. A result does not depend on when or in what order it was reviewed.' },
+      { h: 'Results you can trace', p: 'The AI returns per-item scores and quotes taken directly from the answer. Totals and pass/fail come from fixed rules in code, not from the model.' },
+      { h: 'The company still decides', p: 'Each posting chooses whether results publish as soon as analysis finishes or wait for a recruiter to confirm. Applicants can request a per-item report by email.' },
+    ],
+    contactTitle: ['Contact', 'Founder of headhunterAI'],
+    contactLead: 'For questions about the service, partnerships or hiring, email me directly.',
+    contactName: 'Sohyun Kim',
+    contactRole: 'Founder of headhunterAI',
+    contactEmailLabel: 'Email',
+    contactFoot: 'Every email comes straight to me and I reply myself.',
+    sourcesTitle: ['What this site', 'cites'],
+    sourcesLead: 'Where the figures and research findings on the About page come from.',
+    sources: [
+      {
+        h: 'Primary study — field experiment on asynchronous interviews and AI assessment',
+        cite: 'Avery, M., Ip, E., Leibbrandt, A., Vecci, J. (2026). "A Brave New World of Hiring: A Natural Field Experiment on How Asynchronous Interviews and AI Assessment Reshape Recruitment." CESifo Working Paper No. 12573 (SSRN 6482825).',
+        note: 'A field experiment with 3,296 U.S. tech job applicants. It is the source for the following points on the About page: professional recruiters\' scores shifted with the time of day, were anchored by the answer to the first question and were compressed toward the middle; when AI evaluated the same interviews those patterns did not appear, and its scores predicted job success 12 months later at least twice as well as human scores or CV-based metrics; one-way asynchronous interviews cut application continuation by about 53%. These are findings of that study, not measured outcomes of headhunterAI.',
+      },
+      {
+        h: 'Employer AI adoption and vacancy cost figures',
+        cite: 'Brookings (2025) · Fuller et al. (2021) · Navarra (2022).',
+        note: 'The source for "more than half of U.S. firms, rising to 94–98% among Fortune 500 companies" and for "filling a vacancy costs three to four times the position\'s salary". These are cited in the Avery et al. (2026) paper above; which figure comes from which work follows that paper\'s attribution.',
+      },
+    ],
+    aboutTechH: 'Our system',
     aboutTech: [
-      { ic: 'L', h: 'Self-hosted language model', p: 'Questions and evaluation run on an open model (Qwen3) operated on our own server; résumés and answers are not sent to external AI APIs.' },
-      { ic: 'O', h: 'Résumé recognition', p: 'PDF text extraction combined with Tesseract OCR (Korean and English).' },
-      { ic: 'S', h: 'Isolated code execution', p: 'Coding-test code runs in a separate network-blocked container with time and memory limits.' },
+      { ic: 'L', h: 'Self-hosted language model', p: 'Question generation, evaluation and speech-to-text run on an open model (Qwen3) operated on our own server.' },
+      { ic: 'O', h: 'Résumé recognition', p: 'PDF text extraction with Tesseract OCR for Korean and English, in the same environment.' },
+      { ic: 'S', h: 'Sandboxed code execution', p: 'Coding-test code runs in a separate container under time, memory and concurrency limits.' },
     ],
-    aboutTechInbound: 'Applicant résumé · answers · code',
-    aboutTechResult: 'Applicant résumés, answers and code never leave our servers',
-    pricingTitle: ['Simple pricing.', 'Pay for what you use'],
-    pricingLead: 'Free for fewer than 10 uses a week. Choose Advanced if you use it more often or need IT mock interviews and custom coding tests.',
+    aboutTechInbound: 'Applicant’s resume',
+    aboutTechResult: 'Applicant answers, video and code stay on our servers',
+    homeFeaturesH: 'Features',
+    homeDemos: [
+      { label: 'Applicant dashboard',
+        desc: 'Your applications, interview progress and result notices in one place.',
+        cta: 'Browse open roles', href: '/applicant/#/jobs', img: '/images/demo_dashboard.png', rail: true },
+      { label: 'Unlimited coding exercises',
+        desc: 'Algorithm and SQL problems that follow current hiring trends, with no limit on how often. Run the public examples, then get graded on hidden tests.',
+        cta: 'See the practice screen', href: '#/features/coding-practice', img: '/images/demo_coding.png' },
+      { label: 'Qualitative report, only on headhunterAI',
+        desc: 'Not just a score. Every question quotes your own answer back and explains, in sentences, why each of the five items scored the way it did.',
+        cta: 'See career consulting', href: '#/features/career-consulting', shots: ['/images/demo_report_1.png', '/images/demo_report_2.png', '/images/demo_report_3.png'] },
+    ],
+    // Pricing 히어로 (2026-11-19 사용자 지시): 유리 박스 'Subscription' → 흰 제목 2줄, 끝의 'is now.'만 네온
+    pricingEyebrow: 'Subscription',
+    pricingHead: ['The best time to bring headhunterAI', 'to your system'],
+    pricingHeadAccent: 'is now.',
     segApplicant: 'Applicants', segCompany: 'Companies',
     perMonth: '/mo', free: 'Free',
     plans: {
       applicant: [
-        { name: 'Basic', tag: 'FREE', desc: 'Apply to job posts and take the AI first-round interview.', price: 0, sub: 'Fewer than 10 uses a week',
+        { name: 'Basic', tag: 'FREE', desc: 'Apply to job posts and take the AI first-round interview.', price: 0, sub: 'Up to one use a week',
           items: ['Apply · AI first-round interview', 'Résumé recognition', 'Results (pass/fail · strengths · improvements)'], cta: 'Start for free', href: '/applicant/#/jobs' },
-        { name: 'Advanced', tag: 'RECOMMENDED', rec: true, desc: 'Practise IT mock interviews and coding before the real thing.', price: 9900, sub: '10 or more uses a week',
+        { name: 'Advanced', tag: 'RECOMMENDED', rec: true, desc: 'Practise IT mock interviews and coding before the real thing.', price: 9900, sub: 'Two or more uses a week',
           items: ['Everything in Basic', 'IT mock interviews (AI/AX · Backend · Data analysis)', 'Coding practice by language (Python · C · SQL)', 'Practice history in one place'] },
       ],
       company: [
@@ -314,17 +401,16 @@ const T = {
     },
     payReady: 'Payments coming soon',
     paySubscribe: 'Subscribe with Naver Pay',
-    pricingNote: 'Advanced payments (Naver Pay · Toss Payments) are coming soon. Prices may change before launch.',
   },
 };
 
 // 드롭다운 카드: 한국어(흰색) + 영어(작게, 네온)를 항상 함께 표시 (PRD WEB-03)
 // 드롭다운 두 섹션(소제목은 영문 대문자 그대로, 클릭 없음). 섹션마다 왼쪽·오른쪽 카드 2개
 const SERVICE_SECTIONS = [
-  { title: 'JOB SEEKERS', items: [
+  { title: 'APPLICANTS', items: [
     { id: 'coding-practice', ko: '무제한 코딩 연습', en: 'Unlimited Coding Practice' },
     { id: 'career-consulting', ko: 'headhunter 취업 컨설팅', en: 'headhunter Career Consulting' } ] },
-  { title: 'EMPLOYERS', items: [
+  { title: 'RECRUITERS', items: [
     { id: 'first-round-hiring', ko: '기업용 1차 채용 서비스', en: 'AI First-Round Hiring' },
     { id: 'hiring-dashboard', ko: '기업 맞춤 대시보드', en: 'Custom Hiring Dashboard' } ] },
 ];
@@ -366,15 +452,95 @@ function home() {
       </div>
       <div class="hero-art" aria-hidden="true"></div>
     </section>
-  </div>`;
+  </div>
+  <!-- 히어로 아래로 내리면 브랜드 소개 → Features (2026-11-19 사용자 지시) -->
+  <div class="ab hm-brand">${brandBlock(L, bandItems(L), 'h2')}</div>
+  <section class="hm-feat">
+    <h2 class="hm-feat-h">${esc(L.homeFeaturesH)}</h2>
+    ${L.homeDemos.map((d, i) => `
+      <div class="hm-demo${i % 2 ? ' rev' : ''}">
+        <div class="hm-media${d.shots ? ' shots' : ''}" data-shots="${d.shots ? d.shots.length : 0}">
+          ${d.shots
+            ? d.shots.map((src, k) => `<img class="hm-media-el hm-shot${k ? '' : ' on'}" src="${src}" alt="${esc(d.label)} ${k + 1}">`).join('')
+              + `<button type="button" class="hm-arrow prev" aria-label="이전">‹</button>
+                 <button type="button" class="hm-arrow next" aria-label="다음">›</button>
+                 <div class="hm-dots">${d.shots.map((_, k) => `<span class="${k ? '' : 'on'}"></span>`).join('')}</div>`
+            : d.video ? `<video class="hm-media-el" src="${d.video}" autoplay muted loop playsinline
+                 onerror="this.closest('.hm-media').classList.add('no-media')"></video>`
+            : `<img class="hm-media-el" src="${d.img}" alt="${esc(d.label)}"
+                 onerror="this.closest('.hm-media').classList.add('no-media')">`}
+          <div class="hm-media-fall"><span>${esc(d.label)}</span></div>
+        </div>
+        <div class="hm-side">
+          <p class="hm-label">${esc(d.label)}</p>
+          <p class="hm-desc">${esc(d.desc)}</p>
+          ${d.rail ? '<div class="hm-rail" id="hm-jobs"><div class="hm-rail-track"></div></div>' : ''}
+          <a class="btn" href="${d.href}">${esc(d.cta)}</a>
+        </div>
+      </div>`).join('')}
+  </section>`;
+}
+
+/* 지원자 대시보드 옆에서 공고가 계속 흘러가게 — 실제 공개 공고(GET /api/jobs)만 쓴다.
+   목록이 비거나 요청이 실패하면 그 칸만 숨긴다(가짜 공고를 만들지 않는다). */
+/* 리포트 스샷 캐러셀 — 좌우 화살표로 넘긴다 (2026-11-19 사용자 지시).
+   키보드(←·→)와 점 표시도 같이 둔다. 자동 재생은 하지 않는다. */
+function bindShots() {
+  document.querySelectorAll('.hm-media.shots').forEach((box) => {
+    const shots = [...box.querySelectorAll('.hm-shot')];
+    const dots = [...box.querySelectorAll('.hm-dots span')];
+    if (shots.length < 2) return;
+    let i = 0;
+    const go = (n) => {
+      i = (n + shots.length) % shots.length;
+      shots.forEach((el, k) => el.classList.toggle('on', k === i));
+      dots.forEach((el, k) => el.classList.toggle('on', k === i));
+    };
+    box.querySelector('.prev').onclick = () => go(i - 1);
+    box.querySelector('.next').onclick = () => go(i + 1);
+    dots.forEach((el, k) => (el.onclick = () => go(k)));
+    box.tabIndex = 0;
+    box.onkeydown = (e) => {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); go(i - 1); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); go(i + 1); }
+    };
+  });
+}
+
+async function fillJobRail() {
+  const rail = document.getElementById('hm-jobs');
+  if (!rail) return;
+  let rows = [];
+  try { rows = await fetch('/api/jobs').then((r) => (r.ok ? r.json() : [])); } catch (_) { rows = []; }
+  const open = rows.filter((r) => r.status === 'published').slice(0, 8);
+  if (!open.length) { rail.remove(); return; }
+  const card = (j) => `<div class="hm-job"><b>${esc(j.title)}</b><span>${esc(j.company)} · ${esc(j.location || '')}</span></div>`;
+  // 같은 목록을 두 벌 이어 붙여야 위로 흐르다 끊기지 않고 이어진다
+  rail.querySelector('.hm-rail-track').innerHTML = open.map(card).join('') + open.map(card).join('');
+  rail.style.setProperty('--rail-n', String(open.length));
+}
+
+/* 서비스 소개 페이지 상단 — 왼쪽 제목·본문 / 오른쪽 연습 바로가기 버튼(2026-11-19 사용자 지시).
+   hero가 있는 서비스는 아래쪽 '지금 제공 범위' 문구(status)와 가운데 바로가기 줄을 쓰지 않는다. */
+function serviceHero(h, launch) {
+  return `<section class="svc-hero">
+    <div class="svc-hero-copy">
+      <h1 class="svc-hero-title">${esc(h.title)}</h1>
+      ${h.body.map((x) => `<p>${esc(x)}</p>`).join('')}
+    </div>
+    ${launch ? `<div class="svc-hero-side">
+      <button type="button" class="btn lg launch-btn" id="launch-practice">${esc(launch.label)}</button>
+    </div>` : ''}
+  </section>`;
 }
 
 function head(title, lead) {
-  return `<section class="page-head"><h1>${esc(title[0])}<br><span class="neon">${esc(title[1])}</span></h1><p>${esc(lead)}</p></section>`;
+  return `<section class="page-head"><h1>${esc(title[0])}<br><span class="neon">${esc(title[1])}</span></h1>${lead ? `<p>${esc(lead)}</p>` : ''}</section>`;
 }
 
-function cards(list) {
-  return `<div class="cards">${list.map(c => `
+/* rail=true면 카드를 가로로 이어 붙여 좌우로 스크롤해 보게 한다 (2026-11-19 사용자 지시) */
+function cards(list, rail) {
+  return `<div class="cards${rail ? ' rail' : ''}">${list.map(c => `
     <div class="card2">${c.ic ? `<div class="ic">${esc(c.ic)}</div>` : ''}<h3>${esc(c.h)}</h3><p>${esc(c.p)}</p></div>`).join('')}</div>`;
 }
 
@@ -405,30 +571,107 @@ function service(id) {
   const L = t();
   const S = L.services[id];
   if (!S) return home();
+  if (S.hero) {
+    return `<div class="wrap">${serviceHero(S.hero, S.launch)}
+      ${S.sections.map(sec => `<section class="sec"><h2>${esc(sec.h)}</h2>${cards(sec.cards, sec.rail)}</section>`).join('')}
+      <div class="row" style="justify-content:center;margin:28px 0 8px">${S.ctas.map(c => `<a class="btn lg${c.primary ? ' primary' : ''}" href="${c.href}">${esc(c.label)}</a>`).join('')}</div>
+    </div>`;
+  }
   return `<div class="wrap">${head(S.title, S.lead)}
     ${S.status ? `<p class="note" style="margin:-16px 0 8px">${esc(S.status)}</p>` : ''}
     ${S.launch ? `<div class="row" style="justify-content:center;margin:20px 0 8px"><button type="button" class="btn lg launch-btn" id="launch-practice">${esc(S.launch.label)}</button></div>` : ''}
-    ${S.sections.map(sec => `<section class="sec"><h2>${esc(sec.h)}</h2>${cards(sec.cards)}</section>`).join('')}
+    ${S.sections.map(sec => `<section class="sec"><h2>${esc(sec.h)}</h2>${cards(sec.cards, sec.rail)}</section>`).join('')}
     <div class="row" style="justify-content:center;margin:28px 0 8px">${S.ctas.map(c => `<a class="btn lg${c.primary ? ' primary' : ''}" href="${c.href}">${esc(c.label)}</a>`).join('')}</div>
   </div>`;
 }
 
+/* About 페이지 (2026-11-19 사용자 지시로 전면 재구성)
+   ① 상단 = 유니콘 중심의 '하나의' 중앙 구성 (좌우 2열 히어로 아님)
+   ② 그 믿음이 채용에서 뜻하는 것 — 옛 '만든 이유'+'만들고 싶은 변화'를 통합해 다시 씀
+   ③ 제품으로 구현한 방식 — 같은 크기 3항목 가로(모바일은 세로)
+   ④ 기술 구성 — 본문 컨테이너 폭에 맞춤
+   읽는 글은 가운데 둔 읽기 폭(640~760px) 안에서 왼쪽 정렬한다. */
+/* 본문 안 **…** 만 굵게(600). 이스케이프한 뒤 바꾸므로 HTML 주입 위험 없음 */
+const emph = (x) => esc(x).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+/* 브랜드 소개(라벨 → 헤드라인 → 인용 상자 → 유니콘 밴드).
+   About 페이지와 첫 페이지가 같이 쓴다. 첫 페이지에서는 히어로에 h1이 이미 있으므로 h2로 쓴다. */
+function brandBlock(L, band, tag) {
+  const head = Array.isArray(L.aboutHeadline) ? L.aboutHeadline.map(esc).join('<br>') : esc(L.aboutHeadline);
+  return `<header class="ab-hero ab-col">
+      <p class="ab-eyebrow">${esc(L.aboutEyebrow)}</p>
+      <${tag} class="ab-headline">${head}</${tag}>
+      <div class="ab-intro">${L.aboutIntro.map((x) => `<p>${emph(x)}</p>`).join('')}</div>
+    </header>
+    <section class="ab-band">
+      <div class="ab-col ab-band-inner">
+        <div class="ab-band-copy">${band}</div>
+        <img class="ab-band-art" src="/images/about_unicorn_hero.png?v=2" alt="" aria-hidden="true">
+      </div>
+    </section>`;
+}
+
+function bandItems(L) {
+  return L.aboutBand.map((x, i) => `
+    <div class="ab-band-item"><span class="ab-band-no">0${i + 1}</span>
+      <p>${emph(x).replace(/\n/g, '<br>')}</p></div>`).join('');
+}
+
 function about() {
   const L = t();
-  return `<div class="wrap">${head(L.aboutTitle, L.aboutLead)}
-    <section class="sec"><h2>${esc(L.aboutWhyH)}</h2>${L.aboutWhy.map(p => `<p style="max-width:760px;margin:0 auto 16px;color:var(--muted)">${esc(p)}</p>`).join('')}</section>
-    <section class="sec"><h2>${esc(L.aboutChangeH)}</h2>${L.aboutChange.map(p => `<p style="max-width:760px;margin:0 auto 16px;color:var(--muted)">${esc(p)}</p>`).join('')}</section>
-    <section class="sec"><h2>${esc(L.aboutPrinciplesH)}</h2>${flowDiagram(L.aboutPrinciples)}</section>
-    <section class="sec"><h2>${esc(L.aboutTechH)}</h2>${perimeterDiagram(L.aboutTech, L.aboutTechInbound, L.aboutTechResult)}</section>
-    <p class="note" style="max-width:760px;margin:40px auto 0;text-align:left">${esc(L.aboutSource)}</p>
+  const band = bandItems(L);
+  return `<div class="ab">
+    ${brandBlock(L, band, 'h1')}
+    <section class="ab-sec ab-col">
+      <h2>${esc(L.aboutBeliefH)}</h2>
+      <div class="ab-read">${L.aboutBelief.map((x) => `<p>${esc(x)}</p>`).join('')}</div>
+    </section>
+    <section class="ab-sec ab-col">
+      <h2>${esc(L.aboutPracticeH)}</h2>
+      <div class="ab-three">${L.aboutPractice.map((c) => `
+        <div class="ab-item"><h3>${esc(c.h)}</h3><p>${esc(c.p)}</p></div>`).join('')}</div>
+    </section>
+    <section class="ab-sec ab-col">
+      <h2>${esc(L.aboutTechH)}</h2>
+      ${perimeterDiagram(L.aboutTech, L.aboutTechInbound, L.aboutTechResult)}
+    </section>
+    <div class="ab-col ab-cta"><a class="btn primary lg" href="#/pricing">${esc(L.aboutPricingCta)}</a></div>
+  </div>`;
+}
+
+/* 대표자 연락처 (#/contact) — 맨 아래 '대표자 연락처' 링크에서 들어온다 (2026-11-19 사용자 지시) */
+const CONTACT_EMAIL = 'lsk99013@gmail.com';
+function contact() {
+  const L = t();
+  return `<div class="wrap">${head(L.contactTitle, L.contactLead)}
+    <div class="contact-card">
+      <p class="contact-name">${esc(L.contactName)}</p>
+      <p class="contact-role">${esc(L.contactRole)}</p>
+      <p class="contact-mail"><span>${esc(L.contactEmailLabel)}</span><a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a></p>
+      <p class="contact-foot">${esc(L.contactFoot)}</p>
+    </div>
+  </div>`;
+}
+
+/* 인용 모음 (#/sources). About 페이지 각주로 있던 출처를 맨 아래 'source' 링크 한 곳으로 모았다 (2026-11-19 사용자 지시) */
+function sources() {
+  const L = t();
+  return `<div class="wrap">${head(L.sourcesTitle, L.sourcesLead)}
+    ${L.sources.map((s) => `<section class="sec"><div style="max-width:760px;margin:0 auto">
+      <h2>${esc(s.h)}</h2>
+      <p style="color:var(--white);font-size:15px;line-height:1.7;margin:0 0 12px">${esc(s.cite)}</p>
+      <p style="color:var(--muted);font-size:14.5px;line-height:1.75;margin:0">${esc(s.note)}</p>
+    </div></section>`).join('')}
   </div>`;
 }
 
 function pricing() {
   const L = t();
   const plans = L.plans[audience];
-  return `<div class="wrap">
-    <section class="page-head"><h1>${esc(L.pricingTitle[0])}<br><span class="neon">${esc(L.pricingTitle[1])}</span></h1><p>${esc(L.pricingLead)}</p>
+  return `<div class="wrap pr-wrap">
+    <section class="pr-hero">
+      <p class="pr-eyebrow"><span>${esc(L.pricingEyebrow)}</span></p>
+      <h1 class="pr-title"><span class="pr-ln">${esc(L.pricingHead[0])}</span> <span class="pr-ln">${esc(L.pricingHead[1])} <span class="pr-accent">${esc(L.pricingHeadAccent)}</span></span></h1>
       <div class="seg"><button type="button" data-aud="applicant" class="${audience === 'applicant' ? 'on' : ''}">${esc(L.segApplicant)}</button><button type="button" data-aud="company" class="${audience === 'company' ? 'on' : ''}">${esc(L.segCompany)}</button></div>
     </section>
     <div class="plans">${plans.map(p => `
@@ -443,12 +686,11 @@ function pricing() {
           : `<button class="btn primary lg" type="button" disabled style="opacity:.55;cursor:not-allowed">${esc(L.payReady)}</button>`}
       </div>`).join('')}
     </div>
-    <p class="note">${esc(L.pricingNote)}</p>
   </div>`;
 }
 
 // Features는 드롭다운만 있고 목록 페이지는 없다. #/features/<id> = 서비스 페이지 4개
-const ROUTES = { '': home, about, pricing };
+const ROUTES = { '': home, about, pricing, sources, contact };
 
 // 결제가 켜진 환경(네이버페이 키 또는 로컬 가짜 결제)에서만 Advanced 버튼이 요금제 화면으로 간다(PRD v0.9 PAY-05)
 let payOn = false;
@@ -462,6 +704,8 @@ function render() {
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('on', a.dataset.nav === page));
   document.querySelector('.dd').classList.remove('open');
   view.innerHTML = page === 'features' ? service(sub) : (ROUTES[page] || home)();
+  fillJobRail();
+  bindShots();
   // 언어·대상 전환은 같은 위치를 유지하고, 메뉴 이동 때만 스크롤을 옮긴다
   if (location.hash === lastHash) return;
   lastHash = location.hash;

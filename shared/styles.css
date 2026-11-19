@@ -73,9 +73,13 @@ select option:disabled { color: var(--muted2); }
 .who { color: var(--muted); font-size: 13px; }
 
 /* layout */
-.wrap { max-width: 1120px; margin: 0 auto; padding: 32px 28px 64px; }
+/* 2026-11-19 사용자 지시: 넓은 모니터에서 양쪽 여백이 너무 넓다(2540px 화면에서 좌우 710px씩 비었음)
+   → 본문 폭을 화면에 따라 늘린다. 첫 화면(.hero-wrap, 1920)과 비슷한 리듬. 읽는 글의 줄 길이는
+   각 화면에서 따로 제한하므로(About 본문 760 등) 폭이 늘어도 한 줄이 길어지지 않는다 */
+.wrap { max-width: min(1440px, 88vw); margin: 0 auto; padding: 32px 28px 64px; }   /* 2026-11-19 사용자 지시(2차): 여전히 양옆이 넓어 1920 → 1440으로 더 좁힘. 헤더·첫 화면과 같은 폭 */
 .wrap.narrow { max-width: 520px; }
 .wrap.mid { max-width: 820px; }
+.wrap.my-wrap { max-width: min(1760px, 86vw); }   /* 마이페이지는 양옆을 조금 줄인다(2026-11-19 사용자 지시) */
 .app { display: grid; grid-template-columns: 228px minmax(0, 1fr); min-height: calc(100vh - 63px); }
 .side { border-right: 1px solid var(--line); padding: 18px 0; }
 .side .cap { padding: 0 20px 10px; font-size: 12px; color: var(--muted2); font-weight: 600; letter-spacing: .04em; }
@@ -202,7 +206,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .hero > div:first-child { position: relative; z-index: 2; }
 /* 넓은 화면에서도 좌우·아래 빈 공간이 남지 않게: 첫 화면은 더 넓은 폭(1440px)을 쓰고, 화면 높이만큼 채우며,
    이미지는 화면 높이에 맞춰 커진다(가로:세로 = 3:2) */
-.wrap.hero-wrap { max-width: min(1920px, 94vw);   /* 2026-11-18 사용자 승인: 넓은 모니터에서 첫 화면만 늘림(본문 .wrap 1120px는 그대로) */ padding-top: 0; padding-bottom: 0; overflow-x: clip; }
+.wrap.hero-wrap { max-width: min(1440px, 90vw);   /* 2026-11-19 사용자 지시(2차): 첫 화면이 양옆으로 너무 벌어져 1920 → 1440 */ padding-top: 0; padding-bottom: 0; overflow-x: clip; }
 .hero { min-height: max(460px, calc(100svh - 84px)); }
 .hero-art { position: absolute; z-index: 0; right: -48px; top: 50%; transform: translateY(-50%); width: min(70vw, calc((100svh - 84px) * 1.45), 1300px);
   -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 26%); mask-image: linear-gradient(to right, transparent 0%, #000 26%); }
@@ -240,17 +244,17 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 
 /* interview */
 .stage { border: 1px solid var(--line); border-radius: 16px; background: var(--fill); padding: 28px; display: grid; gap: 18px; position: relative; min-height: 460px; align-content: start; }
-.cam { width: 220px; aspect-ratio: 4 / 3; border: 1.5px solid var(--line-strong); border-radius: 10px; background: var(--black); overflow: hidden; display: grid; place-items: center; color: var(--muted2); font-size: 12px; }
-.cam video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.cam { width: 220px; aspect-ratio: 4 / 3; border: 1.5px solid var(--line-strong); border-radius: 14px; background: var(--black); overflow: hidden; display: grid; place-items: center; color: var(--muted2); font-size: 12px; }
+.cam video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); border-radius: inherit; }
 /* 면접 화면 카메라 미리보기(2026-11-16 사용자 승인): 우측 상단 고정, 표시만·녹화·저장 안 함 */
-.cam-float { position: fixed; top: 16px; right: 16px; z-index: 30; width: 200px; display: grid; gap: 6px; }
+.cam-float { position: fixed; top: 24px; right: 32px; z-index: 30; width: 200px; display: grid; gap: 6px; }
 .cam-float .cam { width: 100%; padding: 8px; text-align: center; line-height: 1.5; }
 .cam-float .cam:has(video) { padding: 0; }
 .cam-float[hidden] { display: none; }
 .cam-note { font-size: 11.5px; color: var(--muted); text-align: center; line-height: 1.4; }
 @media (min-width: 821px) and (max-width: 1400px) { .iv-wrap { padding-right: 244px; } } /* 미리보기가 면접 내용과 겹치지 않게 */
 @media (max-width: 820px) {
-  .cam-float { position: absolute; top: 16px; right: 16px; width: 120px; } /* 모바일: 같은 우측 상단, 페이지와 함께 움직여 답변 버튼·입력란을 가리지 않음 */
+  .cam-float { position: absolute; top: 16px; right: 20px; width: 120px; } /* 모바일: 같은 우측 상단, 페이지와 함께 움직여 답변 버튼·입력란을 가리지 않음 */
   .cam-float .cam { font-size: 10.5px; padding: 4px; }
   .cam-note { font-size: 10.5px; }
   .iv-head { padding-right: 132px; min-height: 128px; align-items: flex-start; }
@@ -364,6 +368,60 @@ h1 .new-badge { margin-left: 12px; font-size: 12px; transform: translateY(-3px);
 @media (max-width: 820px) { .reco-track > * { flex: 0 0 100%; } .reco-track > *:not(:first-child) { border-left: 0; border-top: 1px solid var(--line); } }
 @media (prefers-reduced-motion: reduce) { .reco-track { transition: none; } }
 /* 화면 맨 아래 약관 링크(v0.9, 2026-11-06 사용자 승인: 작은 회색 글씨 링크 2개) */
+/* ───────── 지원자 접이식 사이드 메뉴 (2026-11-19 사용자 지시) ─────────
+   헤더 아래 왼쪽에 고정. 펼침 224px / 접힘 0px(손잡이만 남음).
+   본문은 .side-on 일 때만 왼쪽 여백을 받는다. 색은 3색 규칙 그대로. */
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sidenav { position: fixed; left: 0; top: var(--top-h, 76px); bottom: 0; z-index: 15;
+  width: 224px; border-right: 1px solid var(--line); background: rgba(0, 0, 0, .96);
+  transition: width .18s ease; }
+.sidenav[hidden] { display: none; }
+.sidenav.off { width: 0; border-right-color: transparent; }
+.sidenav-body { display: flex; flex-direction: column; gap: 2px; padding: 18px 12px; overflow: hidden auto; height: 100%; }
+.sidenav.off .sidenav-body { visibility: hidden; }
+.sidenav-body a, .sidenav-body button {
+  display: block; width: 100%; text-align: left; background: none; border: 0; cursor: pointer;
+  padding: 11px 14px; border-radius: var(--radius); color: var(--muted); text-decoration: none;
+  white-space: nowrap; font: inherit;
+}
+.sidenav-body b { display: block; font-size: 15px; font-weight: 600; }
+.sidenav-body span { display: block; margin-top: 2px; font-family: var(--font-logo); font-weight: 700;
+  font-size: 11px; letter-spacing: .06em; color: var(--muted2); }
+.sidenav-body a:hover, .sidenav-body button:hover { background: var(--fill2); color: var(--white); }
+.sidenav-body a.on { color: var(--white); background: var(--fill2); box-shadow: inset 2px 0 0 var(--neon); }
+.sidenav-sep { height: 1px; background: var(--line); margin: 12px 14px; }
+/* 손잡이 — 접었을 때도 화면에 남아 다시 펼 수 있다 */
+.sidenav-toggle { position: absolute; left: 100%; top: 14px; width: 26px; height: 34px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  background: var(--black); color: var(--muted); border: 1px solid var(--line); border-left: 0;
+  border-radius: 0 8px 8px 0; font-size: 14px; line-height: 1; }
+.sidenav-toggle:hover { color: var(--neon); border-color: var(--neon); }
+.sidenav.off .sidenav-toggle span[aria-hidden] { transform: scaleX(-1); display: block; }
+body.side-on #view > .wrap { margin-left: 0; }
+@media (min-width: 1101px) {
+  body.side-on #view { padding-left: 224px; transition: padding-left .18s ease; }
+  body.side-on.side-off #view { padding-left: 0; }
+}
+@media (max-width: 1100px) {
+  /* 좁은 화면에서는 본문을 밀지 않고 위에 덮는다 */
+  .sidenav { box-shadow: 0 0 0 100vmax rgba(0, 0, 0, .55); }
+  .sidenav.off { box-shadow: none; }
+}
+@media (max-width: 820px) {
+  .sidenav { width: 200px; }
+}
+
 .legal-links { display: flex; justify-content: center; gap: 18px; padding: 28px 16px 36px; font-size: 12.5px; }
 .legal-links a { color: var(--muted2); text-decoration: none; }
 .legal-links a:hover { color: var(--muted); text-decoration: underline; }
+
+/* ───────── 기업 코딩테스트 화면 (2026-11-19 사용자 지시) ─────────
+   ① 답안 칸이 너무 짧았다 → 화면 높이에 맞춰 크게
+   ② 실행 결과 칸을 답안 칸 바로 밑으로, 버튼은 그 아래 (다음 문제 · 최종 제출)
+   ③ 문제 지문 문단 사이를 띄워 읽기 쉽게 */
+.editor.code-editor { min-height: min(56vh, 620px); font-size: 14.5px; line-height: 1.6; }
+.run-head { display: flex; align-items: center; justify-content: space-between; margin: 12px 0 6px; }
+.run-head .small { color: var(--muted2); letter-spacing: .04em; }
+#pdesc p { margin: 0 0 12px; line-height: 1.75; font-size: 15px; }
+#pdesc p:last-of-type { margin-bottom: 4px; }
+#pdesc h3 { margin-top: 14px; }

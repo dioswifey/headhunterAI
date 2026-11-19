@@ -214,7 +214,7 @@ class IQEnv(T.Env):
 
     def __init__(self, iq_per_cat=None, source="chroma", rewrite=False, guard_answer=None, **kw):
         super().__init__(guard_answer=guard_answer, **kw)
-        self.iq_per_cat = {"personality": 2, "job": 2, "company": 1} if iq_per_cat is None else iq_per_cat
+        self.iq_per_cat = {"personality": 2, "job": 3, "company": 1} if iq_per_cat is None else iq_per_cat
         self.source, self.rewrite = source, rewrite
         self.iq_calls, self.redis_calls = [], []
 
@@ -234,7 +234,7 @@ class IQEnv(T.Env):
             return {"answerable": True, "asks": [], "revised_question": ""}
         return super().chat(system, user, schema, **kw)
 
-    def pick_internal(self, vecs, role, cat, n, used, terms):
+    def pick_internal(self, vecs, role, cat, n, used, terms, min_sim=None):
         self.iq_calls.append(cat)
         have = self.iq_per_cat.get(cat, 0)
         if terms is None or have < n:
@@ -281,12 +281,12 @@ def t_graph_order():
     qs, info = _run(env)
     check("I4 8문항", len(qs) == 8, str(len(qs)))
     iq = [q for q in qs if (q.get("gen_method") or "").startswith("internal_q:")]
-    check("I4 인성2·직무2·기업1 = 5문항이 사내문서 질문", len(iq) == 5, str([q.get("gen_method") for q in qs]))
+    check("I4 인성2·직무3·기업1 = 6문항이 사내문서 질문", len(iq) == 6, str([q.get("gen_method") for q in qs]))
     check("I4 gen_method에 질문 ID", all("internal_q:IQ-" in q["gen_method"] for q in iq))
     check("I4 Redis를 부르지 않는다", env.redis_calls == [], str(env.redis_calls))
     check("I4 세 카테고리 모두 사내문서 질문 시도", set(env.iq_calls) == {"personality", "job", "company"}, str(env.iq_calls))
     rr = info.get("dual_report") or {}
-    check("I4 dual_report.internal_q_total = 5", rr.get("internal_q_total") == 5, str(rr))
+    check("I4 dual_report.internal_q_total = 6", rr.get("internal_q_total") == 6, str(rr))
     check("I4 사내문서 질문은 다시 쓰지 않는다(A15·인성 다듬기 호출 0)", env.old_calls == 0, str(env.old_calls))
     texts = [q["text"] for q in iq]
     check("I4 질문 문장이 그대로 나간다", all("사내문서 질문" in t for t in texts), str(texts[:2]))
@@ -388,11 +388,11 @@ class ResumeIQEnv(IQEnv):
         self.knn_sim, self.iq_on = knn_sim, iq_on
         self.ref_calls = self.knn_calls = self.embed_calls = 0
 
-    def pick_internal(self, vecs, role, cat, n, used, terms):
+    def pick_internal(self, vecs, role, cat, n, used, terms, min_sim=None):
         # 이력서 참고 문항 호출만 가로챈다(`_resume_bank_refs`는 cat="job" · n=1로 부른다).
         # 카테고리 문항(직무 n=2 등)은 IQEnv의 기존 가짜 그대로.
         if not (cat == "job" and n == 1):
-            return super().pick_internal(vecs, role, cat, n, used, terms)
+            return super().pick_internal(vecs, role, cat, n, used, terms, min_sim)
         self.ref_calls += 1
         if terms is None or not self.iq_on:
             return None
@@ -446,14 +446,14 @@ def t_resume_internal():
     env = ResumeIQEnv()
     qs, info = _run(env)
     rq = _resume_qs(qs)
-    check("I10 8문항 · 이력서 3문항", len(qs) == 8 and len(rq) == 3, str([q["category"] for q in qs]))
-    check("I10 이력서 항목마다 참고 문항을 찾는다(3회)", env.ref_calls == 3, str(env.ref_calls))
+    check("I10 8문항 · 이력서 2문항", len(qs) == 8 and len(rq) == 2, str([q["category"] for q in qs]))
+    check("I10 이력서 항목마다 참고 문항을 찾는다(2회)", env.ref_calls == 2, str(env.ref_calls))
     check("I10 참고 문항은 사내문서 질문 — Redis 백업 미호출", env.knn_calls == 0, str(env.knn_calls))
-    check("I10 로그 resume_bank 출처 = internal_q", "resume_bank 3(internal_q)" in _retrieve_log(info),
+    check("I10 로그 resume_bank 출처 = internal_q", "resume_bank 2(internal_q)" in _retrieve_log(info),
           _retrieve_log(info))
     dr = info.get("dual_report") or {}
-    check("I10 dual_report.resume_iq_ref = 3", dr.get("resume_iq_ref") == 3, str(dr))
-    check("I10 internal_total = 8(카테고리 질문 5 + 이력서 3)", dr.get("internal_total") == 8, str(dr))
+    check("I10 dual_report.resume_iq_ref = 2", dr.get("resume_iq_ref") == 2, str(dr))
+    check("I10 internal_total = 8(카테고리 질문 6 + 이력서 2)", dr.get("internal_total") == 8, str(dr))
     check("I10 이력서 문항 gen_method에 |internal: 조각 ID",
           all((q.get("gen_method") or "").startswith("llm|internal:DOC-ref") for q in rq),
           str([q.get("gen_method") for q in rq]))

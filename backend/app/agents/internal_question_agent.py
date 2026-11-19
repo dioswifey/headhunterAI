@@ -73,8 +73,91 @@ CAT_GUIDE = {
 # 지원자가 이 회사에서 일했다고 전제하는 과거형 표현(A18 ⑦). `questions.PAST_PREMISE`와 같은 목적
 PAST_PREMISE = re.compile(r"(하셨던|하셨는|하신\s*경험|진행하신|진행하셨|담당하신|담당하셨|맡으셨|맡았던|"
                           r"참여하신|참여하셨|수행하신|수행하셨|경험하신|구축하신|구축하셨|개발하신|개발하셨)")
-TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|\d+(?:\.\d+)?%?")
+TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|\d+(?:[:/]\d+)+|\d+(?:\.\d+)?%?")
 SENT_END = re.compile(r"(?:[다요까]|니까)[.?!]\s*(?=\S)")
+
+# A18 3차 추가(2026-11-19) — OpenAI 전환 뒤에도 100%는 아니라 비문 검사기를 따로 둔다(사용자 지시).
+# "관련된 경험이 있다면 ~ 답해 주셔도 좋습니다" 덧붙임은 예외로 통과(사용자가 허용한 문구) — 세 검사 전에 떼어낸다.
+EXPERIENCE_SUFFIX = re.compile(r"[,.]?\s*관련된?\s*(?:업무\s*)?경험[^.?!]{0,20}있다면[^.?!]*(?:답해|말씀해|설명해)\s*주(?:셔도|시면)\s*좋습니다\.?\s*$")
+# ① 물음표·종결 요청이 2개 이상 → "묻는 것이 둘 이상"(규칙6 "묻는 것은 하나만")
+# "?"와 "하시겠습니까" 등은 한 문장 끝에 같이 붙어 있는 게 보통이라(…하시겠습니까?) 그대로 세면 한 질문이 2개로
+# 겹쳐 세어진다 — "?"가 뒤따르지 않는 요청 어미만 별도로 센다.
+ASK_END = re.compile(r"\?|(?:하시겠습니까|할까요|해\s*주세요|해주세요|주시겠습니까|바랍니다|부탁드립니다)(?!\s*\?)")
+# ② 선행사 없이 등장하는 지시어("그 결과물", "이 과정" 등)
+DANGLING_REF = re.compile(r"그\s*결과물|이\s*과정|해당\s*부분|그것을|그\s*부분|이\s*결과(?!물)|그\s*결과(?!물)|해당\s*내용|이\s*내용|그\s*내용")
+# ③ 따옴표로 감싼, 설명 없는 사내 단계·절차 명사구(예: '적용 가능성 검토') — 안에 종결 어미가 없는 짧은 명사구만 잡는다
+QUOTED_PHRASE = re.compile(r"['\"'''""「」『』]([^'\"'''""「」『』]{2,16})['\"'''""」』]")
+QUOTED_SENTENCE_END = re.compile(r"(다|요|까|라|네|죠)[.!?]?$")
+# A18 신규(2026-11-19): 조각 머리글·메타 설명만 베껴 구체적 업무 상황이 없는 질문을 걸러낸다(internal_question.md 규칙1)
+# "다면"은 한국어 조건형 어미("~라면/한다면/있다면/된다면/본다면" 등)를 통째로 잡는다 — 개별 동사 나열은
+# "~이 있다면"처럼 흔한 표현을 놓치는 일(검증 중 발견)이 있어 어미 하나로 단순화했다.
+SITUATION_MARKERS = re.compile(r"(다면|상황|경우|때|진행\s*중|직면|마주)")
+
+# A18 2차 수정(2026-11-19, 사용자 지적 → 조정자 지시): 1차 수정(SITUATION_MARKERS)은 "~다면" 어미만 보기 때문에,
+# 조건형 어미는 붙었지만 알맹이 없이 intent·competency·expected_keywords만 되풀이한 질문("~상황이라면 어떻게
+# 하시겠습니까")을 걸러내지 못했다. 로컬 모델(A6·A7과 같은 패턴)로 판단해 봤으나 591개 실측에서 42~43%를
+# 탈락시켰고 그중 다수가 사람이 보기엔 멀쩡했다(예: "RFC 소유자가…테크 리드…" — 모델이 표면 형태("~때 어떻게")만
+# 보고 내용을 다시 안 따지는 경향, 두 번 조정해도 비율이 그대로라 모델 역량 한계로 판단해 폐기). 대신 순수 규칙으로:
+# 숫자·인용부호·영문 토큰이 하나도 없고, 한글 토큰에서 조사·어미를 뗀 나머지가 전부 "추상 메타 어휘"
+# (가치·원칙·역할 설명에 쓰는 상위어)에 걸리면 탈락시킨다. 부서·팀 이름은 '누가'일 뿐이라 그 자체로 앵커로 치지
+# 않는다(그래서 "백엔드팀에서 의존 관계와 운영 위험을…" 예문이 "백엔드팀"만으로 통과하던 문제를 잡았다).
+# 591개 실측 0.3%(2/591, 둘 다 원래 지적된 두 문장) — 상세 `documents/03_QA_doc/RAG_질문품질_QA.md`.
+CONCRETE_FILLER = {
+    "어떻게", "하시겠습니까", "할까요", "설명해", "주세요", "무엇", "인가요", "있을까요", "있나요",
+    "생각하시겠습니까", "싶은가", "할것인가요", "계획인가요", "그리고", "그러나", "하지만", "또는", "또한",
+    "이때", "만약", "어떤", "이라고", "할수있을까요", "해야할까요", "할수있나요", "것인가요",
+}
+CONCRETE_ABSTRACT = {
+    "의존", "관계", "운영", "위험", "문제", "협업", "소통", "조정", "문서화", "변경", "내용", "상황",
+    "경우", "업무", "과정", "절차", "방식", "기준", "역량", "가치", "역할", "책임", "판단", "대응",
+    "결정", "관리", "활용", "적용", "반영", "고려", "유지", "개선", "확인", "처리", "진행", "수행",
+    "담당", "설명", "부서", "팀", "회사", "직원", "구성원", "인원", "조직", "다른", "같은", "동일",
+    "관련", "해당", "본인", "스스로", "노력", "자세", "마음가짐", "태도", "철학", "방향", "성향",
+    "성격", "수준", "정도", "범위", "중요", "핵심", "우선", "방법", "요소",
+    "조기", "드러내", "나타내", "보여주", "표현", "지키", "따르", "갖추", "드러나",
+}
+CONCRETE_SUFFIXES = sorted([
+    "이라면", "한다면", "있다면", "된다면", "하다면", "했던", "하고", "해서", "하여", "으로", "에서",
+    "에게", "부터", "까지", "처럼", "같이", "이나", "이란", "로서", "로써", "한테",
+    "라면", "다면", "이면", "하는", "할", "한", "이", "가", "을", "를", "은", "는", "의", "에", "로",
+    "과", "와", "나", "도", "만",
+], key=len, reverse=True)
+
+
+def _strip_concrete_suffixes(tok):
+    changed = True
+    while changed and tok:
+        changed = False
+        for suf in CONCRETE_SUFFIXES:
+            if len(tok) > len(suf) and tok.endswith(suf):
+                tok = tok[: -len(suf)]
+                changed = True
+                break
+    return tok
+
+
+def has_concrete_anchor(q):
+    """(ok, 사유). 숫자·인용부호·영문 토큰, 또는 추상 메타 어휘가 아닌 한글 명사 중 하나라도 있으면 True."""
+    if re.search(r"\d", q):
+        return True, "숫자"
+    if re.search(r"['\"'‘’“”「」『』]", q):
+        return True, "인용부호"
+    if re.search(r"[A-Za-z]{2,}", q):
+        return True, "영문 고유명사"
+    for t in re.findall(r"[가-힣]{2,}", q):
+        if t in CONCRETE_FILLER:
+            continue
+        stem = _strip_concrete_suffixes(t)
+        if not stem or stem in CONCRETE_FILLER:
+            continue
+        if stem.endswith("팀") and len(stem) <= 6:   # 부서·팀 이름은 '누가'일 뿐 '무슨 일'이 아니다
+            continue
+        if stem in CONCRETE_ABSTRACT:
+            continue
+        if any((stem.startswith(a) or a.startswith(stem)) for a in CONCRETE_ABSTRACT if len(stem) >= 2 and len(a) >= 2):
+            continue
+        return True, f"구체 명사 '{t}'(stem:{stem})"
+    return False, "구체 앵커 없음"
 
 
 def _squash(s):
@@ -141,11 +224,40 @@ def generate_for_chunk(chunk, q_cat, n=N_PER_CHUNK):
                           doc_title=m.get("doc_title", ""), sec_title=m.get("sec_title", ""),
                           chunk_ref=_ref(m), doc_type=m.get("doc_type", ""), chunk_body=chunk["body"][:3000],
                           seconds=config.QUESTION_SECONDS, n_questions=n)
-    out = llm.chat_json(system, "위 조각으로 질문을 만들어라.", GEN_SCHEMA, timeout=120, temperature=0.4)
-    return (out.get("questions") or [])[:n]
+    # 2026-11-19 사용자 지시 — 외부 AI 금지 규칙의 **예외 ⑥(A17 사내문서 질문 생성)**.
+    # 계기: 로컬 Qwen 4B가 비문("그 결과물로 무엇을 만들고 싶은가")·사내 용어 전제("'적용 가능성 검토' 단계에서")를
+    # 반복 생산했고(사용자 실측 "10문제 중 1문제만 쓸 만함"), 같은 4B 검증으로는 걸러지지도 않았다.
+    # 보내는 것: 가상 회사 사내문서 조각뿐. 지원자 데이터 0건. 면접 중이 아니라 **오프라인 사전 생성**.
+    # (임베딩은 그대로 로컬 — Chroma가 qwen3-embedding 1024차원이라 바꾸면 검색이 성립하지 않는다.)
+    usage = None
+    if config.IQ_GEN_PROVIDER == "openai":
+        try:
+            out, usage = llm.openai_chat_json(system, "위 조각으로 질문을 만들어라.", GEN_SCHEMA,
+                                               timeout=120, temperature=0.4)
+        except Exception as e:  # noqa: BLE001 — 키 없음·한도·오류 → 로컬로 내려간다(생성이 멈추지 않게)
+            log.warning("A17 OpenAI 생성 실패(%s) → 로컬 모델로 대체", e)
+            out = llm.chat_json(system, "위 조각으로 질문을 만들어라.", GEN_SCHEMA, timeout=120, temperature=0.4)
+    else:
+        out = llm.chat_json(system, "위 조각으로 질문을 만들어라.", GEN_SCHEMA, timeout=120, temperature=0.4)
+    return (out.get("questions") or [])[:n], usage
 
 
 # ---------------- 3 validate (A18) ----------------
+def has_malformed_phrasing(q):
+    """(ok, reason) — A18 3차(2026-11-19): OpenAI 전환 후에도 남는 비문 3종을 규칙으로 잡는다.
+    "관련된 경험이 있다면 ~ 답해 주셔도 좋습니다" 덧붙임(사용자 허용 문구)은 검사 전에 떼어낸다."""
+    stripped = EXPERIENCE_SUFFIX.sub("", q)
+    if len(ASK_END.findall(stripped)) >= 2:
+        return False, "multi_ask"                         # 묻는 것이 둘 이상(규칙6 "묻는 것은 하나만")
+    if DANGLING_REF.search(stripped):
+        return False, "dangling_ref"                      # 선행사 없는 지시어("그 결과물" 등)
+    for m in QUOTED_PHRASE.finditer(stripped):
+        phrase = m.group(1).strip()
+        if phrase and not QUOTED_SENTENCE_END.search(phrase):
+            return False, "quoted_internal_term:" + phrase[:20]  # 설명 없는 사내 단계·절차 명사구
+    return True, ""
+
+
 def validate(cand, chunk, q_cat, terms):
     """(ok, reason). **탈락 사유를 반드시 돌려준다** — A15가 사유를 남기지 않아 원인을 못 찾은 일(QO-13)을 반복하지 않는다."""
     q = (cand.get("question") or "").strip()
@@ -171,12 +283,47 @@ def validate(cand, chunk, q_cat, terms):
         return False, "premise"                          # 이 회사에서 일했다고 전제하는 질문
     if "사내문서" in q or "내부 자료" in q or "내부 문서" in q:
         return False, "mentions_internal_doc"
+    ok_phrasing, why_phrasing = has_malformed_phrasing(q)
+    if not ok_phrasing:
+        return False, why_phrasing
     allowed = _squash(body)
     if not all(_squash(f) in allowed for f in facts):
         return False, "facts_not_grounded"
     bad = sorted(t for t in set(TOKEN_RE.findall(q)) if _squash(t.strip(".")) not in allowed)
     if bad:
         return False, "bad_tokens:" + ",".join(bad[:4])   # 조각에 없는 영문·숫자 토큰 = 지어낸 것
+    if not SITUATION_MARKERS.search(q):
+        return False, "no_situation"                     # 금지·조작 검사는 통과했지만 구체적 업무 상황 없이 조각 머리글·메타 설명만 베낀 질문
+    concrete, why = has_concrete_anchor(q)
+    if not concrete:
+        return False, "template_only:" + (why or "")[:30]  # "다면" 어미만 있고 알맹이(숫자·인용·구체 명사) 없는 질문
+    shaped, why2 = sentence_shape(q)
+    if not shaped:
+        return False, "shape:" + why2                     # 추상 범주 상황 · 개념 두 개 묶기 · 목적어 없는 맺음
+    return True, ""
+
+
+# A18 3차(2026-11-19, 사용자 지적): "LLM 응용에서 모델 답변의 근거 여부와 불확실성을 점검하는 상황이라면,
+# 어떻게 하시겠습니까?" — ① 상황이 추상 범주("LLM 응용에서")뿐 ② 서로 다른 개념 둘을 '와'로 묶음
+# ③ 맺음에 목적어 없음. 셋 다 기계로 잡는다.
+ABSTRACT_HEAD = re.compile(
+    r"^\s*(?:[가-힣A-Za-z0-9·/\s]{0,20})?"
+    r"(?:LLM|AI|RAG|ML|데이터|모델|서비스|시스템|운영|업무|기술|분석|개발|프로젝트)\s*"
+    r"(?:응용|활용|처리|관리|구축|운영|업무|과정|환경|영역|분야)\s*(?:에서|에서는|에선)")
+# '와/과'로 묶인 서로 다른 개념(각각 2글자 이상 명사구) + 바로 뒤에 목적격/주격 조사
+TWO_CONCEPTS = re.compile(r"[가-힣]{2,}\s*(?:여부|성|도|율|량|감)?\s*(?:와|과)\s+[가-힣]{2,}\s*(?:여부|성|도|율|량|감)?\s*(?:을|를|의|이|가)")
+# 목적어 없이 맨 '어떻게 하시겠습니까'로만 끝나는 맺음
+BARE_ASK = re.compile(r"(?:,|\s)\s*어떻게\s*(?:하|대응하|처리하)시겠습니까\s*\?*\s*$")
+
+
+def sentence_shape(q):
+    """(ok, reason). 문장 틀 검사 — 추상 범주 상황 · 개념 두 개 묶기 · 목적어 없는 맺음."""
+    if ABSTRACT_HEAD.search(q):
+        return False, "abstract_head"
+    if TWO_CONCEPTS.search(q):
+        return False, "two_concepts"
+    if BARE_ASK.search(q):
+        return False, "bare_ask"
     return True, ""
 
 
@@ -221,6 +368,7 @@ def run_generate(cats=CATS, per_doc=PER_DOC, limit=None, dry=False, only_changed
     except Exception as e:  # noqa: BLE001
         raise SystemExit(f"금지 용어 사전을 읽을 수 없습니다({type(e).__name__})")
     report = {"spec": SPEC, "cats": {}, "started": time.strftime("%Y-%m-%d %H:%M:%S")}
+    cost = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
     for q_cat in cats:
         chunks = select_chunks(q_cat, per_doc=per_doc, limit=limit)
         if only_changed:
@@ -237,7 +385,11 @@ def run_generate(cats=CATS, per_doc=PER_DOC, limit=None, dry=False, only_changed
         t0 = time.time()
         for i, c in enumerate(chunks, 1):
             try:
-                cands = generate_for_chunk(c, q_cat, n=n)
+                cands, usage = generate_for_chunk(c, q_cat, n=n)
+                if usage:
+                    cost["calls"] += 1
+                    cost["prompt_tokens"] += usage.get("prompt_tokens", 0)
+                    cost["completion_tokens"] += usage.get("completion_tokens", 0)
             except llm.LLMError as e:
                 rep["llm_error"] += 1
                 print(f"  [{i}/{len(chunks)}] {c['chunk_id']} 모델 실패({e}) — 건너뜀")
@@ -286,6 +438,11 @@ def run_generate(cats=CATS, per_doc=PER_DOC, limit=None, dry=False, only_changed
         rep["accepted"] = len(ids)
         print(f"[{q_cat}] 저장 {len(ids)}개 · 중복 {rep['dup']} · 탈락 {sum(rep['rejected'].values())} "
               f"{rep['rejected']} · 모델 실패 {rep['llm_error']}")
+    cost["cost_usd"] = round(cost["prompt_tokens"] / 1e6 * config.OPENAI_PRICE_IN_PER_M
+                             + cost["completion_tokens"] / 1e6 * config.OPENAI_PRICE_OUT_PER_M, 4)
+    report["cost"] = cost
+    print(f"\n[비용] OpenAI 호출 {cost['calls']}회 · 입력 {cost['prompt_tokens']} · 출력 {cost['completion_tokens']} 토큰"
+          + (f" · 약 ${cost['cost_usd']}" if config.OPENAI_PRICE_IN_PER_M or config.OPENAI_PRICE_OUT_PER_M else " · 금액 미산출(OPENAI_PRICE_* 미설정)"))
     return report
 
 
@@ -349,8 +506,9 @@ def run_export(out_dir):
         for q_cat in CATS:
             coll = internal_store.question_collection(q_cat)
             got = coll.get(include=["metadatas", "documents", "embeddings"])
+            embs = got.get("embeddings")                 # chromadb가 numpy 배열로 돌려줘서 `or []`는 쓸 수 없다(진리값 모호)
             for i, qid in enumerate(got.get("ids") or []):
-                emb = (got.get("embeddings") or [])[i]
+                emb = embs[i] if embs is not None else []
                 rec = {"q_cat": q_cat, "id": qid, "document": (got.get("documents") or [])[i],
                        "metadata": (got.get("metadatas") or [])[i],
                        "embedding": base64.b64encode(np.asarray(emb, dtype="float32").tobytes()).decode()}
@@ -404,9 +562,13 @@ def search_questions(vector, q_cat, n, used=(), role_code=None, min_sim=None, fo
         group = (m.get("competency") or "").strip() or m.get("doc_id") or h["id"]
         if group in seen:
             continue
-        score = float(h.get("sim") or 0) + (0.05 if role_code and m.get(f"dept_{role_code}") else 0.0)
+        # 2026-11-19 사용자 지시(전제조건): **공고·직무와 무관한 질문은 아예 나오면 안 된다.**
+        # 전에는 직무 일치를 +0.05 가산점으로만 썼는데, 유사도만 높으면 무관한 질문이 그대로 1번으로 뽑혔다
+        # (AI/AX 공고에 "공개 저장소의 커밋 기록으로 직무 역량 평가" 질문이 나온 사고). → 직무 일치를 먼저 본다.
+        on_role = bool(role_code and m.get(f"dept_{role_code}"))
+        score = float(h.get("sim") or 0) + (0.05 if on_role else 0.0)
         seen.add(group)
-        pool.append({"id": None, "doc_id": m.get("doc_id") or "", "iq_id": h["id"], "text": text,
+        pool.append({"id": None, "on_role": on_role, "doc_id": m.get("doc_id") or "", "iq_id": h["id"], "text": text,
                      "subcategory": m.get("intent") or m.get("competency") or "", "intent": m.get("intent") or "",
                      "competency": m.get("competency") or "", "dup_group": group, "sim": round(score, 4),
                      "chunk_id": m.get("chunk_id") or "", "sec": m.get("sec") or "",
@@ -414,8 +576,18 @@ def search_questions(vector, q_cat, n, used=(), role_code=None, min_sim=None, fo
                      "company_facts": internal_qcat.unpipe(m.get("company_facts")),
                      "model_answer": m.get("model_answer") or "",
                      "expected_keywords": m.get("expected_keywords") or ""})
-        if len(pool) >= n * 2:
+        if len(pool) >= n * 4:                            # 직무 일치분을 고르려면 후보를 더 모아야 한다
             break
+    # 2026-11-19 사용자 지시 — 공고·직무 일치가 **전제조건**이다.
+    # 직무가 맞는 후보가 n개 이상이면 그 안에서만 고른다. 모자랄 때만 나머지로 채우고,
+    # 그마저 부족하면 None을 돌려 Redis·DB 은행(백업 층)으로 내려보낸다.
+    on = [b for b in pool if b.get("on_role")]
+    off = [b for b in pool if not b.get("on_role")]
+    if role_code and len(on) >= n:
+        pool = on
+    elif role_code and on:
+        off.sort(key=lambda b: -b["sim"])
+        pool = on + off[: n - len(on)]
     if len(pool) < n:
         return None                                       # 모자라면 Redis·DB 은행으로(백업 층)
     keep = set(random.sample(range(len(pool)), n))

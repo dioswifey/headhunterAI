@@ -20,7 +20,8 @@ EVAL_ITEMS = {
     "job": ["expertise", "logic", "relevance", "delivery"],
     "resume": ["expertise", "logic", "relevance", "delivery"],
 }
-PLAN = [("personality", 2), ("resume", 3), ("job", 2), ("company", 1)]
+# 2026-11-19 사용자 지시: 이력서 3 → 2, 그만큼 직무를 3으로. 본질문 8개는 그대로.
+PLAN = [("personality", 2), ("resume", 2), ("job", 3), ("company", 1)]
 RESUME_N = dict(PLAN)["resume"]
 BASE_TOTAL = sum(n for _, n in PLAN)
 
@@ -189,7 +190,7 @@ def _tokens_ok(question, base, job, snapshot, used_terms=()):
 def _bad_tokens(question, base, job, snapshot, used_terms=()):
     """_tokens_ok에서 걸린 토큰 목록(정렬). 비어 있으면 통과."""
     allowed = _info_squash(job, snapshot) + re.sub(r"\s+", "", (base or "").lower())
-    toks = set(re.findall(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|\d+(?:\.\d+)?%?", question)) | {t for t in used_terms if t}
+    toks = set(re.findall(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|\d+(?:[:/]\d+)+|\d+(?:\.\d+)?%?", question)) | {t for t in used_terms if t}
     return sorted(t for t in toks if re.sub(r"\s+", "", t.lower().strip(".")) not in allowed)
 
 

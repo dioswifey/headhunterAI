@@ -48,6 +48,28 @@ except Exception as e:  # noqa: BLE001 — 파일 없음·형식 오류 등
     log.error("꼬리질문 프롬프트를 읽지 못했습니다(%s) — 꼬리질문 없이 면접을 진행합니다", PROMPT_ERROR)
 
 
+# 2026-11-19 사용자 지적: 꼬리질문에 "초반 테스: '골든셋'을 구체적으로…"처럼 **음성 인식이 잘라 놓은 조각**이
+# 그대로 머리에 붙어 나왔다. 한국어 조각이라 기존 `_bad_tokens`(영문·숫자 검사)로는 안 걸린다.
+# 질문은 그 자체로 읽혀야 한다 — 답변을 안 본 사람이 읽어도 말이 되어야 한다.
+import re as _re
+
+_FRAGMENT_HEAD = _re.compile(r"^\s*[^,.?!]{1,12}\s*[::]\s*")   # "초반 테스: ", "데이터베이:스 " 같은 머리 조각
+_MID_COLON = _re.compile(r"[가-힣]\s*[::]\s*[가-힣]")            # 낱말 안에 콜론이 끼어든 흔적
+_ASK = r"(?:설명해\s*주세요|알려\s*주세요|해\s*주세요|하시겠습니까|했나요|인가요|나요)"
+_MULTI_ASK = _re.compile(_ASK + r"[\s\S]{0,200}?" + _ASK)   # 한 꼬리질문 안에 묻는 맺음이 2번 이상
+
+
+def readable(fq):
+    """(ok, reason). 꼬리질문이 **그 자체로 읽히는 한 문장**인지. 음성 조각·콜론 끼임·두 개 묻기를 막는다."""
+    if _FRAGMENT_HEAD.search(fq):
+        return False, "fragment_head"
+    if _MID_COLON.search(fq):
+        return False, "mid_colon"
+    if _MULTI_ASK.search(fq):
+        return False, "multi_ask"
+    return True, ""
+
+
 def judge_detail(att, q, answer):
     """A3 꼬리질문 판단 (INT-06·07, ADLC 6.1-B 의사 결정 표). DB 없이 돈다(eval_followup이 그대로 부름).
     반환 {'followup': (꼬리질문, 사유) | None, 'keyword_hits': list | None, 'specificity': int | None}."""
@@ -91,6 +113,16 @@ def judge_detail(att, q, answer):
     fq = (r.get("followup_question") or "").strip()
     if not fq or Q.BLOCKLIST.search(fq) or len(fq) > MAX_FOLLOWUP_CHARS:
         return out
+    # 근거 검사(2026-11-19): 답변 속 숫자·용어(STT 오타·잡음 포함)를 검증 없이 그대로 꼬리질문에 옮기지 못하게 —
+    # "허용" 범위는 원 질문·이력서 근거·모범 답변 요지·기대 키워드뿐, 답변 원문 자체는 포함하지 않는다.
+    base = " ".join([q.get("text") or "", (q.get("resume_ref") or {}).get("quote") or "", ideal or "",
+                      " ".join(w for g in (groups or []) for w in g)])
+    if Q._bad_tokens(fq, base, {}, {}):
+        return out
+    ok, why = readable(fq)
+    if not ok:
+        log.info("꼬리질문 생략(%s): %s", why, fq[:60])
+        return out                                       # 음성 조각·콜론 끼임·두 개 묻기 → 꼬리질문을 만들지 않는다
     if groups:   # 힌트 금지(B-07): 지원자가 말하지 않은 기대 키워드가 꼬리질문에 있으면(원 질문에 있던 말은 제외) 생략
         said, qn, fn = set(out["keyword_hits"]), QG._norm(q["text"]), QG._norm(fq)
         for g in groups:

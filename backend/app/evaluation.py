@@ -5,37 +5,24 @@ LLM only scores items 0~5 with quotes; every number after that is computed here.
 import re
 from datetime import datetime, timedelta, timezone
 
-from . import coding, config, db, llm, report_guard
+from . import coding, config, db, llm, prompts, report_guard
 
 ITEMS = ["expertise", "logic", "relevance", "delivery", "fit"]
 ITEM_KO = {"expertise": "직무 전문성", "logic": "논리성", "relevance": "내용 관련성·구체성", "delivery": "전달력", "fit": "조직 적합성"}
 WEIGHT_COL = {"expertise": "w_expertise", "logic": "w_logic", "relevance": "w_relevance", "delivery": "w_delivery", "fit": "w_fit"}
 NO_CONTENT = re.compile(r"^\s*(잘\s*)?(모르겠|모릅니다|모르겠습니다|패스|없습니다)[^가-힣]*\s*$")
 
-RUBRIC = """0: 미응답(이 경우는 입력되지 않음)
-1: 답변했으나 최저 수준 — 질문과 관련성이 거의 없음, "모르겠습니다", 근거 인용 불가
-2: 부분적으로 관련되나 핵심이 빠지거나 오류가 있음
-3: 기본 요구를 충족함
-4: 근거와 사례가 분명하고 우수함
-5: 깊이·정확성·구체성이 모두 탁월함"""
 ITEM_DEF = {
-    "expertise": "AI/AX 개념과 기술을 정확히 이해하고 적용하는가",
-    "logic": "주장–근거–결론이 일관되고 모순이 없는가",
-    "relevance": "질문 의도에 맞고 실제 경험·사례로 구체화했는가",
-    "delivery": "핵심을 먼저 말하고 구조적으로 명확하게 설명하는가(답변 텍스트 기준)",
-    "fit": "협업·책임감·성장 태도와 지원 동기가 드러나는가",
+    "expertise": "지원 직무(백엔드·데이터·AI/AX 등 질문에 맞는 분야)의 핵심 개념·기술을 정확히 이해하는가 — 정의뿐 아니라 동작 원리·한계를 알고, 기술을 선택한 트레이드오프 근거를 설명하는가",
+    "logic": "주장–근거–결론이 일관되고 모순이 없는가 — 예상 못한 문제·갈등이 생겼을 때 원인을 파악해 현실적인 대안을 실행한 과정이 드러나는가",
+    "relevance": "질문 의도에 맞게 답했는가(구체적 사례·수치가 있으면 가점이지 없다고 감점하지 않는다) — 팀 전체 성과가 아니라 본인이 직접 설계·구현·개선한 역할과 기여를 구분해서 말하는가",
+    "delivery": "결론을 먼저 말하고(두괄식) 전문 용어를 상대가 알아듣게 풀어 설명하는가",
+    "fit": "협업 태도·의견 충돌이나 모르는 질문을 대하는 태도가 합리적인가, 피드백 수용과 성장 의지·지원 동기가 드러나는가",
 }
-EVAL_SYSTEM = f"""너는 채용 1차 면접 답변을 루브릭으로 채점하는 평가자다.
-루브릭(항목별 0~5점):
-{RUBRIC}
-규칙:
-1. 지정된 평가 항목만 채점한다.
-2. quote에는 점수의 근거가 된 지원자 답변 원문 일부를 글자 그대로 복사한다(10~80자). 답변에 없는 문장을 만들지 않는다.
-3. 지원자의 이름·성별·나이·말투·발음 등 인적 특성은 고려하지 않는다.
-4. rationale은 한 문장 한국어로 쓴다."""
+EVAL_SYSTEM = prompts.load("evaluate/scoring")  # 2026-11-19: evaluation.py 안에 박혀 있던 문자열 → 마운트 파일로 이전(재빌드 없이 수정 가능)
 EVAL_SCHEMA = {"type": "object", "properties": {"scores": {"type": "array", "items": {"type": "object", "properties": {
-    "item": {"type": "string", "enum": ITEMS}, "score": {"type": "integer", "minimum": 1, "maximum": 5},
-    "quote": {"type": "string"}, "rationale": {"type": "string"}}, "required": ["item", "score", "quote", "rationale"]}}},
+    "item": {"type": "string", "enum": ITEMS}, "quote": {"type": "string"},
+    "score": {"type": "integer", "minimum": 1, "maximum": 5}, "rationale": {"type": "string"}}, "required": ["item", "quote", "score", "rationale"]}}},
     "required": ["scores"]}
 
 SUMMARY_SCHEMA = {"type": "object", "properties": {
@@ -45,12 +32,45 @@ SUMMARY_SCHEMA = {"type": "object", "properties": {
 
 
 def _norm(s):
-    return re.sub(r"\s+", "", s or "")
+    """인용 대조용 정규화. 공백에 더해 구두점·따옴표도 지운다(2026-11-19) —
+    쉼표·마침표 하나 차이로 멀쩡한 인용이 탈락해 좋은 답변이 1점으로 떨어지던 문제(QA-32 부수 원인).
+    '원문 부분 문자열이어야 한다'는 규칙 자체는 그대로다 — 표기 차이만 흡수한다."""
+    return re.sub(r"[\s.,!?·…‥\"'“”‘’()\[\]{}~\-—–:;]+", "", s or "")
 
 
 def quote_ok(quote, answer):
     q = _norm(quote)
     return len(q) >= 4 and q in _norm(answer)
+
+
+def _score_reference(q):
+    """채점용 사내문서·은행 근거(모범 답변 요지·기대 키워드) 조회 — gen_method로 internal_q:/redis: 출처를 가려낸다.
+    `question_graph.bank_reference`와 같은 조회지만 `FOLLOWUP_INTERNAL_REF` 게이트를 안 쓴다(그 게이트는 꼬리질문
+    **힌트 노출** 위험 때문인데, 채점은 지원자에게 안 보이는 사후 처리라 같은 위험이 없다, 2026-11-19).
+    실패는 조용히 빈 값으로 둔다(이 참고 자료가 없어도 채점 자체는 그대로 돈다)."""
+    gm = (q.get("gen_method") or "")
+    ideal, keywords = "", ""
+    try:
+        if gm.startswith("internal_q:"):
+            from . import internal_store
+            qid = gm[len("internal_q:"):].split("|")[0]
+            got = internal_store.question_collection(q.get("category") or "").get(ids=[qid], include=["metadatas"])
+            m = (got.get("metadatas") or [None])[0] or {}
+            ideal, keywords = (m.get("model_answer") or "").strip(), (m.get("expected_keywords") or "").strip()
+        elif gm.startswith("redis:"):
+            import redis
+            r = redis.Redis.from_url(config.REDIS_URL, socket_timeout=2, socket_connect_timeout=2)
+            kw, idl = r.hmget("qb:" + gm[len("redis:"):].split("|")[0], "expected_keywords", "model_answer")
+            ideal = (idl or b"").decode("utf-8", "ignore").strip()
+            keywords = (kw or b"").decode("utf-8", "ignore").strip()
+    except Exception:  # noqa: BLE001 — 컬렉션·Redis 오류는 채점을 막지 않는다
+        pass
+    return ideal, keywords
+
+
+def _career_level(snapshot):
+    """지원자 연차 힌트(평가 관점 차이, 2026-11-19) — 경력 항목이 있으면 경력, 없으면 신입으로 본다."""
+    return "경력" if (snapshot or {}).get("career") else "신입"
 
 
 def question_blocks(attempt_id):
@@ -79,17 +99,23 @@ def evaluate_block(block, snapshot):
     convo = f"질문: {q['text']}\n답변: {q['answer_text'] or '(미응답)'}"
     for f in block["followups"]:
         convo += f"\n꼬리질문: {f['text']}\n답변: {f['answer_text'] or '(미응답)'}"
-    ref = ""
+    ref = f"\n지원자 연차: {_career_level(snapshot)}"
     if q["resume_ref"] and q["resume_ref"].get("quote"):
-        ref = f"\n근거 이력서 항목({q['resume_ref'].get('label')}): {q['resume_ref']['quote']}"
+        ref += f"\n근거 이력서 항목({q['resume_ref'].get('label')}): {q['resume_ref']['quote']}"
+    ideal, keywords = _score_reference(q)
+    if ideal:
+        ref += f"\n참고 모범 답변 요지(표현이 달라도 의미가 통하면 맞는 답으로 인정): {ideal}"
+    if keywords:
+        ref += f"\n참고 기대 키워드: {keywords}"
     item_txt = "\n".join(f"- {it}: {ITEM_DEF[it]}" for it in items)
+    user = f"평가 항목:\n{item_txt}\n\n[참고 자료 — 인용 금지, 내용 부합 판단에만 쓴다]{ref}\n\n[대화 — quote는 여기서만]\n{convo}"
     out = {}
     pending = list(items)
-    for attempt in range(2):  # 인용 불일치 시 1회 재생성 (EVL-02)
+    for attempt in range(5):  # 인용 불일치 시 최대 4회 재생성(2026-11-19: 억울한 1점을 더 줄이려고 3→5)(2026-11-19: 참고 자료 추가로 인용 혼동이 늘어 1→2회로 늘림, EVL-02)
         try:
-            res = llm.chat_json(EVAL_SYSTEM, f"평가 항목:\n{item_txt}\n{ref}\n\n{convo}", EVAL_SCHEMA, temperature=0)
+            res = llm.chat_json(EVAL_SYSTEM, user, EVAL_SCHEMA, temperature=0)
         except llm.LLMError:
-            if attempt == 0:
+            if attempt < 2:
                 continue
             raise
         for s in res.get("scores", []):
