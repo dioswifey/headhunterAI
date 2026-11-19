@@ -126,6 +126,7 @@ function setPracticeMenu(open) {
 })();
 
 // 지원자 테스트 계정(시드 이지원): 접수 취소 버튼이 보인다. 서버도 이 계정만 허용(config.TEST_APPLICANT_EMAIL)
+const T = (k, v) => HH.t(k, v);   // 언어 전환(2026-11-19)
 const isTestApplicant = () => !!(me && me.email === 'applicant@headhunter.ai');
 /* 전체 화면 전환. 테스트 계정(이지원)은 건너뛴다 — 스크린샷·창 전환을 자유롭게 하려고
    (2026-11-19 사용자 지시, 화면 이탈 감지는 이미 테스트 계정만 꺼져 있다) */
@@ -235,11 +236,11 @@ const viewersHtml = (n, sm) => (n ? `<span class="live-viewers${sm ? ' sm' : ''}
 function jobCard(j) {
   const closed = j.status === 'closed';
   return `<button class="card click" data-job="${j.id}">
-    <div class="between"><span class="row" style="gap:10px"><span class="pill ${closed ? 'dim' : 'neon'}">${closed ? '마감' : '접수 중'}</span>${j.is_new ? '<span class="new-badge">NEW</span>' : ''}</span>
-      ${j.role_status !== 'active' ? '<span class="pill dim">준비 중 · 지원 불가</span>' : j.coding_enabled ? '<span class="pill">코딩테스트 포함</span>' : '<span class="pill dim">AI 면접만</span>'}</div>
+    <div class="between"><span class="row" style="gap:10px"><span class="pill ${closed ? 'dim' : 'neon'}">${closed ? T('마감') : T('접수 중')}</span>${j.is_new ? '<span class="new-badge">NEW</span>' : ''}</span>
+      ${j.role_status !== 'active' ? `<span class="pill dim">${T('준비 중 · 지원 불가')}</span>` : j.coding_enabled ? `<span class="pill">${T('코딩테스트 포함')}</span>` : `<span class="pill dim">${T('AI 면접만')}</span>`}</div>
     <h2 style="margin:12px 0 4px">${esc(j.title)}</h2>
     <div class="sub">${esc(j.company)} · ${esc(j.role_name)} · ${esc(j.location || '')}</div>
-    <div class="small" style="margin-top:10px">접수 마감 ${fmtYMD(j.close_date)} · 결과 공개 ${fmtYMD(j.result_date)}</div>
+    <div class="small" style="margin-top:10px">${T('접수 마감')} ${fmtYMD(j.close_date)} · ${T('결과 공개')} ${fmtYMD(j.result_date)}</div>
     ${j.viewers && !closed ? `<div style="margin-top:12px">${viewersHtml(j.viewers, true)}</div>` : ''}
   </button>`;
 }
@@ -253,21 +254,19 @@ async function jobs() {
   const list = await get('/api/jobs');
   const count = (code) => list.filter((j) => j.role_code === code && j.status === 'published').length;
   // 2026-11-18 사용자 지시: 안내 문구를 서비스 소개 + 개인화 멘트로 교체, 마이페이지·무제한 코딩 연습 바로가기 추가
-  const lead = me
-    ? `headhunterAI는 IT 직무에 특화된 기업 1차 면접 대행 AI 면접 서비스입니다. ${esc(me.name)} 님께 맞는 공고를 아래에서 확인해 보세요.`
-    : 'headhunterAI는 IT 직무에 특화된 기업 1차 면접 대행 AI 면접 서비스입니다. 지원자님께 맞는 공고를 아래에서 확인해 보세요.';
+  const lead = T('headhunterAI는 IT 직무에 특화된 기업 1차 면접 대행 AI 면접 서비스입니다. 지원자님께 맞는 공고를 아래에서 확인해 보세요.');
   view.innerHTML = `<div class="wrap">
-    <h1>채용 공고</h1><p class="sub">${lead}</p>
+    <h1>${T('채용 공고')}</h1><p class="sub">${lead}</p>
     <div class="row" style="margin-top:16px;gap:10px">
-      <a class="btn primary" href="#/my">마이페이지로 바로가기</a>
-      <a class="btn launch-btn launch-btn-dark" href="#/practice/coding">무제한 코딩 연습 바로가기</a>
+      <a class="btn primary" href="#/my">${T('마이페이지로 바로가기')}</a>
+      <a class="btn launch-btn launch-btn-dark" href="#/practice/coding">${T('무제한 코딩 연습 바로가기')}</a>
     </div>
     <div class="grid3" style="margin-top:20px">${roles.map((r) => {
       const n = count(r.code);
-      if (r.status === 'active') return `<button class="card click" data-role="${r.code}"><span class="pill neon">운영 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">접수 중 공고 ${n}개</div></button>`;
+      if (r.status === 'active') return `<button class="card click" data-role="${r.code}"><span class="pill neon">${T('지원 가능')}</span><h2 style="margin:12px 0 4px">${esc(T(r.name))}</h2><div class="sub">${T('접수 중 공고 {n}개', { n })}</div></button>`;
       // 2026-11-18 사용자 지시: 공고는 있되 면접 질문 은행이 없는 직무 — 공고는 둘러볼 수 있게 하고, 실제 지원·면접만 막는다(더미)
-      if (n) return `<button class="card click" data-role="${r.code}"><span class="pill dim">준비 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">공고 ${n}개 · 질문 은행 준비 중</div></button>`;
-      return `<div class="card" style="opacity:.45"><span class="pill dim">준비 중</span><h2 style="margin:12px 0 4px">${esc(r.name)}</h2><div class="sub">질문 은행 준비 중</div></div>`;
+      if (n) return `<button class="card click" data-role="${r.code}"><span class="pill dim">${T('준비 중')}</span><h2 style="margin:12px 0 4px">${esc(T(r.name))}</h2><div class="sub">${T('공고 {n}개 · 질문 은행 준비 중', { n })}</div></button>`;
+      return `<div class="card" style="opacity:.45"><span class="pill dim">${T('준비 중')}</span><h2 style="margin:12px 0 4px">${esc(T(r.name))}</h2><div class="sub">${T('질문 은행 준비 중')}</div></div>`;
     }).join('')}</div></div>`;
   $$('[data-role]').forEach((b) => (b.onclick = () => go(`#/jobs/role/${b.dataset.role}`)));
 }
@@ -279,12 +278,12 @@ async function jobsRole(code) {
   if (!r) { go('#/jobs'); return; }
   // 2026-11-18 사용자 지시: 질문 은행 준비 중인 직무도 공고 둘러보기는 허용 — 지원·면접은 서버가 막는다(routes_applicant.py apply)
   view.innerHTML = `<div class="wrap">
-    ${backLink('#/jobs', '직무 선택')}
-    <h1 style="margin-top:14px">${esc(r.name)}${r.status !== 'active' ? ' <span class="pill dim" style="font-size:13px;vertical-align:middle">준비 중</span>' : ''}</h1>
-    <p class="sub">${r.status === 'active' ? '열려 있는 공고를 둘러보거나, 지원한 공고의 진행 상황을 확인하세요.' : '공고는 둘러볼 수 있으나, 이 직무의 AI 면접은 아직 준비 중이라 지원할 수 없습니다.'}</p>
+    ${backLink('#/jobs', T('직무 선택'))}
+    <h1 style="margin-top:14px">${esc(T(r.name))}${r.status !== 'active' ? ` <span class="pill dim" style="font-size:13px;vertical-align:middle">${T('준비 중')}</span>` : ''}</h1>
+    <p class="sub">${r.status === 'active' ? T('열려 있는 공고를 둘러보거나, 지원한 공고의 진행 상황을 확인하세요.') : T('공고는 둘러볼 수 있으나, 이 직무의 AI 면접은 아직 준비 중이라 지원할 수 없습니다.')}</p>
     <div class="grid2" style="margin-top:20px">
-      <button class="card click" data-go="#/jobs/browse?role=${code}"><h2 style="margin:0 0 6px">현재 열려 있는 공고 둘러보기</h2><div class="sub">기업을 고른 뒤 그 기업의 공고를 봅니다. 로그인 없이 볼 수 있습니다.</div></button>
-      <button class="card click" data-go="#/jobs/applied?role=${code}"><h2 style="margin:0 0 6px">내가 지원한 공고</h2><div class="sub">지원한 공고의 진행 상태와 응시할 면접을 확인합니다. 로그인이 필요합니다.</div></button>
+      <button class="card click" data-go="#/jobs/browse?role=${code}"><h2 style="margin:0 0 6px">${T('현재 열려 있는 공고 둘러보기')}</h2><div class="sub">${T('기업을 고른 뒤 그 기업의 공고를 봅니다. 로그인 없이 볼 수 있습니다.')}</div></button>
+      <button class="card click" data-go="#/jobs/applied?role=${code}"><h2 style="margin:0 0 6px">${T('내가 지원한 공고')}</h2><div class="sub">${T('지원한 공고의 진행 상태와 응시할 면접을 확인합니다. 로그인이 필요합니다.')}</div></button>
     </div></div>`;
   $$('[data-go]').forEach((b) => (b.onclick = () => go(b.dataset.go)));
 }
@@ -294,13 +293,13 @@ async function jobsBrowse(params) {
   const role = params.get('role') || 'ai_ax';
   const list = await get(`/api/companies?role=${encodeURIComponent(role)}`);
   view.innerHTML = `<div class="wrap">
-    ${backLink(`#/jobs/role/${role}`, '이전')}
-    <h1 style="margin-top:14px">기업 선택</h1><p class="sub">공고를 올린 기업입니다. 기업을 고르면 그 기업의 공고를 모두 볼 수 있습니다.</p>
+    ${backLink(`#/jobs/role/${role}`, T('이전'))}
+    <h1 style="margin-top:14px">${T('기업 선택')}</h1><p class="sub">${T('공고를 올린 기업입니다. 기업을 고르면 그 기업의 공고를 모두 볼 수 있습니다.')}</p>
     <div class="grid3" style="margin-top:20px">${list.length ? list.map((c) => `<button class="card click" data-company="${c.id}">
-      <div class="between"><span class="pill ${c.open_jobs ? 'neon' : 'dim'}">지원 가능 ${c.open_jobs}개</span><span class="small">공고 ${c.jobs}개</span></div>
+      <div class="between"><span class="pill ${c.open_jobs ? 'neon' : 'dim'}">${T('지원 가능 {n}개', { n: c.open_jobs })}</span><span class="small">${T('공고 {n}개', { n: c.jobs })}</span></div>
       <h2 style="margin:12px 0 4px">${esc(c.name)}</h2><div class="sub">${esc(c.location || '')}</div>
       <div class="small" style="margin-top:10px">${esc(c.intro || '')}</div></button>`).join('')
-      : '<div class="empty" style="grid-column:1/-1">공고를 올린 기업이 없습니다.</div>'}</div></div>`;
+      : `<div class="empty" style="grid-column:1/-1">${T('공고를 올린 기업이 없습니다.')}</div>`}</div></div>`;
   $$('[data-company]').forEach((b) => (b.onclick = () => go(`#/jobs/company/${b.dataset.company}?role=${role}`)));
 }
 
@@ -310,8 +309,8 @@ async function jobsCompany(id, params) {
   const list = await get(`/api/jobs?company=${id}`);
   if (!list.length) { go(`#/jobs/browse?role=${role}`); return; }
   view.innerHTML = `<div class="wrap">
-    ${backLink(`#/jobs/browse?role=${role}`, '기업 선택')}
-    <h1 style="margin-top:14px">${esc(list[0].company)}</h1><p class="sub">이 기업의 공고 ${list.length}개입니다. 준비 중인 직무의 공고는 볼 수만 있고 지원할 수 없습니다.</p>
+    ${backLink(`#/jobs/browse?role=${role}`, T('기업 선택'))}
+    <h1 style="margin-top:14px">${esc(list[0].company)}</h1><p class="sub">${T('이 기업의 공고 {n}개입니다. 준비 중인 직무의 공고는 볼 수만 있고 지원할 수 없습니다.', { n: list.length })}</p>
     <div class="grid3" style="margin-top:20px">${list.map(jobCard).join('')}</div></div>`;
   $$('[data-job]').forEach((b) => (b.onclick = () => go(`#/jobs/${b.dataset.job}`)));
 }
@@ -322,8 +321,8 @@ async function jobsApplied(params) {
   const role = params.get('role') || 'ai_ax';
   const apps = await get('/api/me/applications');
   view.innerHTML = `<div class="wrap">
-    ${backLink(`#/jobs/role/${role}`, '이전')}
-    <h1 style="margin-top:14px">내가 지원한 공고</h1><p class="sub">${esc(me.name)} 님이 지원한 공고입니다.</p>
+    ${backLink(`#/jobs/role/${role}`, T('이전'))}
+    <h1 style="margin-top:14px">${T('내가 지원한 공고')}</h1><p class="sub">${T('{name} 님이 지원한 공고입니다.', { name: esc(me.name) })}</p>
     <div class="card" style="margin-top:20px">${appsTableHtml(apps)}</div></div>`;
   bindAppsTable(() => jobsApplied(params));
 }
@@ -335,23 +334,23 @@ async function jobDetail(id) {
   const j = await get(`/api/jobs/${id}`);
   const closed = j.status === 'closed';
   view.innerHTML = `<div class="wrap mid">
-    <a class="btn sm ghost" href="#/jobs/company/${j.company_id}">← ${esc(j.company)} 공고</a>
+    <a class="btn sm ghost" href="#/jobs/company/${j.company_id}">← ${T('{company} 공고', { company: esc(j.company) })}</a>
     <h1 style="margin-top:14px">${esc(j.title)}${j.is_new ? '<span class="new-badge">NEW</span>' : ''}</h1>
-    <div class="sub">${esc(j.company)} · ${esc(j.role_name)} · ${esc(j.employment_type)} · ${esc(j.location)} · 모집 ${j.headcount}명</div>
+    <div class="sub">${esc(j.company)} · ${esc(T(j.role_name))} · ${esc(j.employment_type)} · ${esc(j.location)} · ${T('모집 {n}명', { n: j.headcount })}</div>
     <div id="viewers" style="margin-top:14px"></div>
     <div class="grid3" style="margin:22px 0">
-      <div class="card"><div class="small">접수 기간</div><b>${fmtYMD(j.open_date)} ~ ${fmtYMD(j.close_date)}</b></div>
-      <div class="card"><div class="small">진행 방식 · 예상 소요</div><b>AI 면접 ${j.coding_enabled ? '+ 코딩테스트' : ''} · 약 ${j.expected_minutes}분</b></div>
-      <div class="card"><div class="small">1차 결과 공개</div><b>${fmtYMD(j.result_date)} 10:00</b></div>
+      <div class="card"><div class="small">${T('접수 기간')}</div><b>${fmtYMD(j.open_date)} ~ ${fmtYMD(j.close_date)}</b></div>
+      <div class="card"><div class="small">${T('진행 방식 · 예상 소요')}</div><b>${T('AI 면접')} ${j.coding_enabled ? T('+ 코딩테스트') : ''} · ${T('약 {n}분', { n: j.expected_minutes })}</b></div>
+      <div class="card"><div class="small">${T('1차 결과 공개')}</div><b>${fmtYMD(j.result_date)} 10:00</b></div>
     </div>
     <div class="card col">
-      <h3>회사 소개</h3><p class="sub">${lines(j.company_intro)}</p>
-      <h3>주요 업무</h3><p class="sub">${lines(j.duties)}</p>
-      <h3>자격 요건</h3><p class="sub">${lines(j.requirements)}</p>
-      ${j.preferred ? `<h3>우대 사항</h3><p class="sub">${lines(j.preferred)}</p>` : ''}
+      <h3>${T('회사 소개')}</h3><p class="sub">${lines(j.company_intro)}</p>
+      <h3>${T('주요 업무')}</h3><p class="sub">${lines(j.duties)}</p>
+      <h3>${T('자격 요건')}</h3><p class="sub">${lines(j.requirements)}</p>
+      ${j.preferred ? `<h3>${T('우대 사항')}</h3><p class="sub">${lines(j.preferred)}</p>` : ''}
     </div>
-    <div class="note" style="margin:18px 0">지원 후 이력서를 올리면 AI가 내용을 읽어 맞춤 질문 2개를 만듭니다. AI 면접은 1회만 응시할 수 있고 중단 버튼이 없습니다.</div>
-    <button class="btn primary lg" id="apply" ${closed || j.role_status !== 'active' ? 'disabled' : ''}>${closed ? '접수 마감' : j.role_status !== 'active' ? '준비 중인 직무 · 지원 불가' : '지원하기'}</button>
+    <div class="note" style="margin:18px 0">${T('지원 후 이력서를 올리면 AI가 내용을 읽어 맞춤 질문 2개를 만듭니다. AI 면접은 1회만 응시할 수 있고 중단 버튼이 없습니다.')}</div>
+    <button class="btn primary lg" id="apply" ${closed || j.role_status !== 'active' ? 'disabled' : ''}>${closed ? T('접수 마감됨') : j.role_status !== 'active' ? T('준비 중인 직무 · 지원 불가') : T('지원하기')}</button>
   </div>`;
   $('#apply').onclick = () => go(`#/jobs/${id}/apply`);
   if (!closed) {                      // 보고 있다는 신호: 탭이 보일 때만 30초마다
@@ -386,13 +385,13 @@ async function login(params) {
   setNav('');
   const next = safeNext(params.get('next'));
   view.innerHTML = `<div class="wrap narrow"><div class="card">
-    <h1>지원자 로그인</h1><p class="sub">로그인 후 지원 절차로 돌아갑니다.</p>
+    <h1>${T('지원자 로그인')}</h1><p class="sub">${T('로그인 후 지원 절차로 돌아갑니다.')}</p>
     <div class="err" id="err" hidden></div>
-    <div class="field" style="margin-top:16px"><label>이메일</label><input id="email" type="email" autocomplete="username"></div>
-    <div class="field"><label>비밀번호</label><input id="pw" type="password" autocomplete="current-password"></div>
-    <button class="btn primary" id="go" style="width:100%">로그인</button>
-    <hr><div class="between"><span class="small">아직 회원이 아니신가요?</span><a class="btn sm" href="#/signup?next=${encodeURIComponent(next)}">지원자로 회원가입하기</a></div>
-    <div class="small" style="margin-top:12px">기업 담당자는 <a href="/admin/">기업 담당자 로그인</a>을 이용해 주세요.</div>
+    <div class="field" style="margin-top:16px"><label>${T('이메일')}</label><input id="email" type="email" autocomplete="username"></div>
+    <div class="field"><label>${T('비밀번호')}</label><input id="pw" type="password" autocomplete="current-password"></div>
+    <button class="btn primary" id="go" style="width:100%">${T('로그인')}</button>
+    <hr><div class="between"><span class="small">${T('아직 회원이 아니신가요?')}</span><a class="btn sm" href="#/signup?next=${encodeURIComponent(next)}">${T('지원자로 회원가입하기')}</a></div>
+    <div class="small" style="margin-top:12px">${T('기업 담당자는 {link}을 이용해 주세요.', { link: `<a href="/admin/">${T('기업 담당자 로그인')}</a>` })}</div>
   </div></div>`;
   const submit = async () => {
     try {
@@ -408,17 +407,17 @@ async function signup(params) {
   setNav('');
   const next = safeNext(params.get('next'));
   view.innerHTML = `<div class="wrap narrow"><div class="card">
-    <h1>지원자 회원가입</h1><p class="sub">평가와 무관한 생년월일·성별·주소·사진은 받지 않습니다.</p>
+    <h1>${T('지원자 회원가입')}</h1><p class="sub">${T('평가와 무관한 생년월일·성별·주소·사진은 받지 않습니다.')}</p>
     <div class="err" id="err" hidden></div>
-    <div class="field" style="margin-top:16px"><label>이름 *</label><input id="name" autocomplete="name"></div>
-    <div class="field"><label>이메일 (아이디) *</label><input id="email" type="email" autocomplete="email"></div>
-    <div class="field"><label>비밀번호 * (8자 이상)</label><input id="pw" type="password" autocomplete="new-password"></div>
-    <div class="field"><label>휴대전화번호 *</label><input id="phone" placeholder="010-0000-0000" autocomplete="tel"></div>
-    <label class="check"><input type="checkbox" id="age14"><span>만 14세 이상입니다. <span class="small">(필수)</span></span></label>
-    <label class="check"><input type="checkbox" id="terms"><span>이용약관에 동의합니다. <span class="small">(필수)</span> <a class="small" href="/terms" target="_blank" rel="noopener">전문 보기</a></span></label>
-    <label class="check"><input type="checkbox" id="privacy"><span>회원 서비스 제공을 위한 개인정보 수집·이용(이름·이메일·비밀번호·휴대전화번호, 탈퇴 시까지 보관)에 동의합니다. 서비스 서버는 미국(Railway)에 있습니다. <span class="small">(필수)</span> <a class="small" href="/privacy" target="_blank" rel="noopener">전문 보기</a></span></label>
-    <button class="btn primary" id="go" style="width:100%;margin-top:10px">가입하기</button>
-    <p class="small" style="margin-top:10px">응시 데이터 수집 동의는 공고에 지원할 때 따로 받습니다.</p>
+    <div class="field" style="margin-top:16px"><label>${T('이름 *')}</label><input id="name" autocomplete="name"></div>
+    <div class="field"><label>${T('이메일 (아이디) *')}</label><input id="email" type="email" autocomplete="email"></div>
+    <div class="field"><label>${T('비밀번호 * (8자 이상)')}</label><input id="pw" type="password" autocomplete="new-password"></div>
+    <div class="field"><label>${T('휴대전화번호 *')}</label><input id="phone" placeholder="010-0000-0000" autocomplete="tel"></div>
+    <label class="check"><input type="checkbox" id="age14"><span>${T('만 14세 이상입니다.')} <span class="small">${T('(필수)')}</span></span></label>
+    <label class="check"><input type="checkbox" id="terms"><span>${T('이용약관에 동의합니다.')} <span class="small">${T('(필수)')}</span> <a class="small" href="/terms" target="_blank" rel="noopener">${T('전문 보기')}</a></span></label>
+    <label class="check"><input type="checkbox" id="privacy"><span>${T('회원 서비스 제공을 위한 개인정보 수집·이용(이름·이메일·비밀번호·휴대전화번호, 탈퇴 시까지 보관)에 동의합니다. 서비스 서버는 미국(Railway)에 있습니다.')} <span class="small">${T('(필수)')}</span> <a class="small" href="/privacy" target="_blank" rel="noopener">${T('전문 보기')}</a></span></label>
+    <button class="btn primary" id="go" style="width:100%;margin-top:10px">${T('가입하기')}</button>
+    <p class="small" style="margin-top:10px">${T('응시 데이터 수집 동의는 공고에 지원할 때 따로 받습니다.')}</p>
   </div></div>`;
   $('#phone').oninput = (e) => {
     const d = e.target.value.replace(/\D/g, '').slice(0, 11);

@@ -425,3 +425,10 @@ body.side-on #view > .wrap { margin-left: 0; }
 #pdesc p { margin: 0 0 12px; line-height: 1.75; font-size: 15px; }
 #pdesc p:last-of-type { margin-bottom: 4px; }
 #pdesc h3 { margin-top: 14px; }
+
+/* 지원자·기업 담당자 헤더의 KO/EN 스위치 (2026-11-19 사용자 지시) */
+.lang-area { display: inline-flex; align-items: center; margin-right: 10px; }
+.lang.sm { display: inline-flex; border: 1px solid var(--line); border-radius: 99px; padding: 2px; gap: 2px; }
+.lang.sm button { background: none; border: 0; color: var(--muted); font: 600 12px/1 var(--font); padding: 6px 10px; border-radius: 99px; cursor: pointer; }
+.lang.sm button.on { background: var(--white); color: var(--black); }
+@media (max-width: 820px) { .lang-area { margin-right: 6px; } .lang.sm button { padding: 5px 8px; font-size: 11px; } }

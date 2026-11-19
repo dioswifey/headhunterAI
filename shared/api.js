@@ -164,3 +164,45 @@ const HH = (() => {
 
   return { api, get, post, put, del, esc, $, $$, toast, modal, fmtDate, fmtDateTime, fmtYMD, score, ITEM_KO, CAT_KO, ATTEMPT_KO, ANALYSIS_KO, STEP_KO, SECTION_KO, devbar, billing };
 })();
+
+/* ───────── 언어 전환 (2026-11-19 사용자 지시) ─────────
+   지원자·기업 담당자 화면도 KO/EN을 고를 수 있게 한다. 첫 페이지(main/main.js)와 **같은 저장소 키**
+   `hh.lang`을 쓰므로 어느 화면에서 바꾸든 사이트 전체가 같은 언어로 유지된다.
+   사전에 없는 말은 한국어 원문을 그대로 돌려주므로, 번역이 덜 된 화면도 깨지지 않는다. */
+(function () {
+  let lang = 'ko';
+  try { if (localStorage.getItem('hh.lang') === 'en') lang = 'en'; } catch (e) { /* 저장소를 못 쓰면 한국어 */ }
+
+  const DICT = {};                       // { '한국어 원문': '영문' }
+  HH.lang = () => lang;
+  HH.isEn = () => lang === 'en';
+  HH.addDict = (map) => Object.assign(DICT, map || {});
+  /** 번역. 사전에 없으면 원문 그대로. `HH.t('공고 N개', {n: 3})` 처럼 치환도 된다. */
+  HH.t = (ko, vars) => {
+    let s = (lang === 'en' && DICT[ko]) || ko;
+    if (vars) for (const k of Object.keys(vars)) s = s.split('{' + k + '}').join(vars[k]);
+    return s;
+  };
+  HH.setLang = (l) => {
+    lang = l === 'en' ? 'en' : 'ko';
+    try { localStorage.setItem('hh.lang', lang); } catch (e) { /* 무시 */ }
+    document.documentElement.lang = lang === 'en' ? 'en' : 'ko';
+    location.reload();                   // 화면을 통째로 다시 그린다(부분 갱신보다 안전하다)
+  };
+  /** 헤더에 KO/EN 스위치를 꽂는다. 넣을 자리는 각 화면이 정한다. */
+  HH.langSwitch = () => `<div class="lang sm" role="group" aria-label="언어 / Language">
+    <button type="button" data-setlang="ko"${lang === 'ko' ? ' class="on"' : ''}>KO</button>
+    <button type="button" data-setlang="en"${lang === 'en' ? ' class="on"' : ''}>EN</button></div>`;
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-setlang]');
+    if (b) { e.preventDefault(); HH.setLang(b.dataset.setlang); }
+  });
+  document.documentElement.lang = lang === 'en' ? 'en' : 'ko';
+})();
+
+/* 헤더의 #lang-area 가 있으면 KO/EN 스위치를 그려 넣는다(지원자·기업 담당자 화면 공통) */
+(function () {
+  const put = () => { const el = document.getElementById('lang-area'); if (el && !el.innerHTML) el.innerHTML = HH.langSwitch(); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', put);
+  else put();
+})();

@@ -7,6 +7,7 @@ const ITEMS = ['expertise', 'logic', 'relevance', 'delivery', 'fit'];
 const WKEY = { expertise: 'w_expertise', logic: 'w_logic', relevance: 'w_relevance', delivery: 'w_delivery', fit: 'w_fit' };
 
 function go(h) { location.hash = h; }
+const T = (k, v) => HH.t(k, v);   // 언어 전환(2026-11-19)
 
 async function loadMe() {
   me = await get('/api/auth/me');
@@ -19,12 +20,12 @@ async function loadMe() {
 /* ───────── 로그인 · 비밀번호 변경 (ACC-03, ACC-05) ───────── */
 function loginView() {
   root.innerHTML = `<div class="wrap narrow" style="padding-top:8vh"><div class="card">
-    <h1>기업 담당자 로그인</h1><p class="sub">기업 담당자 계정은 운영 측에서 사전 발급합니다.</p>
+    <h1>${T('기업 담당자 로그인')}</h1><p class="sub">${T('기업 담당자 계정은 운영 측에서 사전 발급합니다.')}</p>
     <div class="err" id="err" hidden></div>
-    <div class="field" style="margin-top:16px"><label>이메일</label><input id="email" type="email" autocomplete="username"></div>
-    <div class="field"><label>비밀번호</label><input id="pw" type="password" autocomplete="current-password"></div>
-    <button class="btn primary" id="go" style="width:100%">로그인</button>
-    <hr><div class="between"><span class="small">지원자이신가요?</span><a class="btn sm" href="/applicant/#/login">지원자 로그인</a></div>
+    <div class="field" style="margin-top:16px"><label>${T('이메일')}</label><input id="email" type="email" autocomplete="username"></div>
+    <div class="field"><label>${T('비밀번호')}</label><input id="pw" type="password" autocomplete="current-password"></div>
+    <button class="btn primary" id="go" style="width:100%">${T('로그인')}</button>
+    <hr><div class="between"><span class="small">${T('지원자이신가요?')}</span><a class="btn sm" href="/applicant/#/login">${T('지원자 로그인')}</a></div>
   </div></div>`;
   const submit = async () => {
     try {
