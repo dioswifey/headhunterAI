@@ -35,8 +35,10 @@ def _facts(r):
                    count(*) FILTER (WHERE parent_id IS NOT NULL) followups FROM attempt_questions WHERE attempt_id=%s""", r["attempt_id"])
     coding = None
     if (r["criteria_snapshot"] or {}).get("coding_enabled"):
-        c = db.one("SELECT coalesce(sum(passed),0) passed, coalesce(sum(total),0) total FROM coding_submissions WHERE attempt_id=%s", r["attempt_id"])
-        coding = {"passed": int(c["passed"]), "total": int(c["total"]), "score": float(r["coding_score"] or 0)}
+        from . import coding as coding_mod
+        c = coding_mod.points_summary(r["attempt_id"]) or {"points": 0, "max": 0, "passed": 0, "total": 0}
+        coding = {"passed": int(c["passed"]), "total": int(c["total"]), "points": c["points"], "max": c["max"],
+                  "score": float(r["coding_score"] or 0)}
     return {"answered": qs["answered"], "base": qs["base"] or 10, "followups": qs["followups"], "coding": coding}
 
 
@@ -253,7 +255,7 @@ def render(r, items, facts, coach, qas=()):
         '<td width="10" style="font-size:0">&nbsp;</td>' + \
         _metric("답변한 기본 질문", facts["answered"], f"/ {facts['base']}", f"꼬리질문 {facts['followups']}개") + \
         '<td width="10" style="font-size:0">&nbsp;</td>' + \
-        (_metric("코딩테스트", f"{cod['passed']}", f"/ {cod['total']} 통과", f"통과율 {cod['score']:.0f}%") if cod
+        (_metric("코딩테스트", f"{cod['points']:g}", f"/ {cod['max']}점", f"테스트 {cod['passed']}/{cod['total']} 통과") if cod
          else _metric("코딩테스트", "-", "", "이 공고는 미사용"))
     item_rows = "".join(
         f'<tr><td width="34%" style="padding:7px 0;font-size:14px;color:#1a1a1a">{_e(k)}</td>'
@@ -300,7 +302,7 @@ def render_text(r, items, facts, coach, qas=()):
     lines = [f"{r['name']}님, AI 면접을 마치셨습니다", f"{r['company']} · {r['job_title']}", "",
              f"AI 면접 점수: {float(r['interview_score']):.1f} / 100", f"답변한 기본 질문: {facts['answered']} / {facts['base']}"]
     if facts["coding"]:
-        lines.append(f"코딩테스트: {facts['coding']['passed']} / {facts['coding']['total']} 통과")
+        lines.append(f"코딩테스트: {facts['coding']['points']:g} / {facts['coding']['max']}점 (테스트 {facts['coding']['passed']} / {facts['coding']['total']} 통과)")
     lines += ["", "[항목별 점수]"] + [f"- {k}: {v:.0f}" for k, v in items]
     lines += ["", "[잘한 부분]"] + [f"- {s}" for s in r["strengths"] or []]
     lines += ["", "[더 발전할 수 있는 부분]"] + [f"- {s}" for s in r["improvements"] or []]
@@ -333,15 +335,16 @@ def send(attempt_id):
     except Exception:
         traceback.print_exc()
         qas = []
+    to = mailer.route(r["email"])      # 테스트 계정이면 TEST_MAIL_REDIRECT로(개발 전용)
     try:
-        mailer.send(r["email"], f"[headhunterAI] {r['job_title']} AI 면접 리포트",
+        mailer.send(to, f"[headhunterAI] {r['job_title']} AI 면접 리포트",
                     render_text(r, items, facts, coach, qas), render(r, items, facts, coach, qas))
         db.run("INSERT INTO email_logs (attempt_id, user_id, kind, to_addr, status, writer) VALUES (%s,%s,'applicant_report',%s,'sent',%s)",
-               attempt_id, r["user_id"], r["email"], writer)
+               attempt_id, r["user_id"], to, writer)
         return {"ok": True}
     except mailer.MailError as e:
         db.run("INSERT INTO email_logs (attempt_id, user_id, kind, to_addr, status, writer, error) VALUES (%s,%s,'applicant_report',%s,'failed',%s,%s)",
-               attempt_id, r["user_id"], r["email"], writer, str(e))
+               attempt_id, r["user_id"], to, writer, str(e))
         return {"ok": False, "reason": "smtp"}
 
 

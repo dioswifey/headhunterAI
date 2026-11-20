@@ -66,6 +66,7 @@ services:
       SMTP_STARTTLS: "1"
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      TEST_MAIL_REDIRECT: ${TEST_MAIL_REDIRECT:-}   # 테스트 계정(이지원) 메일을 받아 볼 실제 주소. .env에만(2026-11-20), 비우면 끔
       # 코딩 문제 수집 에이전트의 ExpertHire 어댑터(ADLC v0.4 6.9). 키는 .env에만, 비어 있으면 experthire 수집이 '키 없음'으로 멈춘다
       EH_SECRET_KEY: ${EH_SECRET_KEY:-}
       CODING_GEN_MODEL: ${CODING_GEN_MODEL:-qwen3:8b}   # 코딩 문제 생성 에이전트 모델(호스트 Ollama에 설치 필요)

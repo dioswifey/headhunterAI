@@ -415,8 +415,11 @@ const SERVICE_SECTIONS = [
     { id: 'hiring-dashboard', ko: '기업 맞춤 대시보드', en: 'Custom Hiring Dashboard' } ] },
 ];
 
-let lang = 'ko';
-try { if (localStorage.getItem('hh.lang') === 'en') lang = 'en'; } catch (e) { /* 저장소를 못 쓰면 한국어 기본 */ }
+// 첫 페이지 기본 언어 = 영어(2026-11-20 사용자 지시 "무조건 영어가 default first page"). 사용자가 KO를 눌러 저장한 경우에만 한국어
+// 첫 페이지는 새로 열 때마다 무조건 영어(2026-11-20 사용자 지시 "무조건 영어가 default").
+// KO를 누르면 같은 탭 안에서만 유지(sessionStorage). 예전에 저장된 hh.lang=ko 때문에 한국어로 뜨던 문제 수정
+let lang = 'en';
+try { if (sessionStorage.getItem('hh.lang.main') === 'ko') lang = 'ko'; } catch (e) { /* 저장소를 못 쓰면 영어 */ }
 let audience = 'applicant';
 const t = () => T[lang];
 
@@ -427,7 +430,7 @@ function won(n) {
 
 function setLang(l) {
   lang = l;
-  try { localStorage.setItem('hh.lang', l); } catch (e) { /* 무시 */ }
+  try { localStorage.setItem('hh.lang', l); sessionStorage.setItem('hh.lang.main', l); } catch (e) { /* 무시 */ }
   render();
 }
 
@@ -446,7 +449,7 @@ function home() {
         <h1>${esc(L.heroTitle)}<br><span class="neon">headhunterAI</span></h1>
         <p class="lead">${esc(L.heroLead)}</p>
         <div class="row">
-          <a class="btn primary lg" href="/applicant/#/jobs">${esc(L.startApplicant)}</a>
+          <a class="btn primary lg" href="/applicant/#/login">${esc(L.startApplicant)}</a>
           <a class="btn lg" href="/admin/">${esc(L.loginCompany)}</a>
         </div>
       </div>
@@ -484,18 +487,32 @@ function home() {
 /* 지원자 대시보드 옆에서 공고가 계속 흘러가게 — 실제 공개 공고(GET /api/jobs)만 쓴다.
    목록이 비거나 요청이 실패하면 그 칸만 숨긴다(가짜 공고를 만들지 않는다). */
 /* 리포트 스샷 캐러셀 — 좌우 화살표로 넘긴다 (2026-11-19 사용자 지시).
-   키보드(←·→)와 점 표시도 같이 둔다. 자동 재생은 하지 않는다. */
+   키보드(←·→)와 점 표시도 같이 둔다.
+   2026-11-20 사용자 지시: 화살표를 안 눌러도 2.2초마다 다음 장으로 자동으로 넘어간다.
+   직접 넘기면 그때부터 다시 2.2초를 센다. 움직임 줄이기 설정이면 자동으로 넘기지 않는다(다른 움직임과 같은 규칙). */
+const SHOT_AUTO_MS = 2200;
 function bindShots() {
   document.querySelectorAll('.hm-media.shots').forEach((box) => {
     const shots = [...box.querySelectorAll('.hm-shot')];
     const dots = [...box.querySelectorAll('.hm-dots span')];
     if (shots.length < 2) return;
     let i = 0;
-    const go = (n) => {
+    let timer = null;
+    const auto = () => {
+      clearInterval(timer);
+      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      timer = setInterval(() => {
+        if (!document.body.contains(box)) { clearInterval(timer); return; }   // 화면이 바뀌어 캐러셀이 없어지면 멈춤
+        if (!document.hidden) show(i + 1);
+      }, SHOT_AUTO_MS);
+    };
+    const show = (n) => {
       i = (n + shots.length) % shots.length;
       shots.forEach((el, k) => el.classList.toggle('on', k === i));
       dots.forEach((el, k) => el.classList.toggle('on', k === i));
     };
+    const go = (n) => { show(n); auto(); };   // 사람이 넘긴 경우: 넘기고 2.2초를 처음부터
+    auto();
     box.querySelector('.prev').onclick = () => go(i - 1);
     box.querySelector('.next').onclick = () => go(i + 1);
     dots.forEach((el, k) => (el.onclick = () => go(k)));
@@ -735,6 +752,17 @@ view.addEventListener('click', e => {
 window.addEventListener('hashchange', render);
 // Features: 마우스를 올리면(데스크톱) 또는 누르면(모바일·터치) 드롭다운이 열린다. 누르기만으로는 페이지를 바꾸지 않는다
 const dd = document.querySelector('.dd');
-dd.querySelector('[data-nav="features"]').addEventListener('click', e => { e.preventDefault(); dd.classList.toggle('open'); });
+const ddPanel = dd.querySelector('.dd-panel');
+dd.querySelector('[data-nav="features"]').addEventListener('click', e => { e.preventDefault(); ddPanel.style.display = ''; dd.classList.toggle('open'); });
+// 2026-11-20 사용자 지시: 4개 중 하나를 눌러 그 페이지로 가면 드롭다운은 바로 닫힌다.
+// CSS가 :hover·:focus-within으로도 열어 두므로(누른 링크에 포커스가 남고 마우스도 아직 위에 있음)
+// 포커스를 빼고, 마우스가 메뉴 밖으로 나갈 때까지 패널을 숨겨 둔다. 다시 올리거나 Features를 누르면 정상으로 열린다
+dd.addEventListener('click', e => {
+  if (!e.target.closest('.dd-item')) return;
+  dd.classList.remove('open');
+  if (document.activeElement && dd.contains(document.activeElement)) document.activeElement.blur();
+  ddPanel.style.display = 'none';
+  dd.addEventListener('mouseleave', () => { ddPanel.style.display = ''; }, { once: true });
+});
 document.addEventListener('click', e => { if (!dd.contains(e.target)) dd.classList.remove('open'); });
 render();

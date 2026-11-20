@@ -32,6 +32,7 @@ import argparse
 import base64
 import hashlib
 import json
+import logging
 import os
 import random
 import re
@@ -43,11 +44,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from app import config, internal_store, llm, prompts  # noqa: E402
 from app.agents import internal_forbid, internal_qcat, internal_search  # noqa: E402
 
+log = logging.getLogger(__name__)   # 2026-11-20: 전에는 정의가 없어 OpenAI 실패 → 로컬 대체 경로가 NameError로 멈췄다
+
 CATS = internal_qcat.CATS
-PER_DOC = 5                 # 문서마다 질문을 만들 조각 수(1차 범위, 6.19.4)
+PER_DOC = 5                # 문서마다 질문을 만들 조각 수(1차 범위, 6.19.4)
 N_PER_CHUNK = 2             # 조각 1개에서 만들 질문 수 상한
 DUP_SIM = 0.90              # 같은 카테고리 안 중복 판정(코사인)
 MIN_LEN, MAX_LEN = 10, 160
+MAX_LEN_WITH_SUFFIX = 260   # 2026-11-20 F1: 허용 덧붙임(경험 안내 · 답변 형식 예시)까지 합친 상한
 SPEC = "A17 v1 (ADLC v0.8 6.19.4)"
 
 GEN_SCHEMA = {
@@ -65,7 +69,10 @@ CAT_LABEL = {"personality": "인성 질문 — 인재상·협업·책임감·학
              "job": "직무 이해도 질문 — 실제 업무·기술 판단·문제 해결 방식을 보는 질문",
              "company": "기업 이해 질문 — 회사가 하는 일·일하는 방식·고객을 이해하고 있는지 보는 질문"}
 CAT_GUIDE = {
-    "personality": "지원자 본인의 경험을 묻되, 이 회사가 중요하게 보는 행동 기준이 배경으로 깔리게 한다. 특정 기술 지식을 묻지 않는다.",
+    "personality": "조각에 적힌 행동 기준·가치가 드러나는 구체적인 업무 장면을 '{회사}에서 ~를 맡는다면 / 진행한다고 가정할 때'로 주고, 지원자 본인이라면 어떻게 판단·행동할지 묻는다. "
+                   "질문 끝에 **답변 형식 예시 1개**를 덧붙인다 — \"예를 들어 '~했고, 그 결과 ~가 이렇게 달라졌다'처럼 설명해 주세요.\" "
+                   "(답의 모양만 보여 주고, 조각에 없는 수치·제품명은 넣지 않는다 · 2026-11-20 사용자 응시 피드백 F1). "
+                   "'이 회사의 기준'처럼 내부 규정을 안다고 전제하지 않고, 사내 규정·절차를 맞히게 하는 질문(휴가·근태·결재 규칙 등)은 만들지 않는다.",
     "job": "업무 상황을 주고 어떻게 판단·처리할지 묻는다. 조각에 적힌 기술·절차는 배경으로만 쓰고, 지원자가 그 시스템을 이미 안다고 전제하지 않는다.",
     "company": "회사의 사업·고객·일하는 방식에 대한 이해와 지원 동기가 드러나게 묻는다. 내부 수치·고객사 이름은 쓰지 않는다.",
 }
@@ -76,22 +83,38 @@ PAST_PREMISE = re.compile(r"(하셨던|하셨는|하신\s*경험|진행하신|�
 TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|\d+(?:[:/]\d+)+|\d+(?:\.\d+)?%?")
 SENT_END = re.compile(r"(?:[다요까]|니까)[.?!]\s*(?=\S)")
 
-# A18 3차 추가(2026-11-19) — OpenAI 전환 뒤에도 100%는 아니라 비문 검사기를 따로 둔다(사용자 지시).
-# "관련된 경험이 있다면 ~ 답해 주셔도 좋습니다" 덧붙임은 예외로 통과(사용자가 허용한 문구) — 세 검사 전에 떼어낸다.
-EXPERIENCE_SUFFIX = re.compile(r"[,.]?\s*관련된?\s*(?:업무\s*)?경험[^.?!]{0,20}있다면[^.?!]*(?:답해|말씀해|설명해)\s*주(?:셔도|시면)\s*좋습니다\.?\s*$")
-# ① 물음표·종결 요청이 2개 이상 → "묻는 것이 둘 이상"(규칙6 "묻는 것은 하나만")
-# "?"와 "하시겠습니까" 등은 한 문장 끝에 같이 붙어 있는 게 보통이라(…하시겠습니까?) 그대로 세면 한 질문이 2개로
-# 겹쳐 세어진다 — "?"가 뒤따르지 않는 요청 어미만 별도로 센다.
-ASK_END = re.compile(r"\?|(?:하시겠습니까|할까요|해\s*주세요|해주세요|주시겠습니까|바랍니다|부탁드립니다)(?!\s*\?)")
-# ② 선행사 없이 등장하는 지시어("그 결과물", "이 과정" 등)
-DANGLING_REF = re.compile(r"그\s*결과물|이\s*과정|해당\s*부분|그것을|그\s*부분|이\s*결과(?!물)|그\s*결과(?!물)|해당\s*내용|이\s*내용|그\s*내용")
-# ③ 따옴표로 감싼, 설명 없는 사내 단계·절차 명사구(예: '적용 가능성 검토') — 안에 종결 어미가 없는 짧은 명사구만 잡는다
-QUOTED_PHRASE = re.compile(r"['\"'''""「」『』]([^'\"'''""「」『』]{2,16})['\"'''""」』]")
-QUOTED_SENTENCE_END = re.compile(r"(다|요|까|라|네|죠)[.!?]?$")
-# A18 신규(2026-11-19): 조각 머리글·메타 설명만 베껴 구체적 업무 상황이 없는 질문을 걸러낸다(internal_question.md 규칙1)
-# "다면"은 한국어 조건형 어미("~라면/한다면/있다면/된다면/본다면" 등)를 통째로 잡는다 — 개별 동사 나열은
-# "~이 있다면"처럼 흔한 표현을 놓치는 일(검증 중 발견)이 있어 어미 하나로 단순화했다.
-SITUATION_MARKERS = re.compile(r"(다면|상황|경우|때|진행\s*중|직면|마주)")
+# A18 문장 규칙 — 2026-11-20 `question_rules`로 옮겼다(이력서 질문·꼬리질문도 같은 규칙을 쓴다).
+# 이름은 그대로 다시 내보낸다(시험·측정 도구가 IQ.<이름>으로 부른다). 상세·결함 수리 내역은 question_rules 머리말.
+from app.agents import fewshot_guard, question_rules as QR  # noqa: E402
+
+EXPERIENCE_SUFFIX = QR.EXPERIENCE_SUFFIX
+EXAMPLE_SUFFIX = QR.EXAMPLE_SUFFIX
+COMPANY_PAST = QR.COMPANY_PAST
+ABSTRACT_EXPERIENCE = QR.ABSTRACT_EXPERIENCE
+COMPANY_SLOT = "{회사}"     # 생성 질문 안의 회사 자리. 면접 때 question_graph._internal_draft가 지원 회사 이름으로 바꾼다(F1·F3)
+ASK_END = QR.ASK_END
+MULTI_INTERROG = QR.MULTI_INTERROG
+DANGLING_REF = QR.DANGLING_REF
+QUOTED_PHRASE = QR.QUOTED_PHRASE
+QUOTED_SENTENCE_END = QR.QUOTED_SENTENCE_END
+FRAGMENT_COLON = QR.FRAGMENT_COLON
+HOUSE_PREMISE = QR.HOUSE_PREMISE
+SITUATION_MARKERS = QR.SITUATION_MARKERS
+ABSTRACT_HEAD = QR.ABSTRACT_HEAD
+TWO_CONCEPTS = QR.TWO_CONCEPTS
+BARE_ASK = QR.BARE_ASK
+has_malformed_phrasing = QR.has_malformed_phrasing
+sentence_shape = QR.sentence_shape
+
+# 인성 질문 재료 = 가치·태도 문서만(2026-11-20 리드 결정). HR·근태·평가 규정, 서류전형·회의 규칙, 품의 사례집,
+# 고객사 평가 기준은 빼다 — 2026-11-20 재검증에서 "반차와 반반차를 동시에 사용할 때 연차 차감 규칙이…" 같은
+# **사내 규정 퀴즈**가 인성 풀의 41%였고, 사고 1(커밋 기록, MSK-06 서류전형)·사고 2(MSK-53 데이터 준비도)도 여기서 나왔다.
+PERSONALITY_DOC_TYPES = {"talent"}
+PER_DOC_BY_CAT = {"personality": 10}
+# 면접관이 지원자를 '어떻게 평가할지' 적은 문서 — 여기서 만든 질문은 평가 기준을 지원자 상황으로 뒤집어 말이 안 된다.
+# 2026-11-20 사용자 지적: "내부 도구 개발을 맡는다면, 경험하지 않은 기술에 대해 동료가 판단을 요청할 때…"
+# (출처 MSK-41 '인재상 면접 평가 루브릭' > '"모른다"는 답변의 처리' — 면접관이 '모른다' 답변을 채점하는 규칙)
+INTERVIEWER_DOC = re.compile(r"루브릭|면접\s*평가|평가\s*기준|서류전형|채용\s*가이드|면접관")   # 인성 재료 문서가 6개로 줄어 문서당 조각을 더 쓴다
 
 # A18 2차 수정(2026-11-19, 사용자 지적 → 조정자 지시): 1차 수정(SITUATION_MARKERS)은 "~다면" 어미만 보기 때문에,
 # 조건형 어미는 붙었지만 알맹이 없이 intent·competency·expected_keywords만 되풀이한 질문("~상황이라면 어떻게
@@ -165,7 +188,15 @@ def _squash(s):
 
 
 def _one_sentence(q):
-    return not SENT_END.search((q or "").strip())
+    # 2026-11-20: 허용 덧붙임("관련된 경험이 있다면 ~ 답해 주셔도 좋습니다")은 떼고 센다. 지시문은 이 덧붙임을
+    # '한 문장 규칙의 예외'라고 했는데 검사는 떼지 않아, 덧붙인 질문이 전부 not_one_sentence로 떨어졌다.
+    # 같은 날 F1: 본질문의 답변 형식 예시("예를 들어 '…'처럼 설명해 주세요")도 허용 덧붙임이다(QR.core가 둘 다 뗀다).
+    return not SENT_END.search(QR.core(q))
+
+
+def _length_ok(q):
+    """본문(덧붙임을 뗀 것)은 10~160자, 덧붙임까지 합쳐도 260자 이하(음성으로 읽어 줄 수 있는 길이)."""
+    return MIN_LEN <= len(QR.core(q)) <= MAX_LEN and len((q or "").strip()) <= MAX_LEN_WITH_SUFFIX
 
 
 def _blocklist():
@@ -204,6 +235,10 @@ def select_chunks(q_cat, per_doc=PER_DOC, limit=None):
             continue
         if not internal_qcat.matches(m, q_cat):
             continue
+        if q_cat == "personality" and m.get("doc_type") not in PERSONALITY_DOC_TYPES:
+            continue
+        if INTERVIEWER_DOC.search(m.get("doc_title") or ""):
+            continue                             # 면접관용 문서(평가 루브릭 등)는 지원자 질문 재료가 아니다(2026-11-20 사용자 지적)                             # 규정·절차 문서는 인성 질문 재료가 아니다(규정 퀴즈 방지, 2026-11-20)
         if internal_forbid.find_terms(body, terms) or internal_forbid.masked_hits(body):
             continue
         if len(body) < 200:                      # 너무 짧은 조각(제목·표 머리)은 질문 재료가 안 된다
@@ -229,35 +264,27 @@ def generate_for_chunk(chunk, q_cat, n=N_PER_CHUNK):
     # 반복 생산했고(사용자 실측 "10문제 중 1문제만 쓸 만함"), 같은 4B 검증으로는 걸러지지도 않았다.
     # 보내는 것: 가상 회사 사내문서 조각뿐. 지원자 데이터 0건. 면접 중이 아니라 **오프라인 사전 생성**.
     # (임베딩은 그대로 로컬 — Chroma가 qwen3-embedding 1024차원이라 바꾸면 검색이 성립하지 않는다.)
+    # 2026-11-20: 어느 모델이 만들었는지를 usage["gen_model"]에 남긴다(`openai:<모델>` / `local:<모델>`).
+    # 전에는 저장 때 항상 LLM_MODEL을 적어, OpenAI로 만든 질문과 로컬 대체분을 나중에 가를 수 없었다.
     usage = None
     if config.IQ_GEN_PROVIDER == "openai":
         try:
             out, usage = llm.openai_chat_json(system, "위 조각으로 질문을 만들어라.", GEN_SCHEMA,
                                                timeout=120, temperature=0.4)
+            usage = {**(usage or {}), "gen_model": "openai:" + str((usage or {}).get("model") or config.OPENAI_MODEL)}
         except Exception as e:  # noqa: BLE001 — 키 없음·한도·오류 → 로컬로 내려간다(생성이 멈추지 않게)
             log.warning("A17 OpenAI 생성 실패(%s) → 로컬 모델로 대체", e)
             out = llm.chat_json(system, "위 조각으로 질문을 만들어라.", GEN_SCHEMA, timeout=120, temperature=0.4)
+            usage = {"gen_model": "local:" + config.LLM_MODEL, "fallback": type(e).__name__}
     else:
         out = llm.chat_json(system, "위 조각으로 질문을 만들어라.", GEN_SCHEMA, timeout=120, temperature=0.4)
+        usage = {"gen_model": "local:" + config.LLM_MODEL}
     return (out.get("questions") or [])[:n], usage
 
 
 # ---------------- 3 validate (A18) ----------------
-def has_malformed_phrasing(q):
-    """(ok, reason) — A18 3차(2026-11-19): OpenAI 전환 후에도 남는 비문 3종을 규칙으로 잡는다.
-    "관련된 경험이 있다면 ~ 답해 주셔도 좋습니다" 덧붙임(사용자 허용 문구)은 검사 전에 떼어낸다."""
-    stripped = EXPERIENCE_SUFFIX.sub("", q)
-    if len(ASK_END.findall(stripped)) >= 2:
-        return False, "multi_ask"                         # 묻는 것이 둘 이상(규칙6 "묻는 것은 하나만")
-    if DANGLING_REF.search(stripped):
-        return False, "dangling_ref"                      # 선행사 없는 지시어("그 결과물" 등)
-    for m in QUOTED_PHRASE.finditer(stripped):
-        phrase = m.group(1).strip()
-        if phrase and not QUOTED_SENTENCE_END.search(phrase):
-            return False, "quoted_internal_term:" + phrase[:20]  # 설명 없는 사내 단계·절차 명사구
-    return True, ""
-
-
+# has_malformed_phrasing()은 question_rules로 옮겼다(위에서 다시 내보냄). 2026-11-20부터 6종:
+# multi_ask · multi_interrog · dangling_ref · fragment_colon · house_premise · quoted_internal_term
 def validate(cand, chunk, q_cat, terms):
     """(ok, reason). **탈락 사유를 반드시 돌려준다** — A15가 사유를 남기지 않아 원인을 못 찾은 일(QO-13)을 반복하지 않는다."""
     q = (cand.get("question") or "").strip()
@@ -265,7 +292,7 @@ def validate(cand, chunk, q_cat, terms):
     body = chunk["body"]
     if not q:
         return False, "empty"
-    if not (MIN_LEN <= len(q) <= MAX_LEN):
+    if not _length_ok(q):
         return False, "length"
     if not _one_sentence(q):
         return False, "not_one_sentence"
@@ -292,39 +319,24 @@ def validate(cand, chunk, q_cat, terms):
     bad = sorted(t for t in set(TOKEN_RE.findall(q)) if _squash(t.strip(".")) not in allowed)
     if bad:
         return False, "bad_tokens:" + ",".join(bad[:4])   # 조각에 없는 영문·숫자 토큰 = 지어낸 것
-    if not SITUATION_MARKERS.search(q):
+    leak = fewshot_guard.leak_terms(q, body)
+    if leak:
+        return False, "fewshot_leak:" + ",".join(leak[:3])   # 지시문 예문에만 있는 말이 근거 없이 들어옴(2026-11-20)
+    body_q = QR.core(q)                                  # 상황·구체성·문장 틀은 덧붙임(예시 따옴표 등)을 뗀 본문으로 본다
+    if not SITUATION_MARKERS.search(body_q):
         return False, "no_situation"                     # 금지·조작 검사는 통과했지만 구체적 업무 상황 없이 조각 머리글·메타 설명만 베낀 질문
-    concrete, why = has_concrete_anchor(q)
+    concrete, why = has_concrete_anchor(body_q)
     if not concrete:
         return False, "template_only:" + (why or "")[:30]  # "다면" 어미만 있고 알맹이(숫자·인용·구체 명사) 없는 질문
     shaped, why2 = sentence_shape(q)
     if not shaped:
         return False, "shape:" + why2                     # 추상 범주 상황 · 개념 두 개 묶기 · 목적어 없는 맺음
+    if QR.ABSTRACT_EXPERIENCE.search(body_q):
+        return False, "abstract_experience"              # F2: 장면 없이 '~했던 경험'만 묻는다(가정형 구체 장면이어야 한다)
     return True, ""
 
 
-# A18 3차(2026-11-19, 사용자 지적): "LLM 응용에서 모델 답변의 근거 여부와 불확실성을 점검하는 상황이라면,
-# 어떻게 하시겠습니까?" — ① 상황이 추상 범주("LLM 응용에서")뿐 ② 서로 다른 개념 둘을 '와'로 묶음
-# ③ 맺음에 목적어 없음. 셋 다 기계로 잡는다.
-ABSTRACT_HEAD = re.compile(
-    r"^\s*(?:[가-힣A-Za-z0-9·/\s]{0,20})?"
-    r"(?:LLM|AI|RAG|ML|데이터|모델|서비스|시스템|운영|업무|기술|분석|개발|프로젝트)\s*"
-    r"(?:응용|활용|처리|관리|구축|운영|업무|과정|환경|영역|분야)\s*(?:에서|에서는|에선)")
-# '와/과'로 묶인 서로 다른 개념(각각 2글자 이상 명사구) + 바로 뒤에 목적격/주격 조사
-TWO_CONCEPTS = re.compile(r"[가-힣]{2,}\s*(?:여부|성|도|율|량|감)?\s*(?:와|과)\s+[가-힣]{2,}\s*(?:여부|성|도|율|량|감)?\s*(?:을|를|의|이|가)")
-# 목적어 없이 맨 '어떻게 하시겠습니까'로만 끝나는 맺음
-BARE_ASK = re.compile(r"(?:,|\s)\s*어떻게\s*(?:하|대응하|처리하)시겠습니까\s*\?*\s*$")
-
-
-def sentence_shape(q):
-    """(ok, reason). 문장 틀 검사 — 추상 범주 상황 · 개념 두 개 묶기 · 목적어 없는 맺음."""
-    if ABSTRACT_HEAD.search(q):
-        return False, "abstract_head"
-    if TWO_CONCEPTS.search(q):
-        return False, "two_concepts"
-    if BARE_ASK.search(q):
-        return False, "bare_ask"
-    return True, ""
+# 문장 틀 검사(ABSTRACT_HEAD · TWO_CONCEPTS · BARE_ASK)와 sentence_shape()는 question_rules로 옮겼다(위에서 다시 내보냄).
 
 
 # ---------------- 4 dedupe + 5 upsert ----------------
@@ -362,38 +374,71 @@ def _qid(q_cat, chunk_id, i):
     return f"IQ-{q_cat[:4]}-{hashlib.sha256(chunk_id.encode()).hexdigest()[:10]}-{i}"
 
 
-def run_generate(cats=CATS, per_doc=PER_DOC, limit=None, dry=False, only_changed=False, n=N_PER_CHUNK):
+def _gen_jobs(chunks, q_cat, n, workers):
+    """조각마다 (조각, 결과 또는 예외)를 **조각 순서대로** 돌려준다. workers > 1이면 생성 호출만 병렬(OpenAI 왕복 대기).
+    검증·임베딩·저장은 호출 쪽에서 차례로 한다(임베딩은 로컬 Ollama 하나라 병렬로 해도 빨라지지 않는다)."""
+    def one(c):
+        try:
+            return generate_for_chunk(c, q_cat, n=n)
+        except Exception as e:  # noqa: BLE001 — 조각 하나의 실패가 전체를 멈추지 않게
+            return e
+    if workers <= 1:
+        for c in chunks:
+            yield c, one(c)
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        for c, r in zip(chunks, ex.map(one, chunks)):
+            yield c, r
+
+
+def run_generate(cats=CATS, per_doc=None, limit=None, dry=False, only_changed=False, n=N_PER_CHUNK,
+                 workers=1, replace=False, report_out=None):
+    """A17 생성 → A18 검증 → 중복 제거 → 저장.
+    per_doc: None이면 카테고리별 기본값(`PER_DOC_BY_CAT`, 없으면 PER_DOC).
+    replace: 카테고리 전체를 새로 만든 결과로 **교체**한다 — 이번에 만들지 않은 옛 질문(재료에서 빠진 문서의 질문 포함)을
+             지운다. 새 질문을 먼저 저장한 뒤 지우므로 교체 중에도 컬렉션이 비지 않는다. limit·sync와 같이 쓰지 않는다.
+    report_out: 탈락 사유와 문장 전체를 JSON으로 남길 경로(감사용, 사람이 탈락 목록을 다시 볼 수 있게)."""
     try:
         terms = internal_forbid.load_terms()
     except Exception as e:  # noqa: BLE001
         raise SystemExit(f"금지 용어 사전을 읽을 수 없습니다({type(e).__name__})")
-    report = {"spec": SPEC, "cats": {}, "started": time.strftime("%Y-%m-%d %H:%M:%S")}
+    if replace and (limit or only_changed):
+        raise SystemExit("replace는 전체 생성에서만 쓴다(limit·sync와 같이 쓰지 않는다)")
+    report = {"spec": SPEC, "provider": config.IQ_GEN_PROVIDER, "cats": {}, "started": time.strftime("%Y-%m-%d %H:%M:%S")}
     cost = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
+    detail = {"accepted": [], "rejected": []}
     for q_cat in cats:
-        chunks = select_chunks(q_cat, per_doc=per_doc, limit=limit)
+        pd = per_doc or PER_DOC_BY_CAT.get(q_cat, PER_DOC)
+        chunks = select_chunks(q_cat, per_doc=pd, limit=limit)
         if only_changed:
             have = internal_store.question_chunk_hashes(q_cat)
             chunks = [c for c in chunks if have.get(c["chunk_id"]) != chunk_hash(c["body"])]
-        rep = {"chunks": len(chunks), "generated": 0, "accepted": 0, "rejected": {}, "dup": 0, "llm_error": 0}
+        rep = {"chunks": len(chunks), "per_doc": pd, "generated": 0, "accepted": 0, "rejected": {}, "dup": 0,
+               "llm_error": 0, "gen_model": {}, "removed_old": 0}
         report["cats"][q_cat] = rep
-        print(f"\n[{q_cat}] 대상 조각 {len(chunks)}개" + (" (--dry-run)" if dry else ""))
+        print(f"\n[{q_cat}] 대상 조각 {len(chunks)}개 (문서당 {pd})" + (" (--dry-run)" if dry else ""))
         if dry or not chunks:
+            docs = sorted({c["meta"].get("doc_id", "") for c in chunks})
+            print(f"   문서 {len(docs)}개: {', '.join(docs[:40])}")
             for c in chunks[:5]:
                 print(f"   {c['chunk_id']:<28} {c['meta'].get('doc_title', '')[:30]} > {c['meta'].get('sec_title', '')[:24]}")
             continue
         kept, kept_vecs = [], []
         t0 = time.time()
-        for i, c in enumerate(chunks, 1):
-            try:
-                cands, usage = generate_for_chunk(c, q_cat, n=n)
-                if usage:
-                    cost["calls"] += 1
-                    cost["prompt_tokens"] += usage.get("prompt_tokens", 0)
-                    cost["completion_tokens"] += usage.get("completion_tokens", 0)
-            except llm.LLMError as e:
+        for i, (c, res) in enumerate(_gen_jobs(chunks, q_cat, n, workers), 1):
+            if isinstance(res, Exception):
                 rep["llm_error"] += 1
-                print(f"  [{i}/{len(chunks)}] {c['chunk_id']} 모델 실패({e}) — 건너뜀")
+                print(f"  [{i}/{len(chunks)}] {c['chunk_id']} 모델 실패({type(res).__name__}: {str(res)[:80]}) — 건너뜀")
                 continue
+            cands, usage = res
+            usage = usage or {}
+            if usage.get("prompt_tokens") is not None:
+                cost["calls"] += 1
+                cost["prompt_tokens"] += usage.get("prompt_tokens", 0)
+                cost["completion_tokens"] += usage.get("completion_tokens", 0)
+            gm = usage.get("gen_model") or ("local:" + config.LLM_MODEL)
+            rep["gen_model"][gm] = rep["gen_model"].get(gm, 0) + 1
             rep["generated"] += len(cands)
             ok_here = []
             for cand in cands:
@@ -401,7 +446,10 @@ def run_generate(cats=CATS, per_doc=PER_DOC, limit=None, dry=False, only_changed
                 if not ok:
                     key = why.split(":")[0]
                     rep["rejected"][key] = rep["rejected"].get(key, 0) + 1
+                    detail["rejected"].append({"q_cat": q_cat, "chunk_id": c["chunk_id"], "gen_model": gm,
+                                               "reason": why, "question": (cand.get("question") or "").strip()})
                     continue
+                cand["_gen_model"] = gm
                 ok_here.append(cand)
             if not ok_here:
                 print(f"  [{i}/{len(chunks)}] {c['chunk_id']} 통과 0개")
@@ -421,26 +469,39 @@ def run_generate(cats=CATS, per_doc=PER_DOC, limit=None, dry=False, only_changed
                 kept_vecs.append(v)
             print(f"  [{i}/{len(chunks)}] {c['chunk_id']:<28} 통과 {len(ok_here)} · 누적 {len(kept)}  ({time.time() - t0:.0f}초)")
         # 5 upsert — 조각 단위로 먼저 지우고 새로 넣는다(같은 조각에서 질문 수가 줄어도 남지 않게)
-        for chunk_id in {c["chunk_id"] for _, c, _ in kept}:
-            internal_store.delete_questions_of_chunk(q_cat, chunk_id)
+        if not replace:
+            for chunk_id in {c["chunk_id"] for _, c, _ in kept}:
+                internal_store.delete_questions_of_chunk(q_cat, chunk_id)
         per_chunk = {}
         ids, docs_, metas, vecs2 = [], [], [], []
-        model = getattr(config, "LLM_MODEL", "")
         for cand, c, v in kept:
             k = per_chunk.get(c["chunk_id"], 0)
             per_chunk[c["chunk_id"]] = k + 1
             ids.append(_qid(q_cat, c["chunk_id"], k))
             docs_.append(cand["question"].strip())
-            metas.append(_meta_of(cand, c, q_cat, model))
+            metas.append(_meta_of(cand, c, q_cat, cand.get("_gen_model") or ("local:" + config.LLM_MODEL)))
             vecs2.append(v)
+            detail["accepted"].append({"q_cat": q_cat, "id": ids[-1], "chunk_id": c["chunk_id"],
+                                       "gen_model": metas[-1]["gen_model"], "question": docs_[-1]})
         if ids:
             internal_store.upsert_questions(q_cat, ids, docs_, metas, vecs2)
+        if replace and ids:                      # 새 질문을 다 넣은 뒤 이번에 만들지 않은 옛 질문만 지운다
+            new = set(ids)
+            old = [r["id"] for r in internal_store.questions_all(q_cat, documents=False) if r["id"] not in new]
+            if old:
+                internal_store.question_collection(q_cat).delete(ids=old)
+            rep["removed_old"] = len(old)
         rep["accepted"] = len(ids)
         print(f"[{q_cat}] 저장 {len(ids)}개 · 중복 {rep['dup']} · 탈락 {sum(rep['rejected'].values())} "
-              f"{rep['rejected']} · 모델 실패 {rep['llm_error']}")
+              f"{rep['rejected']} · 모델 실패 {rep['llm_error']} · 생성 모델 {rep['gen_model']}"
+              + (f" · 옛 질문 삭제 {rep['removed_old']}" if replace else ""))
     cost["cost_usd"] = round(cost["prompt_tokens"] / 1e6 * config.OPENAI_PRICE_IN_PER_M
                              + cost["completion_tokens"] / 1e6 * config.OPENAI_PRICE_OUT_PER_M, 4)
     report["cost"] = cost
+    if report_out:
+        os.makedirs(os.path.dirname(report_out) or ".", exist_ok=True)
+        with open(report_out, "w", encoding="utf-8") as f:
+            json.dump({**report, **detail}, f, ensure_ascii=False, indent=1)
     print(f"\n[비용] OpenAI 호출 {cost['calls']}회 · 입력 {cost['prompt_tokens']} · 출력 {cost['completion_tokens']} 토큰"
           + (f" · 약 ${cost['cost_usd']}" if config.OPENAI_PRICE_IN_PER_M or config.OPENAI_PRICE_OUT_PER_M else " · 금액 미산출(OPENAI_PRICE_* 미설정)"))
     return report
@@ -553,7 +614,7 @@ def search_questions(vector, q_cat, n, used=(), role_code=None, min_sim=None, fo
             return None                                   # B-09 사후 재확인
         if float(h.get("sim") or 0) < min_sim:
             continue
-        if not text or not (MIN_LEN <= len(text) <= MAX_LEN) or not _one_sentence(text):
+        if not text or not _length_ok(text) or not _one_sentence(text):
             continue
         if _blocklist().search(text):
             continue
@@ -571,7 +632,7 @@ def search_questions(vector, q_cat, n, used=(), role_code=None, min_sim=None, fo
         pool.append({"id": None, "on_role": on_role, "doc_id": m.get("doc_id") or "", "iq_id": h["id"], "text": text,
                      "subcategory": m.get("intent") or m.get("competency") or "", "intent": m.get("intent") or "",
                      "competency": m.get("competency") or "", "dup_group": group, "sim": round(score, 4),
-                     "chunk_id": m.get("chunk_id") or "", "sec": m.get("sec") or "",
+                     "chunk_id": m.get("chunk_id") or "", "sec": m.get("sec") or "", "doc_title": m.get("doc_title") or "",
                      "doc_refs": internal_qcat.unpipe(m.get("doc_refs")),
                      "company_facts": internal_qcat.unpipe(m.get("company_facts")),
                      "model_answer": m.get("model_answer") or "",
@@ -619,9 +680,12 @@ def main(argv=None):
     for name in ("generate", "sync"):
         s = sub.add_parser(name)
         s.add_argument("--cats", nargs="*", default=list(CATS), choices=list(CATS))
-        s.add_argument("--per-doc", type=int, default=PER_DOC)
+        s.add_argument("--per-doc", type=int, default=None, help="문서당 조각 수(기본: 카테고리별 PER_DOC_BY_CAT, 없으면 5)")
         s.add_argument("--limit", type=int, default=None, help="카테고리마다 조각 수 상한(시험용)")
         s.add_argument("--n", type=int, default=N_PER_CHUNK, help="조각 1개에서 만들 질문 수")
+        s.add_argument("--workers", type=int, default=1, help="생성 호출 병렬 수(OpenAI일 때만 의미 있음)")
+        s.add_argument("--replace", action="store_true", help="카테고리 전체를 새 결과로 교체(옛 질문 삭제)")
+        s.add_argument("--report-out", default=None, help="탈락 사유·문장 전체를 남길 JSON 경로")
         s.add_argument("--dry-run", action="store_true")
     s = sub.add_parser("prune")
     s.add_argument("--dry-run", action="store_true")
@@ -632,7 +696,8 @@ def main(argv=None):
     a = p.parse_args(argv)
     if a.cmd in ("generate", "sync"):
         rep = run_generate(cats=a.cats, per_doc=a.per_doc, limit=a.limit, dry=a.dry_run,
-                           only_changed=(a.cmd == "sync"), n=a.n)
+                           only_changed=(a.cmd == "sync"), n=a.n, workers=a.workers,
+                           replace=(a.replace and a.cmd == "generate"), report_out=a.report_out)
         if not a.dry_run:
             run_prune(dry=False)
         print("\n" + json.dumps(rep, ensure_ascii=False, indent=1))

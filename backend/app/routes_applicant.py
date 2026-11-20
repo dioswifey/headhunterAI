@@ -657,7 +657,7 @@ def report_email(app_id: int, user=Depends(security.applicant)):
     r = report_mail.send(row["attempt_id"])
     if not r["ok"]:
         raise HTTPException(502, "메일을 보내지 못했습니다. 잠시 후 다시 시도해 주세요.")
-    return {"ok": True, "to": user["email"]}
+    return {"ok": True, "to": report_mail.mailer.route(user["email"])}
 
 
 @router.get("/me/notifications")

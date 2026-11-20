@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from . import config, db, evaluation, job_import, llm, security
+from . import coding, config, db, evaluation, job_import, llm, security
 
 router = APIRouter(prefix="/api/admin")
 ops_router = APIRouter(prefix="/api/ops")
@@ -86,8 +86,13 @@ def update_job(job_id: int, body: JobIn, user=Depends(security.recruiter)):
     _check_role(body.role_code)
     if j["status"] == "closed":
         raise HTTPException(400, "마감된 공고는 수정할 수 없습니다.")
-    db.run("""UPDATE jobs SET role_code=%s, title=%s, company_intro=%s, duties=%s, requirements=%s, preferred=%s, employment_type=%s,
+    # 담당자가 한국어 문구를 바꾸면 그 칸의 영어판(*_en)은 낡은 번역이 되므로 비운다 → 영어 화면은 한국어로 대체(2026-11-20).
+    # 같은 문구면 영어판을 그대로 둔다(SET 오른쪽의 열은 바꾸기 전 값)
+    en = ", ".join(f"{k}_en = CASE WHEN {k} IS NOT DISTINCT FROM %s THEN {k}_en END"
+                   for k in ("title", "company_intro", "duties", "requirements", "preferred", "location"))
+    db.run(f"""UPDATE jobs SET {en}, role_code=%s, title=%s, company_intro=%s, duties=%s, requirements=%s, preferred=%s, employment_type=%s,
               location=%s, headcount=%s, open_date=%s, close_date=%s, updated_at=now() WHERE id=%s""",
+           body.title, body.company_intro, body.duties, body.requirements, body.preferred, body.location,
            body.role_code, body.title, body.company_intro, body.duties, body.requirements, body.preferred, body.employment_type,
            body.location, body.headcount, body.open_date, body.close_date, job_id)
     return {"ok": True, "warnings": _bias_warnings(body)}
@@ -206,12 +211,19 @@ APPLICANT_SQL = """SELECT ap.id application_id, ap.step, ap.created_at applied_a
     WHERE j.company_id=%s"""
 
 
+def _with_points(row):
+    """코딩 부분 점수(2026-11-20 사용자 지시 — 화면 표시 '1.5 / 3점'): coding_points = 합계, coding_max = 문제 수. 제출이 없으면 None."""
+    s = coding.points_summary(row["attempt_id"]) if row.get("attempt_id") else None
+    row["coding_points"], row["coding_max"] = (s["points"], s["max"]) if s else (None, None)
+    return row
+
+
 @router.get("/applicants")
 def applicants(job_id: int | None = None, result: str | None = None, status: str | None = None, user=Depends(security.recruiter)):
     rows = db.all_(APPLICANT_SQL + """ AND (%s::int IS NULL OR j.id=%s) AND (%s::text IS NULL OR e.final_result=%s OR (%s='pending' AND e.attempt_id IS NOT NULL AND e.final_result IS NULL))
                    AND (%s::text IS NULL OR a.status=%s) ORDER BY e.total_score DESC NULLS LAST, ap.created_at DESC""",
                    user["company_id"], job_id, job_id, result, result, result, status, status)
-    return rows
+    return [_with_points(r) for r in rows]
 
 
 class DeleteIn(BaseModel):
@@ -243,7 +255,7 @@ def _company_application(app_id, user):
 def applicant_detail(app_id: int, user=Depends(security.recruiter)):
     base = _company_application(app_id, user)
     ap = db.one("SELECT resume_snapshot, resume_edits, extraction_id FROM applications WHERE id=%s", app_id)
-    out = {**base, "resume": ap["resume_snapshot"], "resume_edits": ap["resume_edits"] or []}
+    out = _with_points({**base, "resume": ap["resume_snapshot"], "resume_edits": ap["resume_edits"] or []})
     if ap["extraction_id"]:
         x = db.one("""SELECT x.pages, x.ocr_engine, f.filename, f.id file_id FROM resume_extractions x JOIN files f ON f.id=x.file_id
                       WHERE x.id=%s""", ap["extraction_id"])
@@ -264,6 +276,8 @@ def applicant_detail(app_id: int, user=Depends(security.recruiter)):
         out["events"] = db.all_("SELECT type, detail, created_at FROM attempt_events WHERE attempt_id=%s ORDER BY created_at", aid)
         out["coding"] = db.all_("""SELECT p.title, p.level, s.code, s.passed, s.total, s.paste_blocked, s.submitted_at FROM coding_submissions s
                                    JOIN coding_problems p ON p.id=s.problem_id WHERE s.attempt_id=%s ORDER BY p.level DESC""", aid)
+        for c in out["coding"]:          # 문제별 부분 점수 1 / 0.5 / 0점 (채점 전이면 None)
+            c["points"] = coding.problem_points(c["passed"] or 0, c["total"] or 0) if c["total"] else None
     out["memos"] = db.all_("""SELECT m.id, m.body, m.created_at, u.name author FROM memos m JOIN users u ON u.id=m.author_id
                               WHERE m.application_id=%s ORDER BY m.created_at DESC""", app_id)
     db.audit(user["id"], "result_view", "application", app_id)
@@ -335,7 +349,7 @@ def compare(ids: str, user=Depends(security.recruiter)):
     for i in id_list:
         row = _company_application(i, user)
         e = db.one("SELECT item_scores, strengths, improvements FROM evaluations WHERE attempt_id=%s", row["attempt_id"]) if row["attempt_id"] else None
-        out.append({**row, "item_scores": e["item_scores"] if e else None, "strengths": e["strengths"] if e else [], "improvements": e["improvements"] if e else []})
+        out.append(_with_points({**row, "item_scores": e["item_scores"] if e else None, "strengths": e["strengths"] if e else [], "improvements": e["improvements"] if e else []}))
     return out
 
 

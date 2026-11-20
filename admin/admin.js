@@ -266,6 +266,9 @@ async function aiDraft() {
 /* ───────── 지원자 목록 (ADM-01) ───────── */
 const RESULT_KO = { pass: '1차 합격', fail: '1차 불합격' };
 const CODING_GATE_KO = { none: '게이트 없음(합불 미반영)', hard: '하드 게이트(60점 미만 무조건 불합격)', soft: '소프트 게이트(면접 85점 이상이면 보완)' };
+// 코딩테스트 부분 점수(2026-11-20 사용자 지시): 문제별 통과율 70% 이상 1점 · 50% 이상 0.5점 · 그 미만 0점 → '1.5 / 3점'
+const fmtPt = (p) => (Number.isInteger(+p) ? String(+p) : (+p).toFixed(1));
+const codingPts = (r) => (r.coding_max ? `${fmtPt(r.coding_points)} / ${r.coding_max}점` : score(r.coding_score));
 function resultPill(r, pending) {
   if (pending) return '<span class="pill neon">확인 대기</span>';
   return r ? `<span class="pill ${r === 'pass' ? 'on' : ''}">${RESULT_KO[r]}</span>` : '<span class="small">산출 전</span>';
@@ -290,7 +293,7 @@ async function applicantsView(params) {
       <td><b>${esc(r.name)}</b><div class="small">지원 ${fmtYMD(r.applied_at)}</div></td><td class="small">${esc(r.job_title)}</td>
       <td>${r.attempt_status ? esc(ATTEMPT_KO[r.attempt_status]) : `<span class="small">${esc(HH.STEP_KO[r.step])}</span>`}</td>
       <td>${r.analysis_status ? `<span class="pill ${r.analysis_status === 'needs_check' ? 'neon' : 'dim'}">${ANALYSIS_KO[r.analysis_status]}</span>` : '-'}</td>
-      <td class="num">${done ? score(r.interview_score) : '-'}</td><td class="num">${done && r.coding_enabled ? score(r.coding_score) : '-'}</td>
+      <td class="num">${done ? score(r.interview_score) : '-'}</td><td class="num">${done && r.coding_enabled ? codingPts(r) : '-'}</td>
       <td class="num"><b>${done ? score(r.total_score) : '-'}</b></td><td>${done ? resultPill(r.result, r.needs_decision) : '-'}</td>
       <td class="small">${r.interrupt_count ? `장애 ${r.interrupt_count}` : ''} ${r.exit_count ? `이탈 ${r.exit_count}` : ''}</td></tr>`; }).join('')}
     </tbody></table></div>` : '<div class="empty">조건에 맞는 지원자가 없습니다.</div>'}`;
@@ -360,7 +363,7 @@ async function detailView(id) {
     ${e ? `<div class="grid3">
       ${decisionCard(d, e)}
       <div class="card"><div class="small">AI 면접 점수</div><div class="big">${score(e.interview_score)}</div><div class="small">합격 기준 ${crit.pass_score}점</div></div>
-      <div class="card"><div class="small">코딩테스트 점수</div><div class="big">${crit.coding_enabled ? score(e.coding_score) : '-'}</div><div class="small">${crit.coding_enabled ? CODING_GATE_KO[crit.coding_gate_mode] : '미사용 공고'}</div></div>
+      <div class="card"><div class="small">코딩테스트 점수</div><div class="big">${crit.coding_enabled ? codingPts({ ...d, coding_score: e.coding_score }) : '-'}</div><div class="small">${crit.coding_enabled ? CODING_GATE_KO[crit.coding_gate_mode] : '미사용 공고'}</div></div>
     </div>
     <div class="grid2" style="align-items:start">
       <div class="card"><h2>항목별 점수</h2>${ITEMS.map((it) => `<div class="row" style="margin:6px 0"><span style="width:140px">${ITEM_KO[it]} <span class="small">${crit[WKEY[it]]}%</span></span><div style="flex:1">${bar(e.item_scores[it])}</div><b style="width:48px;text-align:right">${score(e.item_scores[it])}</b></div>`).join('')}
@@ -376,7 +379,7 @@ async function detailView(id) {
         <div class="sub">${q.answer_text ? esc(q.answer_text) : '<i>미응답</i>'}</div>
         ${fus(q).map((f) => `<div class="fu"><b class="small neon">꼬리질문${q.prescore && q.prescore.followup_reason ? ` (${esc(q.prescore.followup_reason)})` : ''}</b><div><b>${esc(f.text)}</b></div><div class="sub">${f.answer_text ? esc(f.answer_text) : '<i>미응답</i>'}</div></div>`).join('')}
         ${scoreLines(q.scores || [])}</div>`).join('')}</div>` : ''}
-    ${(d.coding || []).length ? `<div class="card col"><h2>코딩테스트</h2>${d.coding.map((c) => `<div><div class="between"><b>${esc(c.title)} <span class="small">(${c.level === 'basic' ? '기초' : '응용'})</span></b><span class="small">통과 ${c.passed ?? '-'} / ${c.total ?? '-'}${c.paste_blocked ? ` · 붙여넣기 차단 ${c.paste_blocked}회` : ''}</span></div><pre class="out">${esc(c.code)}</pre></div>`).join('')}
+    ${(d.coding || []).length ? `<div class="card col"><h2>코딩테스트</h2>${d.coding.map((c) => `<div><div class="between"><b>${esc(c.title)} <span class="small">(${c.level === 'basic' ? '기초' : '응용'})</span></b><span class="small">통과 ${c.passed ?? '-'} / ${c.total ?? '-'}${c.points != null ? ` · ${fmtPt(c.points)}점` : ''}${c.paste_blocked ? ` · 붙여넣기 차단 ${c.paste_blocked}회` : ''}</span></div><pre class="out">${esc(c.code)}</pre></div>`).join('')}
       ${e && e.code_feedback ? `<div class="note"><b>AI 코드 피드백</b> (점수 미반영) — ${esc(e.code_feedback)}</div>` : ''}</div>` : ''}
     <div class="grid2" style="align-items:start">
       <div class="card"><h2>이력서</h2>${resumeHtml(d.resume, d.resume_edits, d.resume_file)}</div>
@@ -425,7 +428,7 @@ async function compareView(params) {
   main.innerHTML = `<div><a class="btn sm ghost" href="#/applicants">← 지원자 목록</a></div><h1>지원자 비교</h1><p class="sub">참고용 비교이며 결과는 바뀌지 않습니다.</p>
     <div class="grid${rows.length}" style="align-items:start">${rows.map((r) => `<div class="card col"><h2>${esc(r.name)}</h2><div class="small">${esc(r.job_title)}</div>
       <div class="between"><span>종합 총점</span><b class="neon">${score(r.total_score)}</b></div>${resultPill(r.result, r.needs_decision)}
-      <dl class="kv"><dt>AI 면접</dt><dd>${score(r.interview_score)}</dd><dt>코딩테스트</dt><dd>${r.coding_enabled ? score(r.coding_score) : '-'}</dd></dl>
+      <dl class="kv"><dt>AI 면접</dt><dd>${score(r.interview_score)}</dd><dt>코딩테스트</dt><dd>${r.coding_enabled ? codingPts(r) : '-'}</dd></dl>
       ${r.item_scores ? ITEMS.map((it) => `<div><div class="between small"><span>${ITEM_KO[it]}</span><span>${score(r.item_scores[it])}</span></div>${bar(r.item_scores[it])}</div>`).join('') : ''}
       <h3>강점</h3>${(r.strengths || []).map((s) => `<p class="small">· ${esc(s)}</p>`).join('')}
       <h3>개선점</h3>${(r.improvements || []).map((s) => `<p class="small">· ${esc(s)}</p>`).join('')}</div>`).join('')}</div>`;

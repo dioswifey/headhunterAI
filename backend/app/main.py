@@ -20,6 +20,10 @@ async def lifespan(_app):
     seed.ensure_demo_companies()
     seed.activate_all_roles()     # 2026-11-19: 직무 '준비 중'으로 공고가 막히지 않게
     seed.ensure_extra_jobs()      # 2026-11-19: 프론트엔드·모바일·DevOps·데이터 엔지니어 공고
+    try:                          # 2026-11-20: 공고 RAG 재생성 한국어 + 영어판(job_texts.json). 실패해도 기동은 계속
+        print("[job_texts]", seed.apply_job_texts(), flush=True)
+    except Exception as e:  # noqa: BLE001
+        print("[job_texts] 실패:", type(e).__name__, e, flush=True)
     seed.sync_recruiter_names()
     _load_banks()
     scheduler.start()

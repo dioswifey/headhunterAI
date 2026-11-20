@@ -638,7 +638,7 @@ def it38():
     finally:
         db.run("DELETE FROM analysis_jobs WHERE attempt_id=%s", aid)
         db.run("DELETE FROM attempts WHERE id=%s", aid)
-        db.run("UPDATE applications SET step=%s WHERE id=%s", app["step"], app["id"])
+        db.run("UPDATE applications SET step=%s WHERE id=%s", app["step"], app["id"])        # 임시 응시가 만든 결과 알림도 지운다 — 남으면 응시 없는 지원 건을 가리켜 '응시 기록이 없습니다'가 뜬다(2026-11-20)        db.run("DELETE FROM notifications WHERE application_id=%s AND type='result' AND created_at >= now() - interval '1 day'", app["id"])
 
 
 # ---------------- v0.13 평가 플랜 (PRD 6.3.8~6.3.9) — GPU·모델 호출 없는 구조·규칙 검사 ----------------

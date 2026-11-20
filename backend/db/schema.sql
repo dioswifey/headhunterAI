@@ -50,6 +50,13 @@ CREATE TABLE jobs (
   preferred        TEXT NOT NULL DEFAULT '',
   employment_type  TEXT NOT NULL DEFAULT '정규직',
   location         TEXT NOT NULL DEFAULT '',
+  -- 영어판 문구(2026-11-20, 지원자 화면 EN 선택 시). NULL이면 화면이 한국어로 대체. 원본 backend/db/seed/job_texts.json
+  title_en         TEXT,
+  company_intro_en TEXT,
+  duties_en        TEXT,
+  requirements_en  TEXT,
+  preferred_en     TEXT,
+  location_en      TEXT,
   headcount        INT NOT NULL DEFAULT 1,
   open_date        DATE NOT NULL,
   close_date       DATE NOT NULL,

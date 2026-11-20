@@ -259,7 +259,10 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
   .cam-note { font-size: 10.5px; }
   .iv-head { padding-right: 132px; min-height: 128px; align-items: flex-start; }
 }
-.qbox { border: 1px solid var(--line-strong); border-radius: 12px; padding: 20px 22px; font-size: 19px; font-weight: 500; line-height: 1.55; background: var(--black); }
+.qbox { border: 1px solid var(--line-strong); border-radius: 12px; padding: 20px 22px; font-size: 19px; font-weight: 500; line-height: 1.55; background: var(--black);
+  word-break: keep-all; overflow-wrap: anywhere; }   /* 2026-11-20: 한글이 단어 중간에서 끊기지 않게(긴 영문·기호 줄은 어디서든 줄바꿈) */
+.qbox p { margin: 0 0 .75em; }   /* 2026-11-20 사용자 지시: 긴 질문은 문장마다 문단(applicant.js qParas), 문단 사이 한 줄의 3/4 */
+.qbox p:last-child { margin-bottom: 0; }
 .timer { border: 3px solid var(--neon); border-radius: 50%; width: 92px; height: 92px; display: grid; place-items: center; font-size: 26px; font-weight: 800; color: var(--neon); font-variant-numeric: tabular-nums; flex: none; }
 .timer.idle { border-color: var(--line-strong); color: var(--muted); }
 .voice { position: relative; border: 1px solid var(--line); border-radius: 12px; background: var(--black); height: 150px; overflow: hidden; }

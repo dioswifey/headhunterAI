@@ -26,10 +26,17 @@ RUNNER_TOKEN = os.getenv("RUNNER_TOKEN", "")
 SCHEMA_PATH = os.getenv("SCHEMA_PATH", "/srv/db/schema.sql")
 # 개발 전용: 접수 취소(지원 기록 초기화) 버튼을 쓸 수 있는 지원자 테스트 계정 = 시드 이지원
 TEST_APPLICANT_EMAIL = os.getenv("TEST_APPLICANT_EMAIL", "applicant@headhunter.ai")
+# 테스트 계정(이지원)에게 가는 메일을 받아 볼 실제 주소(2026-11-20 사용자 지시, 리포트 메일 확인용). .env에만 두고
+# 비어 있으면 원래 주소(applicant@headhunter.ai — 실제로 받는 사람 없음) 그대로. DEV_MODE에서만 동작
+TEST_MAIL_REDIRECT = os.getenv("TEST_MAIL_REDIRECT", "").strip()
 
 # 코딩테스트 게이트 임계값(DEC-07·08, v0.10 사용자 지시 — 공고마다 다르게 입력받지 않는 고정값)
 CODING_GATE_SCORE = 60          # 하드·소프트 게이트 기준: 코딩테스트 점수가 이 미만이면 게이트 발동
 CODING_GATE_SOFT_OVERRIDE = 85  # 소프트 게이트 보완 기준: AI 면접 점수(단독)가 이 이상이면 코딩 게이트 무시
+# 코딩테스트 문제별 부분 점수(2026-11-20 사용자 지시): 문제 1개 만점 = 1점, 총점 만점 = 문제 수(3문제면 3점).
+# 테스트 케이스 통과율이 FULL 이상이면 1점, HALF 이상이면 0.5점, 그 미만은 0점. coding_score(0~100)는 총점/만점×100.
+CODING_FULL_RATE = 0.70
+CODING_HALF_RATE = 0.50
 
 # LLM provider (TRD §5.1) — dev: Ollama qwen3:4b, prod: Qwen3-8B (same OpenAI-less Ollama/vLLM endpoint)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")

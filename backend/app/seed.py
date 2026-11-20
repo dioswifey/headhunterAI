@@ -282,6 +282,71 @@ def ensure_extra_jobs():
         db.run("INSERT INTO eval_criteria (job_id, coding_enabled) VALUES (%s,%s)", j["id"], False)
 
 
+# ---------- 공고 문구 맞추기: RAG 재생성 한국어 + 영어판 (2026-11-20 사용자 지시) ----------
+# 원본 backend/db/seed/job_texts.json(제목 기준). 로컬 DB에 적용한 재생성 한국어 문구가 배포 DB에는 없어서,
+# 기동 때 제목이 같은 공고에 한국어(재생성본)와 *_en 열을 채운다. 여러 번 돌려도 결과가 같다.
+# 담당자가 내용을 고친 공고는 건드리지 않는다: 지금 한국어가 json 한국어와 같거나(영어만 채움)
+# 시드가 처음 넣은 문구 그대로일 때만(한국어도 바꿈) 적용한다.
+_KO_FIELDS = ("company_intro", "duties", "requirements", "preferred")
+_EN_FIELDS = ("title", "company_intro", "duties", "requirements", "preferred", "location")
+# seed()가 넣는 본사 공고 2개의 처음 문구(seed() 본문과 같아야 한다)
+_SEED_HQ = {
+    "AI/AX 엔지니어 (LLM 서비스)": (
+        "사내 업무를 AI로 자동화하는 AX 솔루션을 만듭니다. 온프레미스 LLM 기반 문서 검색·요약 에이전트를 운영합니다.",
+        "- 사내 LLM(RAG) 서비스 설계·개발\n- 업무 자동화 에이전트 개발\n- 모델 서빙·모니터링 파이프라인 구축",
+        "- Python 개발 경험\n- 머신러닝·딥러닝 기본 이해\n- LLM 또는 RAG 프로젝트 경험",
+        "- vLLM·Ollama 등 모델 서빙 경험\n- PostgreSQL·벡터 DB 경험"),
+    "AI 데이터 분석 인턴 (코딩테스트 없음)": (
+        "사내 데이터로 AI 활용 과제를 찾는 인턴 포지션입니다.", "- 업무 데이터 분석과 AI 적용 과제 발굴", "- Python 기초", ""),
+}
+
+
+def _seed_originals():
+    out = dict(_SEED_HQ)
+    for _name, _email, intro, _loc, posts in DEMO_COMPANIES:
+        for _role, title, duties, req, pref, *_ in posts:
+            out[title] = (intro, duties, req, pref)
+    for jb in EXTRA_JOBS:
+        out[jb["title"]] = (jb.get("company_intro") or "", jb.get("duties") or "", jb.get("requirements") or "", jb.get("preferred") or "")
+    return out
+
+
+def apply_job_texts(path=None):
+    import json
+    import logging
+    from pathlib import Path
+    log = logging.getLogger("seed")
+    p = Path(path or Path(config.SCHEMA_PATH).parent / "seed" / "job_texts.json")
+    if not p.exists():
+        return {"skipped": "no file"}
+    texts = json.loads(p.read_text(encoding="utf-8"))["jobs"]
+    norm = lambda s: "\n".join(l.strip() for l in (s or "").replace("\r", "").strip().split("\n"))  # noqa: E731
+    originals = _seed_originals()
+    done = {"ko+en": 0, "en": 0, "same": 0, "edited": 0}
+    for t in texts:
+        for row in db.all_("SELECT * FROM jobs WHERE title=%s", t["title"]):
+            cur = tuple(norm(row[k]) for k in _KO_FIELDS)
+            want_ko = tuple(norm(t["ko"][k]) for k in _KO_FIELDS)
+            seeded = originals.get(t["title"])
+            if cur == want_ko:
+                set_ko = False
+            elif seeded and cur == tuple(norm(v) for v in seeded):
+                set_ko = True
+            else:
+                done["edited"] += 1      # 담당자가 고친 공고 — 영어도 맞지 않으므로 둘 다 그대로
+                log.warning("job_texts: 공고 %s(%s) 내용이 바뀌어 있어 건너뜀", row["id"], t["title"])
+                continue
+            en_same = all((row.get(k + "_en") or "") == (t["en"].get(k) or "") for k in _EN_FIELDS)
+            if not set_ko and en_same:
+                done["same"] += 1
+                continue
+            cols = [f"{k}_en=%s" for k in _EN_FIELDS] + ([f"{k}=%s" for k in _KO_FIELDS] if set_ko else [])
+            vals = [t["en"].get(k) for k in _EN_FIELDS] + ([t["ko"][k] for k in _KO_FIELDS] if set_ko else [])
+            db.run(f"UPDATE jobs SET {', '.join(cols)}, updated_at=now() WHERE id=%s", *vals, row["id"])
+            done["ko+en" if set_ko else "en"] += 1
+    return done
+
+
 def activate_all_roles():
     """직무 상태를 모두 active로 — 공고 둘러보기가 '준비 중'으로 막히지 않게(2026-11-19 사용자 지시).
     AI 면접 자체의 가능 여부는 질문 은행 유무로 결정되며, 지원 차단은 서버가 따로 한다."""

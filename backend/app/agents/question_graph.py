@@ -34,8 +34,15 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from .. import config, db, llm, prompts, questions as Q
+from . import question_rules as QR
 
 log = logging.getLogger(__name__)
+
+
+def _is_a17(d):
+    """사내문서 질문(A17)을 **그대로 출제하는** 문항인가 — gen_method가 `internal_q:`로 시작한다.
+    이력서 문항은 A17을 참고만 하므로(`iq_source`는 붙어도 gen_method는 llm·template) 여기에 해당하지 않는다."""
+    return str(d.get("gen_method") or "").startswith("internal_q:")
 
 REVIEW = config.QGRAPH_REVIEW          # 0이면 A5·A6 모델 검수를 건너뛴다(규칙 검사는 그대로)
 MIN_KEYWORDS = 2
@@ -314,6 +321,14 @@ def _cos(a, b):
     return s / (na * nb)
 
 
+_SLOT_HEAD = re.compile(r"^\s*\{회사\}(?:에서|의|가|는|에)?\s*")
+
+
+def _gate_text(t):
+    """관문 2 비교용 문장 — 회사 자리와 허용 덧붙임(경험 안내·답변 형식 예시)을 뗀 본문."""
+    return QR.core(_SLOT_HEAD.sub("", t or "")).replace("{회사}", "").strip()
+
+
 def _filter_by_posting(cands, job, cat):
     """공고 본문과 유사도가 낮은 후보를 버린다. 전부 버려지면 None(→ 백업 층).
     임베딩·공고 벡터를 못 구하면 **막지 않는다**(면접이 멈추면 안 된다)."""
@@ -324,7 +339,9 @@ def _filter_by_posting(cands, job, cat):
         if jv is None:
             return cands
         from . import question_chain as QC
-        qvs = llm.embed([QC.QUERY_INSTRUCT + (c.get("text") or "") for c in cands])
+        # 2026-11-20: A17 질문 앞의 회사 자리("{회사}에서 ~를 맡는다면")는 공고 내용이 아니라 질문 틀이다. 그대로 넣으면
+        # 공고와의 코사인이 0.03~0.10 낮아져(실측: 공고 1 LLM 서비스 0.58 이상 1개 → 떼면 5개) 관련 질문까지 버려졌다 → 떼고 잰다.
+        qvs = llm.embed([QC.QUERY_INSTRUCT + _gate_text(c.get("text") or "") for c in cands])
     except Exception as e:  # noqa: BLE001 — 임베딩 실패 → 거르지 않고 그대로 간다
         log.info("공고 관련성 검사 생략(%s): %s", cat, type(e).__name__)
         return cands
@@ -332,10 +349,11 @@ def _filter_by_posting(cands, job, cat):
     for c, qv in zip(cands, qvs):
         sim = _cos(jv, qv)
         if sim >= POSTING_MIN_SIM:
-            kept.append(c)
+            kept.append((sim, c))
         else:
             log.info("공고 무관 질문 제외(%s, sim=%.3f): %s", cat, sim, (c.get("text") or "")[:50])
-    return kept or None
+    kept.sort(key=lambda x: -x[0])                      # 2026-11-20: 공고와 가까운 순(호출 쪽이 앞에서 n개를 쓴다)
+    return [c for _, c in kept] or None
 
 
 def retrieve(s: GenState) -> GenState:
@@ -345,6 +363,7 @@ def retrieve(s: GenState) -> GenState:
     3순위 = DB `question_bank`(적게 쓴 순·dup_group 중복 제거) · 인성은 `character_assessment` md.
     어느 층이 비어도 면접은 끝까지 간다(H-01~H-09). 질의 벡터는 세 층이 **같은 것을 재사용**한다(임베딩 추가 0회)."""
     used, picks, src = set(), {}, {}
+    seen_topics = set()                      # F4(2026-11-20): 세트 안에서 같은 프로젝트·같은 조각의 사내문서 질문은 1개만
     need = dict(Q.PLAN)
     vector, vectors, role = None, None, s["job"]["role_code"]
     mq = {"mode": "off"}
@@ -361,20 +380,42 @@ def retrieve(s: GenState) -> GenState:
         got, how = None, None
         if vector is not None:
             vecs = vectors if (vectors and len(vectors) > 1) else [vector]
-            got = _pick_internal(vecs, role, cat, n, used, iq_terms)        # ① 사내문서 질문(주 출처)
-            got = _filter_by_posting(got, s["job"], cat)                    # 공고 무관이면 버린다(전제조건 2)
+            if cat != "personality":
+                # 공고 무관이면 버린다(전제조건 2). 2026-11-20 리드 결정: **인성에는 적용하지 않는다** — 인성은
+                # 공고 적합성 질문이 아니고, 가치·태도 문서 질문은 공고 본문과 유사도가 낮게 나와 대부분 버려졌다.
+                # 2026-11-20: 전에는 이미 뽑힌 n개만 걸러 통과 질문이 풀에 있어도 백업으로 내려갔다 → 후보를 3배 뽑아
+                # 관문 2를 통과한 것 중 공고와 가까운 순으로 n개를 쓴다(후보가 모자라면 n개로 다시 뽑는다).
+                got = (_pick_internal(vecs, role, cat, n * 3, used, iq_terms)
+                       or _pick_internal(vecs, role, cat, n, used, iq_terms))  # ① 사내문서 질문(주 출처)
+                got = _filter_by_posting(got, s["job"], cat)
+            else:
+                got = (_pick_internal(vecs, role, cat, n * 3, used, iq_terms)
+                       or _pick_internal(vecs, role, cat, n, used, iq_terms))  # ① 사내문서 질문(주 출처)
+            got = _distinct_topics(got, n, seen_topics)
             how = "internal_q" if got else None
-            if not got:
+            short = n - len(got or [])
+            if short > 0:
+                # 2026-11-20: 관문 2가 **일부만** 버리면 전에는 모자란 채로 출제돼 기본 질문이 8개 아래로 내려갔다
+                # (`kept or None` → 보충 없음). 모자란 수만 Redis에서 채운다(AC-107).
+                taken = used | {_group(b) for b in (got or [])}
                 try:
-                    got = _pick_redis(vecs if len(vecs) > 1 else vector, role, cat, n, used)   # ② Redis(백업)
+                    more = _pick_redis(vecs if len(vecs) > 1 else vector, role, cat, short, taken)   # ② Redis(백업)
                 except Exception as e:
+                    more = None
                     src["error"] = type(e).__name__
-                how = "redis" if got else None
+                if more:
+                    got = (got or []) + more
+                    how = "internal_q+redis" if how else "redis"
         src[key] = how or "db"
-        if not got:   # 인성 대체 = character_assessment md(없으면 DB), 나머지 = DB 은행
-            got = Q.pick_character(n, used, s["snapshot"]) if cat == "personality" else Q.pick_bank(cat, n, used)
-            if cat == "personality" and any(b.get("char_id") for b in got):
-                src[key] = "md"
+        short = n - len(got or [])
+        if short > 0:   # 인성 대체 = character_assessment md(없으면 DB), 나머지 = DB 은행 — 모자란 수만큼
+            taken = used | {_group(b) for b in (got or [])}
+            fill = Q.pick_character(short, taken, s["snapshot"]) if cat == "personality" else Q.pick_bank(cat, short, taken)
+            if cat == "personality" and any(b.get("char_id") for b in fill):
+                src[key] = "md" if not got else src[key] + "+md"
+            elif got:
+                src[key] = src[key] + "+db"
+            got = (got or []) + list(fill)
         if cat == "personality":
             got = [_enrich_character(b) for b in got]
         picks[key] = got
@@ -520,11 +561,90 @@ def _bank_fields(b):
     return {"bank_id": b["id"], "gen_method": "db"}
 
 
-def _internal_draft(b, cat):
+_SEVERE = ("company_past", "broken_word")   # 다시 쓴 문장에 있으면 무조건 원문으로(원문이 어떻든)
+# 문장 구조가 깨진 경우(두 개 묻기·지시어·조각) — 원문도 구조가 깨진 게 아니면 원문으로(2026-11-20 재현: 기업 문항 재작성이
+# "…발생할 수 있는 문제는 무엇이며, 어떻게 접근할지"로 두 개 묻기가 됐는데 원문은 '우리 회사' 표현만 걸려 재작성이 살아남았다)
+_STRUCTURAL = ("multi_ask", "multi_interrog", "dangling_ref", "fragment_colon")
+
+
+def _keep_rewrite(text, orig, company=None):
+    """면접 중 은행 문항을 다시 쓴 문장을 쓸지(2026-11-20). 문장 규칙 위반이면 원문으로 되돌린다.
+    단 원문도 같은 정도로 어긴다면(예: 은행 원문 '우리 회사의 …') 되돌려도 나아지지 않으므로 다시 쓴 쪽을 둔다 —
+    **회사 경력 전제(F9)·깨진 낱말(F8)** 은 예외 없이 원문으로."""
+    if text == orig:
+        return True
+    why = QR.interview_issue(text, company)
+    if not why:
+        return True
+    head = why.split(":")[0]
+    if head in _SEVERE:
+        return False
+    orig_why = QR.interview_issue(orig, company)
+    if head in _STRUCTURAL:
+        return orig_why.split(":")[0] in _STRUCTURAL + _SEVERE
+    return bool(orig_why)
+
+
+def _posting_text(job):
+    """F4 주제 비교에서 뺄 공고 어휘(공고에 원래 있는 말은 '같은 주제'의 근거가 아니다)."""
+    return " ".join(str((job or {}).get(k) or "") for k in ("title", "role_name", "summary", "duties", "requirements", "preferred"))
+
+
+def _overlaps(text, drafts, job):
+    """앞서 만든 문항 중 같은 핵심 주제를 공유하는 것이 있는가(회사 이름·공고 어휘는 빼고, F4)."""
+    ign = [(job or {}).get("company_name") or "", _posting_text(job)]
+    return any(QR.shared_topic(text, d["text"], ignore=ign) for d in drafts)
+
+
+# 같은 프로젝트의 상세판·공개판·장애 기록·단위코드 문서는 문서 ID가 달라도 한 주제다(2026-11-20 실측: '콜센터 AI' 4문서,
+# '수요예측' 대시보드·배치·배치 서버 장애 4문서). 제목에 이 낱말이 있으면 그 묶음 이름을 주제 열쇠로 쓴다.
+_TOPIC_FAMILIES = (("callcenter", ("콜센터",)), ("forecast", ("수요예측", "배치 서버")))
+
+
+def _topic_key(b):
+    """사내문서 질문의 주제 열쇠 = 프로젝트 묶음 이름, 묶음이 없으면 출처 문서 ID(같은 문서 = 같은 주제)."""
+    title = b.get("doc_title") or ""
+    for name, words in _TOPIC_FAMILIES:
+        if any(w in title for w in words):
+            return name
+    return b.get("doc_id") or b.get("chunk_id") or b.get("iq_id") or ""
+
+
+def _distinct_topics(cands, n, seen_topics):
+    """후보(이미 좋은 순) 중 앞서 뽑은 문항과 **같은 프로젝트·같은 조각**이 아닌 것만 n개. 모자라면 모자란 채로 돌려준다
+    (호출 쪽이 Redis·DB로 채운다). 2026-11-20 사용자 지적: 직무 '상담사 답변을 돕는 AI 검증 시나리오'와 기업 '상담사가 AI 추천
+    답변을 검토하는 서비스의 운영 지표'가 같은 콜센터 AI 프로젝트에서 나와 본질문 2개가 겹쳤다(질문 문장 단어 비교는 공고 어휘를
+    빼고 보느라 놓쳤다 → 출처 문서로 가른다)."""
+    if not cands:
+        return cands
+    out = []
+    for b in cands:
+        if not b.get("iq_id"):
+            out.append(b)
+            continue
+        keys = {"topic:" + _topic_key(b), "chunk:" + (b.get("chunk_id") or b.get("iq_id"))}
+        if keys & seen_topics:
+            continue
+        seen_topics |= keys
+        out.append(b)
+        if len(out) >= n:
+            break
+    return out or None
+
+
+def fill_company(text, job):
+    """A17 질문의 `{회사}` 자리를 지원 회사 이름으로(2026-11-20 F1·F3, 문자열 치환 — 모델 호출 0회). 이름이 없으면 '지원하신 회사'."""
+    name = ((job or {}).get("company_name") or "").strip() or "지원하신 회사"
+    return (text or "").replace("{회사}", name)
+
+
+def _internal_draft(b, cat, job=None):
     """A17 질문은 **면접마다 다시 쓰지 않는다**(기본, `RAG_IQ_REWRITE=0`). 이미 A18 검증(한 문장·금지 용어·
     마스킹 표식·조각 근거·지어낸 토큰·허위 경험 전제)을 통과한 문장이고, 면접 중 다시 쓰는 경로는 20명 중
-    12명이 실패했다(QO-13). 조각 출처(`doc_refs`)·근거 문구(`company_facts`)를 붙여 7-B 관문 대상으로 남긴다."""
-    return {"category": cat, "eval_items": Q.EVAL_ITEMS[cat], "text": b["text"], "orig": b["text"],
+    12명이 실패했다(QO-13). 조각 출처(`doc_refs`)·근거 문구(`company_facts`)를 붙여 7-B 관문 대상으로 남긴다.
+    회사 자리(`{회사}`)만 지원 회사 이름으로 바꾼다."""
+    text = fill_company(b["text"], job)
+    return {"category": cat, "eval_items": Q.EVAL_ITEMS[cat], "text": text, "orig": text,
             **_bank_fields(b), "intent": b.get("intent") or b.get("subcategory") or "",
             "company_facts": list(b.get("company_facts") or []), "doc_refs": list(b.get("doc_refs") or []),
             "iq_source": True}
@@ -541,9 +661,11 @@ def generate(s: GenState) -> GenState:
     for b in s["picks"].get("personality", []):
         if b.get("iq_id") and not config.RAG_IQ_REWRITE:          # 사내문서 질문(인성) — 그대로 출제
             n_iq["personality"] += 1
-            drafts.append(_internal_draft(b, "personality"))
+            drafts.append(_internal_draft(b, "personality", s["job"]))
             continue
         text = Q.contextualize_character(b, s["job"], s["snapshot"]) if use_llm else b["text"]
+        if not _keep_rewrite(text, b["text"], s["job"].get("company_name")):   # 다시 쓴 문장이 문장 규칙을 어기면 원문(2026-11-20)
+            text = b["text"]
         drafts.append({"category": "personality", "eval_items": Q.EVAL_ITEMS["personality"], "text": text, "orig": b["text"],
                        **_bank_fields(b), "intent": b.get("intent") or b.get("subcategory") or ""})
     if s["resume_fallback"]:
@@ -553,14 +675,30 @@ def generate(s: GenState) -> GenState:
                            "gen_method": "fallback_job", "resume_ref": ref, "intent": b.get("subcategory") or ""})
     else:
         banks = s["picks"].get("resume_bank") or []
-        for i, (cand, angle) in enumerate(Q.resume_pairs(s["candidates"])):
-            tpl = Q.TEMPLATES[angle].format(label=cand["label"])
+        company = s["job"].get("company_name") or ""
+        prev = [d["text"] for d in drafts]            # F4: 이 세트에서 이미 낸 질문(인성 포함)과 같은 주제를 다시 묻지 않는다
+        pairs = Q.resume_pairs(s["candidates"])
+        spare = [c for c in s["candidates"] if all(c is not p for p, _ in pairs)]   # 짝에 안 들어간 이력서 항목(주제가 겹칠 때 교체용)
+        for i, (cand, angle) in enumerate(pairs):
+            tpl = Q.template_text(angle, cand["label"], company)
             if use_llm:
-                r = Q.make_resume_question(cand, angle, s["snapshot"], banks[i] if i < len(banks) else None, role_name)
+                bank = banks[i] if i < len(banks) else None
+                r = Q.make_resume_question(cand, angle, s["snapshot"], bank, role_name, company, avoid=prev,
+                                           ignore_text=_posting_text(s["job"]))
+                # F4(2026-11-20 사용자 응시: '반사광' 하나로 이력서 2문항 + 꼬리질문 2개): 그래도 앞 질문과 주제가 겹치면
+                # 아직 안 쓴 다른 이력서 항목으로 한 번 바꿔 만든다.
+                if spare and any(QR.shared_topic(r["text"], p, ignore=[company, _posting_text(s["job"])]) for p in prev):
+                    alt = spare.pop(0)
+                    r2 = Q.make_resume_question(alt, angle, s["snapshot"], bank, role_name, company, avoid=prev,
+                                                ignore_text=_posting_text(s["job"]))
+                    if not any(QR.shared_topic(r2["text"], p, ignore=[company, _posting_text(s["job"])]) for p in prev):
+                        cand, r, tpl = alt, r2, Q.template_text(angle, alt["label"], company)
             else:
                 ref = {"section": cand["section"], "index": cand["index"], "label": cand["label"],
                        "quote": (cand["item"].get("detail") or cand["item"].get("source") or "")[:160]}
                 r = {"text": tpl, "resume_ref": ref, "gen_method": "template"}
+            if r.get("gen_method") == "template":
+                tpl = r["text"]                      # 템플릿이 라벨 없는 대체 문장으로 바뀌었으면 A6 되돌림도 그 문장으로(F4)
             d = {"category": "resume", "eval_items": Q.EVAL_ITEMS["resume"], "bank_id": None, "orig": tpl,
                  "intent": "이력서 항목의 " + Q.ANGLES[angle], **r}
             b = banks[i] if i < len(banks) else None
@@ -573,12 +711,13 @@ def generate(s: GenState) -> GenState:
                           "iq_source": True, "ref_text": b.get("text") or ""})
                 n_iq_resume += 1
             drafts.append(d)
+            prev.append(d["text"])
     n_rag, rag_by = 0, {"job": 0, "company": 0}
     for cat in ("job", "company"):
         for b in s["picks"].get(cat, []):
             if b.get("iq_id") and not config.RAG_IQ_REWRITE:      # 사내문서 질문(직무·기업) — 그대로 출제
                 n_iq[cat] += 1
-                drafts.append(_internal_draft(b, cat))
+                drafts.append(_internal_draft(b, cat, s["job"]))
                 continue
             rag = None
             if not use_llm:
@@ -596,6 +735,16 @@ def generate(s: GenState) -> GenState:
                                               s.get("internal_refs") or [], [h["text"] for h in s.get("internal_hits") or []],
                                               s.get("forbid_terms") or [])
                 text = rag["text"] if rag else Q.contextualize(b["text"], s["job"], b.get("subcategory") or "")
+            if not _keep_rewrite(text, b["text"], s["job"].get("company_name")):
+                # 2026-11-20 F9: 은행 문항을 회사 맞춤으로 다시 쓴 문장이 "헤드헌터랩_경기에서 … 맡아, … 어떤 접근을 취했는지"처럼
+                # 그 회사 경력을 전제하거나 두 개를 묻으면 쓰지 않고 은행 원문으로 둔다(사용자 응시 attempt 14의 기업 문항).
+                log.info("다시 쓴 %s 문항 버림(%s): %s", cat, QR.interview_issue(text), text[:50])
+                text, rag = b["text"], None
+            if text != b["text"] and _overlaps(text, drafts, s["job"]) and not _overlaps(b["text"], drafts, s["job"]):
+                # F4(2026-11-20 재현): 직무 문항을 이력서 키워드와 섞어 다시 쓰다 이력서 문항과 같은 주제("소비기한 인쇄 불량
+                # 검사 프로젝트에서 …")가 됐다 → 섞어 쓴 문장 대신 은행 원문을 쓴다(세트 안 같은 주제 1문항).
+                # 원문도 이미 겹치면 되돌려도 나아지지 않으므로 그대로 둔다(다시 쓰기가 겹침을 '들여온' 경우만 되돌린다).
+                text, rag = b["text"], None
             d = {"category": cat, "eval_items": Q.EVAL_ITEMS[cat], "text": text, "orig": b["text"],
                  **_bank_fields(b), "intent": b.get("subcategory") or ""}
             if rag:
@@ -604,7 +753,7 @@ def generate(s: GenState) -> GenState:
                 d.update(company_facts=rag["company_facts"], doc_refs=rag["doc_refs"])
             drafts.append(d)
     rr = s.get("retrieve_report") or {}
-    redis_ok = any(rr.get(k) == "redis" for k in ("personality", "job", "company", "resume_bank"))
+    redis_ok = any("redis" in str(rr.get(k) or "") for k in ("personality", "job", "company", "resume_bank"))   # "internal_q+redis" 포함
     chroma_ok = bool(s.get("internal_context") and s.get("forbid_ready")) or sum(n_iq.values()) > 0 or n_iq_resume > 0
     mode = {(True, True): "dual", (True, False): "redis_only", (False, True): "chroma_only", (False, False): "safe"}[(redis_ok, chroma_ok)]
     total_iq = sum(n_iq.values())
@@ -648,7 +797,10 @@ def evaluate_philosophy(s: GenState) -> GenState:
     job, drafts, stats = s["job"], [], {"pass": 0, "revised": 0, "reverted": 0, "error": 0}
     for d in s["drafts"]:
         d = dict(d)
-        if d["category"] == "personality":
+        if d["category"] == "personality" or _is_a17(d):
+            # 2026-11-20: 사내문서 질문(A17)도 건너뛴다 — 오프라인에서 A18 검증을 통과한 문장이고(QST-14 ③ 면접 중 다시
+            # 쓰지 않음), 전에는 로컬 4B가 여기서 고쳐 쓰며 회사명·과거 전제·두 개 묻기를 새로 넣었다
+            # (qa_full_2026-11-19: A17 직무 9개 중 3개 재작성, 예 "헤드헌터랩_경기에서 … 어떤 경험과 판단 과정을 거쳤는지").
             drafts.append(d)
             continue
         system = prompts.load("evaluate/philosophy_fit", role_name=job.get("role_name") or "", company_name=job.get("company_name") or "",
@@ -666,8 +818,8 @@ def evaluate_philosophy(s: GenState) -> GenState:
                 ok = True
                 break
             nq = (r.get("revised_question") or "").strip()
-            if not nq or nq == text or not _rule_ok(d, nq, s["snapshot"], s.get("forbid_terms") or ()):
-                break
+            if not nq or nq == text or not _rule_ok(d, nq, s["snapshot"], s.get("forbid_terms") or ()) or QR.resume_issue(nq, job.get("company_name")):
+                break                          # 2026-11-20: 고친 문장도 질문 문장 규칙(QST-20)을 지켜야 받는다
             text = nq
         if ok:
             stats["revised" if text != d["text"] else "pass"] += 1
@@ -695,7 +847,7 @@ def evaluate_answerability(s: GenState) -> GenState:
     secs, drafts, n = config.QUESTION_SECONDS, [], 0
     for d in s["drafts"]:
         d = dict(d)
-        if s["use_llm"] and Q._too_broad(d["text"], secs):
+        if s["use_llm"] and not _is_a17(d) and Q._too_broad(d["text"], secs):   # A17은 다시 쓰지 않는다(2026-11-20, A6와 같은 이유)
             n += 1
             nq = ""
             try:
@@ -829,6 +981,7 @@ def finalize(s: GenState) -> GenState:
         if d.get("dup_group"):
             used.add(d["dup_group"])
         q = {k: d.get(k) for k in keep if k in d}
+        q["text"] = QR.end_punct(q.get("text"))     # 끝 문장부호 맞춤(2026-11-20)
         if d.get("doc_refs") and d.get("guard") == "pass":
             q["gen_method"] = f"{q.get('gen_method') or 'db'}|internal:" + ",".join(d["doc_refs"])
         final.append(q)

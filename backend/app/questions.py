@@ -13,6 +13,7 @@ import re
 import threading
 
 from . import config, db, llm, prompts
+from .agents import question_rules as QR   # 정규식만 있는 모듈(무거운 의존 없음) — 문장 규칙 공용(2026-11-20)
 
 EVAL_ITEMS = {
     "personality": ["logic", "relevance", "delivery", "fit"],
@@ -32,11 +33,32 @@ AI_TERMS = ["ai", "ml", "머신러닝", "딥러닝", "llm", "rag", "nlp", "자�
 # RSQ-06 금지 유형 차단 목록
 BLOCKLIST = re.compile(r"(나이|몇 살|연령|공백기|결혼|자녀|가족|부모|종교|출신|고향|성별|병역|군대|키와|외모|"
                        r"학벌|명문|서열|(?<!우선)순위|어느 학교|학교 이름|대학 이름|회사 규모|대기업|중소기업이라)")
-TEMPLATE = "이력서에 적은 '{label}'에서 맡은 역할과 가장 어려웠던 문제를 어떻게 해결했는지 설명해 주세요."
-TEMPLATE_2 = "이력서에 적은 '{label}'에서 사용한 기술을 선택한 이유와 그 결과를 설명해 주세요."
-TEMPLATE_3 = "이력서에 적은 '{label}'의 결과가 좋았는지 어떻게 확인했는지 설명해 주세요."
+# 2026-11-20 문구 교체(초안 — 사용자 확정 대기). 옛 문구는 셋 다 질문 규칙(QST-20)을 어겼다:
+#   "맡은 역할과 가장 어려웠던 문제를 어떻게 해결했는지"(두 개 묻기) · "선택한 이유와 그 결과를"(개념 2개 + 지시어)
+#   · 라벨을 따옴표로 감쌈(음성으로 읽으면 들리지 않는다). 모델 생성이 실패하면 이 문장이 그대로 나가므로(실측 29%) 한 가지만 묻는다.
+# 같은 날 사용자 응시 피드백 F3: 이력서 프로젝트를 그대로 되묻지 말고 **지원 회사 맥락의 가정형**으로 잇는다
+#   ("이 검사를 [회사]에서 진행한다고 가정할 때 어떤 방식을 택하시겠습니까? 비슷한 경험이 있다면 …답해 주셔도 좋습니다").
+#   회사 이름 뒤에는 반드시 가정형(~한다면·~가정할 때) — 과거형과 이으면 F9(그 회사 경력 전제) 위반이다.
+TEMPLATE = "{label}에서 겪은 가장 어려운 문제를 {company}에서 다시 맡는다면 어떤 방식으로 해결하시겠습니까? 비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다."
+TEMPLATE_2 = "{label}에서 쓴 기술을 {company}의 비슷한 업무에 적용한다고 가정할 때, 어떤 기술 스택을 택하시겠습니까? 비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다."
+TEMPLATE_3 = "{label}의 성과를 {company}에서 다시 검증해야 한다면, 어떤 지표로 확인하시겠습니까? 비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다."
 TEMPLATES = (TEMPLATE, TEMPLATE_2, TEMPLATE_3)
-ANGLES = ("역할과 문제 해결 과정", "기술 선택 이유와 결과", "성과를 측정·검증한 방법")
+ANGLES = ("가장 어려웠던 문제를 회사에서 다시 맡는다면 어떻게 해결할지", "쓴 기술을 회사의 비슷한 업무에 어떻게 적용할지",
+          "성과를 회사에서 다시 검증한다면 어떤 지표로 볼지")
+
+
+def template_text(angle, label, company=""):
+    """이력서 질문 템플릿(모델 생성이 실패했을 때). 회사 이름이 없으면 '지원하신 회사'."""
+    return TEMPLATES[angle].format(label=label, company=(company or "").strip() or "지원하신 회사")
+
+
+# 라벨 없는 대체 템플릿(2026-11-20 지원 20 점검, F4): 이력서 항목이 2개뿐인데 둘이 같은 프로젝트를 다루면(경력 항목에 그 프로젝트가
+# 적힌 경우) 라벨 템플릿도 같은 주제가 된다. 앞 질문과 주제가 겹칠 때만 이 문장을 쓴다(문구 초안 — 사용자 확정 대기).
+TEMPLATE_GENERIC = "지금까지의 경험 중 {company}의 이 직무와 가장 가까운 일을 하나 골라, 그 일을 {company}에서 다시 한다면 무엇을 다르게 하시겠습니까?"
+
+
+def generic_template_text(company=""):
+    return TEMPLATE_GENERIC.format(company=(company or "").strip() or "지원하신 회사")
 
 
 # ---------- QST-01: bank selection (least used first, dedupe by dup_group) ----------
@@ -69,7 +91,8 @@ def fit_scope(q, seconds, purpose):
         return q, False
     try:
         out = llm.chat_json(
-            "너는 면접 질문 편집자다. 평가 목적은 유지하되, 제한 시간 안에 답할 수 있도록 요구 과제를 1~2개로 줄인 한국어 질문 한 문장을 만든다.",
+            "너는 면접 질문 편집자다. 평가 목적은 유지하되, 제한 시간 안에 답할 수 있도록 요구 과제를 1개로 줄인 한국어 질문 한 문장을 만든다. "
+            "의문사(어떻게·무엇·어떤·왜)는 한 번만 쓰고, 예시·괄호·따옴표를 붙이지 않는다.",   # 2026-11-20: 1~2개 → 1개(QST-20 ①)
             f"답변 시간: {seconds}초\n평가 목적: {purpose}\n원래 질문: {q}", SCOPE_SCHEMA, timeout=60)
         nq = out["question"].strip()
         if nq and not _too_broad(nq, seconds):
@@ -198,8 +221,9 @@ SENT_END = re.compile(r"(?:[다요까]|니까)[.?!]\s*(?=\S)")
 
 
 def one_sentence(q):
-    """질문은 한 문장('…설명해 주세요.' 뒤에 서술문이 또 붙으면 실패)."""
-    return not SENT_END.search(q.strip())
+    """질문은 한 문장('…설명해 주세요.' 뒤에 서술문이 또 붙으면 실패).
+    2026-11-20: 사용자가 허용한 덧붙임(경험 안내 · 본질문 답변 형식 예시)은 떼고 센다(QR.core)."""
+    return not SENT_END.search(QR.core(q))
 
 
 def resume_keywords(snapshot, limit=12):
@@ -467,7 +491,7 @@ RSQ_SYSTEM = """너는 AI/AX 엔지니어 1차 면접 질문을 만드는 면접
 규칙:
 1. 주어진 이력서 항목 하나에 근거해 한국어 질문 한 문장만 만든다.
 2. 항목에 실제로 적힌 역할·기술·성과를 짚어 묻는다. 항목에 없는 프로젝트명·기술명·수치를 만들어 넣지 않는다.
-3. 90초 안에 답할 수 있게 요구 과제는 1~2개로 제한한다.
+3. 90초 안에 답할 수 있게 요구 과제는 1개만 묻는다(의문사는 한 번만, 수치·성과를 결론처럼 앞에 두지 않는다).
 4. 학교·회사의 이름·서열·규모, 나이·공백기·가족 등 인적 사정은 묻지 않는다. 수행한 일과 역량만 묻는다.
 5. cited_terms에는 질문에 쓴 고유 명칭(프로젝트명·기술명·수치)을 이력서 표기 그대로 넣는다."""
 
@@ -480,17 +504,23 @@ def resume_pairs(cands, n=RESUME_N):
     """이력서 질문 n개의 (후보 항목, 관점) 짝. 항목이 모자라면 같은 항목을 다른 관점으로 묻는다."""
     if not cands:
         return []
-    pairs = [(c, 0) for c in cands[:n]]
-    angle = 1
+    # 2026-11-20: 항목이 달라도 관점을 0으로 같게 주면, 둘 다 템플릿으로 떨어질 때 같은 문장 틀이 두 번 나왔다
+    # (attempt 14 재현: "~에서 겪은 가장 어려운 문제를 … 다시 맡는다면" ×2). 항목마다 관점을 돌린다.
+    pairs = [(c, i % len(ANGLES)) for i, c in enumerate(cands[:n])]
+    angle = len(pairs)
     while len(pairs) < n:
         pairs.append((cands[(len(pairs)) % len(cands)], angle % len(ANGLES)))
         angle += 1
     return pairs
 
 
-def make_resume_question(cand, angle, snapshot, bank=None, role_name=""):
+def make_resume_question(cand, angle, snapshot, bank=None, role_name="", company="", avoid=(), ignore_text=""):
     """이력서 항목(근거) + 질문 은행 참고 문항(관점)을 합치는 생성 에이전트(2026-11-09).
-    근거 검사(RSQ-03)·차단 목록·1회 재생성 → 실패하면 템플릿."""
+    근거 검사(RSQ-03)·차단 목록·1회 재생성 → 실패하면 템플릿.
+    2026-11-20(사용자 응시 피드백):
+      F3 이력서 프로젝트를 그대로 되묻지 않고 지원 회사(`company`) 맥락의 가정형으로 잇는다(지시문 + 템플릿)
+      F4 앞서 낸 질문(`avoid`)과 같은 핵심 주제(예: '반사광')를 다시 묻지 않는다 → 다시 만들고, 그래도 같으면 템플릿
+      QST-20 문장 규칙 + 수치 결론형 금지 + F9 회사 경력 전제 금지(QR.resume_issue)"""
     it = cand["item"]
     desc = "\n".join(f"{k}: {', '.join(v) if isinstance(v, list) else v}" for k, v in it.items()
                      if k not in ("page", "needs_check", "origin", "source") and v)
@@ -498,32 +528,59 @@ def make_resume_question(cand, angle, snapshot, bank=None, role_name=""):
     if bank:
         ref["bank_doc"] = bank.get("doc_id") or (f"db:{bank['id']}" if bank.get("id") else "")
     bank_txt = f"\n질문 은행 참고 문항: {bank['text']}\n참고 문항의 평가 의도: {bank.get('subcategory') or '-'}" if bank else "\n질문 은행 참고 문항: (없음)"
-    system = prompts.load("generate/resume_question_merger", role_name=role_name or "AI/AX 엔지니어")
+    company = (company or "").strip() or "지원하신 회사"
+    system = prompts.load("generate/resume_question_merger", role_name=role_name or "AI/AX 엔지니어", company_name=company)
+    avoid_txt = ""
+    if avoid:
+        avoid_txt = "\n\n[앞에서 이미 낸 질문 — 같은 주제·같은 핵심어를 다시 묻지 않는다]\n" + "\n".join(f"- {a}" for a in avoid)
     why = []                  # 거절 사유 관측(2026-11-18) — 아래 판정 조건은 한 글자도 바꾸지 않았다
+    hint = ""
     for _ in range(2):  # 1회 재생성 (RSQ-03)
         try:
-            out = llm.chat_json(system, f"질문 관점: {ANGLES[angle]}{bank_txt}\n이력서 항목:\n{desc}", MERGE_SCHEMA, timeout=90, temperature=0.4)
+            out = llm.chat_json(system, f"질문 관점: {ANGLES[angle]}{bank_txt}\n이력서 항목:\n{desc}{avoid_txt}{hint}", MERGE_SCHEMA,
+                                timeout=90, temperature=0.4)
         except llm.LLMError:
             why.append({"stage": "llm_error"})
             break
         q = out["question"].strip()
+        cited = [c for c in (out.get("cited_terms") or []) if c and c.strip() != company]   # 회사 이름은 이력서 근거가 아니다
         # 2026-11-12 RAG 평가: 한 문장 검사 추가(두 문장 질문이 그대로 나가던 경로)
-        if q and one_sentence(q) and not BLOCKLIST.search(q) and grounded(q, out.get("cited_terms", []), snapshot):
+        if q and one_sentence(q) and not BLOCKLIST.search(q) and grounded(q.replace(company, ""), cited, snapshot):
             q, _ = fit_scope(q, config.QUESTION_SECONDS, "직무 전문성·구체성")
             if not BLOCKLIST.search(q) and one_sentence(q):
-                if bank:
-                    ref["bank_used"] = bool(out.get("used_bank"))
-                return {"text": q, "resume_ref": ref, "gen_method": "llm"}
+                # 2026-11-20: 사내문서 질문과 같은 문장 규칙(QST-20) + 수치 결론형 금지 + 회사 경력 전제 금지.
+                # 전에는 이 경로에 문장 검사가 없어 "…DB 용량을 60% 줄인 경험을 설명해 주세요"가 그대로 나갔다.
+                issue = QR.resume_issue(q, company)
+                if not issue:
+                    from .agents import fewshot_guard
+                    leak = fewshot_guard.leak_terms(q, _snapshot_text(snapshot), desc, bank_txt, ignore_text, company)
+                    if leak:
+                        issue = "fewshot_leak:" + ",".join(leak[:3])   # 지시문 예문의 말이 이력서·공고에 없이 들어옴
+                if not issue and company not in q and not re.search(r"다면|가정", q):
+                    issue = "no_company_context"         # F3: 이력서 항목을 그대로 되묻는 질문(회사 맥락 가정형이 아님)
+                same = next((QR.shared_topic(q, a, ignore=[company, ignore_text]) for a in avoid if QR.shared_topic(q, a, ignore=[company, ignore_text])), [])
+                if not issue and not same:
+                    if bank:
+                        ref["bank_used"] = bool(out.get("used_bank"))
+                    return {"text": q, "resume_ref": ref, "gen_method": "llm"}
+                why.append({"stage": "style", "reason": issue or ("same_topic:" + ",".join(same[:3]))})
+                hint = ("\n\n(직전 질문은 쓰지 않았다 — "
+                        + (f"앞 질문과 같은 주제({', '.join(same[:3])})다. 이 항목의 **다른 기술·측면**을 물어라. " if same else "")
+                        + f"한 가지만 묻고, 이력서의 수치·성과를 결론처럼 앞에 두지 말고, {company}에서 다시 맡는다고 **가정**하는 형태로 써라.)")
+                continue
             _note_reject(why, q, out, snapshot)      # fit_scope 뒤 재검사에서 걸림
         else:
             _note_reject(why, q, out, snapshot)
-    r = {"text": TEMPLATES[angle].format(label=cand["label"]), "resume_ref": ref, "gen_method": "template"}
+    tpl = template_text(angle, cand["label"], company)
+    if any(QR.shared_topic(tpl, a, ignore=[company, ignore_text]) for a in avoid):
+        tpl = generic_template_text(company)            # F4: 라벨 템플릿도 앞 질문과 같은 주제 → 라벨 없는 문장
+    r = {"text": tpl, "resume_ref": ref, "gen_method": "template"}
     if why:
         r["reject"] = why
     return r
 
 
-def resume_questions(snapshot, use_llm=True, banks=None, role_name=""):
+def resume_questions(snapshot, use_llm=True, banks=None, role_name="", company=""):
     cands = resume_candidates(snapshot)
     if not cands:  # RSQ-04: 직무 DB로 대체
         return [{"category": "job_fallback", "reason": "이력서에 경력·프로젝트·학력 내용이 없어 직무 질문으로 대체"}] * RESUME_N
@@ -531,10 +588,10 @@ def resume_questions(snapshot, use_llm=True, banks=None, role_name=""):
     for i, (cand, angle) in enumerate(resume_pairs(cands)):
         bank = (banks or [None] * RESUME_N)[i] if banks and i < len(banks) else None
         if use_llm:
-            out.append(make_resume_question(cand, angle, snapshot, bank, role_name))
+            out.append(make_resume_question(cand, angle, snapshot, bank, role_name, company, avoid=[o["text"] for o in out]))
         else:
             ref = {"section": cand["section"], "index": cand["index"], "label": cand["label"], "quote": (cand["item"].get("detail") or cand["item"].get("source") or "")[:160]}
-            out.append({"text": TEMPLATES[angle].format(label=cand["label"]), "resume_ref": ref, "gen_method": "template"})
+            out.append({"text": template_text(angle, cand["label"], company), "resume_ref": ref, "gen_method": "template"})
     return out
 
 
@@ -544,7 +601,7 @@ def build_set(application, use_llm=True):
                     JOIN job_roles r ON r.code=j.role_code WHERE j.id=%s""", application["job_id"])
     snapshot = application["resume_snapshot"] or {}
     result, used_groups = [], set()
-    rq = resume_questions(snapshot, use_llm, role_name=job.get("role_name") or "")
+    rq = resume_questions(snapshot, use_llm, role_name=job.get("role_name") or "", company=job.get("company_name") or "")
     for cat, n in PLAN:
         if cat == "personality":     # 그래프가 실패했을 때의 대체 경로: 인성 md 은행(없으면 DB) → 다듬기
             for b in pick_character(n, used_groups, snapshot):

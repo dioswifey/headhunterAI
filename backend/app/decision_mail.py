@@ -66,14 +66,15 @@ def send(attempt_id):
     message, writer = _message(r)
     subject = f"[headhunterAI] {r['job_title']} 1차 전형 결과 안내"
     text = f"{r['name']}님, {message}\n\n마이페이지: {config.PUBLIC_BASE_URL}/applicant/#/my"
+    to = mailer.route(r["email"])      # 테스트 계정이면 TEST_MAIL_REDIRECT로(개발 전용)
     try:
-        mailer.send(r["email"], subject, text, _render(r, message))
+        mailer.send(to, subject, text, _render(r, message))
         db.run("INSERT INTO email_logs (attempt_id, user_id, kind, to_addr, status, writer) VALUES (%s,%s,'decision_notice',%s,'sent',%s)",
-               attempt_id, r["user_id"], r["email"], writer)
+               attempt_id, r["user_id"], to, writer)
         return {"ok": True}
     except mailer.MailError as e:
         db.run("INSERT INTO email_logs (attempt_id, user_id, kind, to_addr, status, writer, error) VALUES (%s,%s,'decision_notice',%s,'failed',%s,%s)",
-               attempt_id, r["user_id"], r["email"], writer, str(e))
+               attempt_id, r["user_id"], to, writer, str(e))
         return {"ok": False, "reason": "smtp"}
 
 

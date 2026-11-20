@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import internal_store  # noqa: E402
 from app.agents import internal_forbid, internal_qcat, internal_search  # noqa: E402
+from app.agents import internal_question_agent as IQ  # noqa: E402
 
 TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|\d+(?:\.\d+)?%?")
 SENT_END = re.compile(r"(?:[다요까]|니까)[.?!]\s*(?=\S)")
@@ -75,7 +76,8 @@ def main(a):
                 why.append("C3_blocklist")
             if Q.asks_interview_method(q):
                 why.append("C4_interview_meta")
-            if not (MIN_LEN <= len(q) <= MAX_LEN) or SENT_END.search(q):
+            # 2026-11-20: 허용 덧붙임(경험 안내 · 사용자 피드백 F1 답변 형식 예시)은 떼고 본다 — A18 validate와 같은 기준
+            if not (IQ._length_ok(q) and IQ._one_sentence(q)):
                 why.append("C5_shape")
             if chunk is None:
                 why.append("C7_doc_refs")          # 출처 조각이 사라졌다

@@ -163,8 +163,8 @@ def companies(role: str | None = None):
 
 @router.get("/jobs")
 def jobs(role: str | None = None, q: str | None = None, company: int | None = None):
-    rows = db.all_("""SELECT j.id, j.title, j.role_code, r.name role_name, r.status role_status, c.id company_id, c.name company,
-                      j.location, j.employment_type, j.open_date, j.close_date, j.status, ec.coding_enabled,
+    rows = db.all_("""SELECT j.id, j.title, j.title_en, j.role_code, r.name role_name, r.status role_status, c.id company_id, c.name company,
+                      j.location, j.location_en, j.employment_type, j.open_date, j.close_date, j.status, ec.coding_enabled,
                       (j.status='published' AND j.open_date <= (now() AT TIME ZONE 'Asia/Seoul')::date AND j.open_date >= (now() AT TIME ZONE 'Asia/Seoul')::date - 7) AS is_new
                       FROM jobs j JOIN companies c ON c.id=j.company_id JOIN job_roles r ON r.code=j.role_code
                       JOIN eval_criteria ec ON ec.job_id=j.id

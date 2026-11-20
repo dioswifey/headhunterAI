@@ -53,20 +53,42 @@ except Exception as e:  # noqa: BLE001 — 파일 없음·형식 오류 등
 # 질문은 그 자체로 읽혀야 한다 — 답변을 안 본 사람이 읽어도 말이 되어야 한다.
 import re as _re
 
-_FRAGMENT_HEAD = _re.compile(r"^\s*[^,.?!]{1,12}\s*[::]\s*")   # "초반 테스: ", "데이터베이:스 " 같은 머리 조각
-_MID_COLON = _re.compile(r"[가-힣]\s*[::]\s*[가-힣]")            # 낱말 안에 콜론이 끼어든 흔적
+from . import question_rules as _QR  # noqa: E402
+
+_FRAGMENT_HEAD = _re.compile(r"^\s*[^,.?!]{1,12}\s*[:：]\s*")   # "초반 테스: ", "데이터베이:스 " 같은 머리 조각(전각 콜론 포함)
+_MID_COLON = _re.compile(r"[가-힣]\s*[:：]\s*[가-힣]|\d[:：]\d{2}\s*(?:%|건|개|명|배|원)")   # 낱말 안 콜론 · "6:00%"·"1,20:00건" 같은 음성 인식 시각 변환 흔적
 _ASK = r"(?:설명해\s*주세요|알려\s*주세요|해\s*주세요|하시겠습니까|했나요|인가요|나요)"
 _MULTI_ASK = _re.compile(_ASK + r"[\s\S]{0,200}?" + _ASK)   # 한 꼬리질문 안에 묻는 맺음이 2번 이상
+# 2026-11-20: 4B 모델이 꼬리질문 끝에 "예를 들어 … 알려주세요." 둘째 문장이나 "(예: 1시간, 2시간 등)"을 습관처럼 붙인다
+# (qa_full_2026-11-19 원안 재검사: 채택분의 약 절반). 답을 암시하는 힌트이자 두 번째 질문이다 → **떼어 낸다**.
+# 떼고 나서 문장이 질문으로 끝나지 않으면(예시가 문장 한가운데 끼어 있던 경우) 꼬리질문을 쓰지 않는다.
+_EXAMPLE_PAREN = _re.compile(r"\s*\((?:예|예시|e\.g\.)\s*[:：.,]?[^)]*\)")
+_EXAMPLE_TAIL = _re.compile(r"(?:(?<=[.?!])\s*|\s*,\s*)예를\s*들(?:어|면)[\s\S]*$")
+_ASK_TAIL = _re.compile(r"(?:\?|요\.?|까\.?|세요\.?|니까\??)\s*$")
+_EXAMPLE_LEFT = _re.compile(r"예를\s*들|\((?:예|예시)\s*[:：]")
+
+
+def strip_examples(fq):
+    """꼬리질문에서 예시·힌트 덧붙임을 떼어 낸 문장. 떼고 나면 질문이 성립하지 않으면 None."""
+    t = _EXAMPLE_PAREN.sub("", fq or "")
+    t = _EXAMPLE_TAIL.sub("", t).strip()
+    if t == (fq or "").strip():
+        return t
+    return t if (len(t) >= 10 and _ASK_TAIL.search(t)) else None
 
 
 def readable(fq):
-    """(ok, reason). 꼬리질문이 **그 자체로 읽히는 한 문장**인지. 음성 조각·콜론 끼임·두 개 묻기를 막는다."""
+    """(ok, reason). 꼬리질문이 **그 자체로 읽히는 한 문장**인지. 음성 조각·콜론 끼임·두 개 묻기·예시 힌트를 막는다."""
     if _FRAGMENT_HEAD.search(fq):
         return False, "fragment_head"
     if _MID_COLON.search(fq):
         return False, "mid_colon"
     if _MULTI_ASK.search(fq):
         return False, "multi_ask"
+    if _QR.MULTI_INTERROG.search(fq):
+        return False, "multi_interrog"                   # "어떤 기준으로 정했고, 어떻게 검증했는지" (2026-11-20)
+    if _EXAMPLE_LEFT.search(fq):
+        return False, "example_hint"
     return True, ""
 
 
@@ -81,6 +103,12 @@ def judge_detail(att, q, answer):
     if q["parent_id"] is not None or att["followups_used"] >= config.MAX_FOLLOWUPS:
         return out
     if evaluation.NO_CONTENT.match(answer) or len(answer.strip()) < 5:
+        return out
+    # F5(2026-11-20 사용자 응시 피드백 — HIGHLY PROHIBITED): '모른다'·'이해가 안 된다'·짧은 비답변이면 파고들지 않는다.
+    # 모델을 부르기 전에 규칙으로 막는다(면접 중 모델 호출도 1회 줄어든다). attempt 14: "이거 안 보던지" → 같은 질문 재출제.
+    na, why_na = _QR.non_answer(answer)
+    if na:
+        out["skip"] = "non_answer:" + why_na
         return out
     bref = QG.bank_reference(q)
     groups, ideal = bref["keywords"], bref["ideal"]
@@ -111,6 +139,12 @@ def judge_detail(att, q, answer):
     else:
         return out
     fq = (r.get("followup_question") or "").strip()
+    if fq:
+        cut = strip_examples(fq)                         # 예시·힌트 덧붙임 떼기(2026-11-20)
+        if cut is None:
+            log.info("꼬리질문 생략(example_hint): %s", fq[:60])
+            return out
+        fq = cut
     if not fq or Q.BLOCKLIST.search(fq) or len(fq) > MAX_FOLLOWUP_CHARS:
         return out
     # 근거 검사(2026-11-19): 답변 속 숫자·용어(STT 오타·잡음 포함)를 검증 없이 그대로 꼬리질문에 옮기지 못하게 —
@@ -123,6 +157,19 @@ def judge_detail(att, q, answer):
     if not ok:
         log.info("꼬리질문 생략(%s): %s", why, fq[:60])
         return out                                       # 음성 조각·콜론 끼임·두 개 묻기 → 꼬리질문을 만들지 않는다
+    # F7(2026-11-20): 원 질문을 거의 그대로 되풀이하면 새 정보가 없다 → 생략(attempt 14의 4번: 답을 안 했더니 같은 질문이 다시 나옴)
+    if _QR.repeats_question(fq, q.get("text") or ""):
+        log.info("꼬리질문 생략(repeat_question): %s", fq[:60])
+        out["skip"] = "repeat_question"
+        return out
+    # F6(2026-11-20): 꼬리질문이 전제로 삼는 특정한 말은 답변·원 질문·이력서 근거·모범답안 어딘가에 있어야 한다.
+    # attempt 14: 답변은 "인터넷 환경을 다시 조명한 바"(음성 인식 잡음)인데 꼬리질문이 "인터넷 환경을 재조명한 구체적인 방법"을 물었다.
+    miss = _QR.ungrounded_premise(fq, answer, [q.get("text") or "", (q.get("resume_ref") or {}).get("quote") or "", ideal or "",
+                                               " ".join(w for g in (groups or []) for w in g)])
+    if miss:
+        log.info("꼬리질문 생략(ungrounded_premise %s): %s", ",".join(miss[:3]), fq[:60])
+        out["skip"] = "ungrounded_premise:" + ",".join(miss[:3])
+        return out
     if groups:   # 힌트 금지(B-07): 지원자가 말하지 않은 기대 키워드가 꼬리질문에 있으면(원 질문에 있던 말은 제외) 생략
         said, qn, fn = set(out["keyword_hits"]), QG._norm(q["text"]), QG._norm(fq)
         for g in groups:

@@ -120,6 +120,9 @@ def chunk(cid, doc_id, sec, body, disclosure="public", sim=0.8, status="active")
                          "status": status, "doc_type": "project", "dept": "|ai_ax|", "dept_ai_ax": True, "forbid_terms": ""}}
 
 
+OLD_MARK = "옛경로 "   # 기존 contextualize 경로를 탔다는 표식(문장 규칙에 걸리지 않는 말)
+
+
 class Env:
     """가짜 환경 한 벌 — with 블록이 끝나면 원래 함수로 되돌린다."""
 
@@ -153,14 +156,14 @@ class Env:
 
     def old_contextualize(self, q, job, intent=""):
         self.old_calls += 1
-        return "OLD:" + q
+        return OLD_MARK + q   # 2026-11-20: 콜론 표식("OLD:")은 새 문장 규칙(콜론 조각)에 걸려 원문으로 되돌아가므로 표식만 바꿨다
 
     def __enter__(self):
         self._saved = [(llm, "chat_json"), (internal_store, "query_public"), (internal_forbid, "rag_ready"),
                        (internal_forbid, "load_terms"), (Q, "contextualize"), (Q, "contextualize_character"),
                        (Q, "contextualize_job"), (Q, "make_resume_question"), (Q, "pick_character"),
                        (QG, "REVIEW"), (config, "INTERNAL_DOCS_RAG"), (QG, "_redis_query_vector"), (QG, "_pick_redis"),
-                       (QG, "_pick_internal"), (QG, "_resume_bank_refs"), (QG.db, "one")]
+                       (QG, "_pick_internal"), (QG, "_resume_bank_refs"), (QG.db, "one"), (QG, "_filter_by_posting")]
         self._saved = [(m, n, getattr(m, n)) for m, n in self._saved]
         llm.chat_json = self.chat
         internal_store.query_public = self.query_public
@@ -169,7 +172,7 @@ class Env:
         Q.contextualize = self.old_contextualize
         Q.contextualize_character = lambda item, job, snap: item["text"]
         Q.contextualize_job = lambda q, job, snap, intent="": q
-        Q.make_resume_question = lambda cand, angle, snap, bank=None, role="": {"text": "이력서 질문입니다 설명해 주세요.",
+        Q.make_resume_question = lambda cand, angle, snap, bank=None, role="", company="", avoid=(), **kw: {"text": "이력서 질문입니다 설명해 주세요.",
                                                                                  "resume_ref": {}, "gen_method": "llm"}
         Q.pick_character = lambda n, used=(), snap=None: [{"id": None, "text": f"인성 질문 {i}번을 설명해 주세요.",
                                                             "subcategory": "협업", "dup_group": f"c{i}"} for i in range(n)]
@@ -186,6 +189,9 @@ class Env:
         # 사내문서 질문을 먼저 찾는다, M-55). 이 가짜 환경은 이력서 참고 문항을 쓰지 않으므로 인자만 맞춘다.
         QG._resume_bank_refs = lambda s, role, used, iq_terms=None: [None, None, None]
         QG.db.one = lambda *a, **k: dict(JOB)
+        # 2026-11-20: 관문 2(공고 유사도)는 가짜 임베딩으로는 뜻이 없어 여기서는 통과시킨다(출처 순서만 검사).
+        # 관문 2 자체(부분 탈락 → 보충 · 인성 미적용)는 tools/test_question_rules.py가 검사한다.
+        QG._filter_by_posting = lambda cands, job, cat: cands
         return self
 
     def __exit__(self, *exc):
@@ -235,7 +241,7 @@ def main():
     qs, info = run_graph(env)
     c = company(qs)
     res.append(("R3 근거 0조각 → 기존 contextualize, gen_method 그대로",
-                c["text"] == "OLD:" + COMPANY_BANK and "internal" not in c["gen_method"] and env.old_calls == 1
+                c["text"] == OLD_MARK + COMPANY_BANK and "internal" not in c["gen_method"] and env.old_calls == 1
                 and not any("[사내문서 근거" in p for p in env.prompts)))
 
     # R4 관문 닫힘 · 사전 없음 · 스위치 끔
@@ -243,13 +249,13 @@ def main():
                      ("INTERNAL_DOCS_RAG=0", {"rag_on": False})):
         env = Env(hits=pub, **kw)
         qs, _ = run_graph(env)
-        res.append((f"R4 {name} → 검색 안 함 · 기존 경로", env.searched == 0 and company(qs)["text"] == "OLD:" + COMPANY_BANK))
+        res.append((f"R4 {name} → 검색 안 함 · 기존 경로", env.searched == 0 and company(qs)["text"] == OLD_MARK + COMPANY_BANK))
 
     # R5 restricted 조각 혼입
     env = Env(hits=pub + [chunk("PRJ-CC#003#0", "PRJ-CC", "s4", SECRET_BODY, disclosure="internal", sim=0.95)])
     qs, info = run_graph(env)
     res.append(("R5 restricted 혼입 → 컨텍스트 폐기 · 본문이 어떤 프롬프트에도 없음",
-                company(qs)["text"] == "OLD:" + COMPANY_BANK and not any("300석" in p for p in env.prompts)
+                company(qs)["text"] == OLD_MARK + COMPANY_BANK and not any("300석" in p for p in env.prompts)
                 and any("공개판이 아닌 조각" in line for line in info["log"])))
 
     # R6 금지 용어가 남은 공개 조각 → 버림
@@ -320,7 +326,7 @@ def main():
                 st == [["active", "done", "resolved"]] and company(qs)["gen_method"].endswith("|internal:PRJ-CC-PUB#s2")))
     env = Env(hits=[chunk("X#000#0", "X", "s1", PUB_BODY, status="open")])
     qs, info = run_graph(env)
-    res.append(("R12 open 조각이 섞이면 컨텍스트 폐기", company(qs)["text"] == "OLD:" + COMPANY_BANK))
+    res.append(("R12 open 조각이 섞이면 컨텍스트 폐기", company(qs)["text"] == OLD_MARK + COMPANY_BANK))
     for name, q in (("[금액]", "상담 문서 검색 품질을 [금액] 예산 안에서 매주 점검할 방법을 설명해 주세요."),
                     ("가명 고객사A", "고객사A의 상담 문서 검색 품질을 매주 평가셋으로 점검할 방법을 설명해 주세요.")):
         with Env(rag_answer={"question": q, "company_facts": [], "doc_refs": ["PRJ-CC-PUB#s2"]}):

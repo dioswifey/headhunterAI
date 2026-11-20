@@ -469,8 +469,9 @@ def t_resume_internal_short():
     env = ResumeIQEnv(ref_pool=["ref0"])
     qs, info = _run(env)
     rq = _resume_qs(qs)
-    check("I10 역량 부족에도 8문항", len(qs) == 8 and len(rq) == 3, str(len(qs)))
-    check("I10 모자란 2문항만 Redis 백업 호출", env.knn_calls == 2, str(env.knn_calls))
+    # 2026-11-20: 이력서 문항 수는 PLAN에서 읽는다(2026-11-19 PLAN 변경 이력서 3 → 2 뒤 이 상수가 낡아 있었다)
+    check("I10 역량 부족에도 8문항", len(qs) == 8 and len(rq) == Q.RESUME_N, str(len(qs)))
+    check("I10 모자란 문항만 Redis 백업 호출", env.knn_calls == Q.RESUME_N - 1, str(env.knn_calls))
     dr = info.get("dual_report") or {}
     check("I10 dual_report.resume_iq_ref = 1", dr.get("resume_iq_ref") == 1, str(dr))
     internal = [q for q in rq if "|internal:" in (q.get("gen_method") or "")]
@@ -483,8 +484,8 @@ def t_resume_internal_off():
     env = ResumeIQEnv(iq_on=False)
     qs, info = _run(env)
     rq = _resume_qs(qs)
-    check("I10 사내문서 질문 없음 → Redis 3회", env.knn_calls == 3, str(env.knn_calls))
-    check("I10 로그 resume_bank 출처 = redis", "resume_bank 3(redis)" in _retrieve_log(info), _retrieve_log(info))
+    check("I10 사내문서 질문 없음 → Redis 이력서 문항 수만큼", env.knn_calls == Q.RESUME_N, str(env.knn_calls))
+    check("I10 로그 resume_bank 출처 = redis", f"resume_bank {Q.RESUME_N}(redis)" in _retrieve_log(info), _retrieve_log(info))
     check("I10 dual_report.resume_iq_ref = 0", (info.get("dual_report") or {}).get("resume_iq_ref") == 0)
     check("I10 이력서 문항에 |internal: 없음", not any("internal:" in (q.get("gen_method") or "") for q in rq),
           str([q.get("gen_method") for q in rq]))
@@ -494,7 +495,7 @@ def t_resume_internal_off():
     qs, info = _run(env)
     check("I10 Redis도 하한 미달 → 참고 문항 없이 8문항", len(qs) == 8, str(len(qs)))
     check("I10 참고 문항 없음 → 로그 resume_bank 출처 = '-'",
-          "resume_bank 3(-)" in _retrieve_log(info), _retrieve_log(info))
+          f"resume_bank {Q.RESUME_N}(-)" in _retrieve_log(info), _retrieve_log(info))
 
 
 # ---------------- I11 A6 되돌림: 이력서는 집계에서 빼고 A17은 유지 (2026-11-18) ----------------
@@ -537,8 +538,10 @@ def t_resume_revert_not_counted():
           not any("|internal:" in g for g in gm_r), str(gm_r))
 
     # ⓑ 건드리면 안 되는 경우 — A17 카테고리 문항(text == orig가 정상)
-    check("I11 A17 직무2·기업1 = 3문항 출처 유지(|internal:)",
-          len(cat) == 3 and all("|internal:" in g for g in gm_c), str(gm_c))
+    n_cat = dict(Q.PLAN)["job"] + dict(Q.PLAN)["company"]          # 2026-11-20: PLAN에서 읽는다(직무 2 → 3 변경 반영)
+    n_a17 = n_cat + dict(Q.PLAN)["personality"]
+    check("I11 A17 직무·기업 문항 출처 유지(|internal:)",
+          len(cat) == n_cat and all("|internal:" in g for g in gm_c), str(gm_c))
     check("I11 A17 문항은 질문 문장 그대로", all("사내문서 질문" in q["text"] for q in cat),
           str([q["text"][:22] for q in cat]))
 
@@ -546,12 +549,12 @@ def t_resume_revert_not_counted():
     # 검사 대상 5 = A17 인성 2 + 직무 2 + 기업 1(인성도 `_internal_draft`가 doc_refs를 단다).
     # 이력서 3문항은 지름길에서 걸러져 `checked`에 들어가지 않는다 — 8 − 3 = 5.
     gr = info.get("guard_report") or {}
-    check("I11 7-B 검사 5건(A17 5문항만, 이력서 3 제외) · 차단 0",
-          gr.get("checked") == 5 and gr.get("blocked") == 0, str(gr))
+    check("I11 7-B 검사 = A17 문항 수(이력서 제외) · 차단 0",
+          gr.get("checked") == n_a17 and gr.get("blocked") == 0, str(gr))
 
     r = M.summarize([{"pid": "T", "questions": [{"category": q["category"], "gen_method": q.get("gen_method")}
                                                 for q in qs]}])
-    check("I11 M-55 = 5/8(인성2+직무2+기업1만) · 이력서 0", r["internal"] == 5, str(r))
+    check("I11 M-55 = A17 문항만(인성+직무+기업) · 이력서 0", r["internal"] == n_a17, str(r))
 
     # 같은 환경에서 A6만 통과시키면 이력서 3문항이 다시 집계된다(수정이 과도하지 않다는 확인)
     env2 = ResumeIQEnv(review=True)
@@ -579,6 +582,10 @@ def t_bank_reference():
     META = {"model_answer": "핵심 지표를 먼저 말하고 근거를 덧붙이는 답변이 좋습니다.",
             "expected_keywords": "지표 정의, 재현율|리콜, 검증 절차"}
     saved, calls = S.question_collection, []
+    # 2026-11-18 뒤 이 분기는 `FOLLOWUP_INTERNAL_REF`(기본 0) 스위치 안으로 들어갔다(B-07 힌트 위험 측정 전까지 꺼 둠).
+    # 이 시험은 분기 자체를 보므로 켜고 돈다(2026-11-20: 스위치가 생긴 뒤 이 시험이 TypeError로 멈춰 있었다).
+    saved_flag = config.FOLLOWUP_INTERNAL_REF
+    config.FOLLOWUP_INTERNAL_REF = True
 
     def use(coll):
         def fn(cat):
@@ -616,6 +623,7 @@ def t_bank_reference():
               str(r["keywords"]))
     finally:
         S.question_collection = saved
+        config.FOLLOWUP_INTERNAL_REF = saved_flag
 
 
 def main():

@@ -139,8 +139,8 @@ async function loadMe() {
   if (me && me.role !== 'applicant') me = null;
   const area = $('#auth-area');
   area.innerHTML = me
-    ? `<span class="who">${esc(me.name)} 님</span> <a class="btn sm ghost" href="#/account">계정관리</a> <button class="btn sm ghost" id="logout">로그아웃</button>`
-    : `<a class="btn sm ghost" href="#/login">로그인</a> <a class="btn sm primary" href="#/signup">회원가입</a>`;
+    ? `<span class="who">${esc(me.name)}${HH.isEn() ? '' : ' 님'}</span> <a class="btn sm ghost" href="#/account">${T('계정관리')}</a> <button class="btn sm ghost" id="logout">${T('로그아웃')}</button>`
+    : `<a class="btn sm ghost" href="#/login">${T('로그인')}</a> <a class="btn sm primary" href="#/signup">${T('회원가입')}</a>`;
   const pdd = document.getElementById('practice-dd');
   if (pdd) { pdd.hidden = !me; if (!me) setPracticeMenu(false); }
   const reset = document.getElementById('dev-reset');
@@ -231,15 +231,20 @@ async function landing() {
 
 /* ───────── 공고 ───────── */
 // '지금 n명이 보고 있어요' — 서버가 실측 10명 이상일 때만 숫자를 준다(presence.py). 없으면 아무것도 그리지 않는다
-const viewersHtml = (n, sm) => (n ? `<span class="live-viewers${sm ? ' sm' : ''}"><span class="live-dot" aria-hidden="true"></span>지금 <b>${n}명</b>이 보고 있어요</span>` : '');
+const viewersHtml = (n, sm) => (n ? `<span class="live-viewers${sm ? ' sm' : ''}"><span class="live-dot" aria-hidden="true"></span>${HH.isEn()
+  ? `<b>${n}</b> people viewing now` : `지금 <b>${n}명</b>이 보고 있어요`}</span>` : '');
+
+// 공고 문구의 영어판(2026-11-20): EN이면 서버의 *_en 칸, 비어 있으면 한국어 그대로. 회사명·근무지·고용 형태는 사전(i18n-en.js)
+const L = (o, k) => (HH.isEn() && o[k + '_en']) || o[k] || '';
+const jobLoc = (j) => (HH.isEn() && j.location_en) || T(j.location || '');
 
 function jobCard(j) {
   const closed = j.status === 'closed';
   return `<button class="card click" data-job="${j.id}">
     <div class="between"><span class="row" style="gap:10px"><span class="pill ${closed ? 'dim' : 'neon'}">${closed ? T('마감') : T('접수 중')}</span>${j.is_new ? '<span class="new-badge">NEW</span>' : ''}</span>
       ${j.role_status !== 'active' ? `<span class="pill dim">${T('준비 중 · 지원 불가')}</span>` : j.coding_enabled ? `<span class="pill">${T('코딩테스트 포함')}</span>` : `<span class="pill dim">${T('AI 면접만')}</span>`}</div>
-    <h2 style="margin:12px 0 4px">${esc(j.title)}</h2>
-    <div class="sub">${esc(j.company)} · ${esc(j.role_name)} · ${esc(j.location || '')}</div>
+    <h2 style="margin:12px 0 4px">${esc(L(j, 'title'))}</h2>
+    <div class="sub">${esc(T(j.company))} · ${esc(T(j.role_name))} · ${esc(jobLoc(j))}</div>
     <div class="small" style="margin-top:10px">${T('접수 마감')} ${fmtYMD(j.close_date)} · ${T('결과 공개')} ${fmtYMD(j.result_date)}</div>
     ${j.viewers && !closed ? `<div style="margin-top:12px">${viewersHtml(j.viewers, true)}</div>` : ''}
   </button>`;
@@ -291,14 +296,20 @@ async function jobsRole(code) {
 async function jobsBrowse(params) {
   setNav('jobs');
   const role = params.get('role') || 'ai_ax';
-  const list = await get(`/api/companies?role=${encodeURIComponent(role)}`);
+  // 고른 직무의 공고가 있는 기업만, 공고 수도 그 직무 기준으로(전에는 직무와 상관없이 모든 기업·전체 공고 수가 떴다)
+  const [all, roleJobs] = await Promise.all([get(`/api/companies?role=${encodeURIComponent(role)}`), get(`/api/jobs?role=${encodeURIComponent(role)}`)]);
+  const today = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);   // KST 날짜(서버 open_jobs 기준과 같게)
+  const list = all.filter((c) => roleJobs.some((j) => j.company_id === c.id)).map((c) => {
+    const mine = roleJobs.filter((j) => j.company_id === c.id);
+    return { ...c, jobs: mine.length, open_jobs: mine.filter((j) => j.status === 'published' && j.role_status === 'active' && String(j.close_date).slice(0, 10) >= today).length };
+  });
   view.innerHTML = `<div class="wrap">
     ${backLink(`#/jobs/role/${role}`, T('이전'))}
     <h1 style="margin-top:14px">${T('기업 선택')}</h1><p class="sub">${T('공고를 올린 기업입니다. 기업을 고르면 그 기업의 공고를 모두 볼 수 있습니다.')}</p>
     <div class="grid3" style="margin-top:20px">${list.length ? list.map((c) => `<button class="card click" data-company="${c.id}">
       <div class="between"><span class="pill ${c.open_jobs ? 'neon' : 'dim'}">${T('지원 가능 {n}개', { n: c.open_jobs })}</span><span class="small">${T('공고 {n}개', { n: c.jobs })}</span></div>
-      <h2 style="margin:12px 0 4px">${esc(c.name)}</h2><div class="sub">${esc(c.location || '')}</div>
-      <div class="small" style="margin-top:10px">${esc(c.intro || '')}</div></button>`).join('')
+      <h2 style="margin:12px 0 4px">${esc(T(c.name))}</h2><div class="sub">${esc(T(c.location || ''))}</div>
+      <div class="small" style="margin-top:10px">${esc(T(c.intro || ''))}</div></button>`).join('')
       : `<div class="empty" style="grid-column:1/-1">${T('공고를 올린 기업이 없습니다.')}</div>`}</div></div>`;
   $$('[data-company]').forEach((b) => (b.onclick = () => go(`#/jobs/company/${b.dataset.company}?role=${role}`)));
 }
@@ -306,11 +317,11 @@ async function jobsBrowse(params) {
 async function jobsCompany(id, params) {
   setNav('jobs');
   const role = params.get('role') || 'ai_ax';
-  const list = await get(`/api/jobs?company=${id}`);
+  const list = await get(`/api/jobs?company=${id}&role=${encodeURIComponent(role)}`);   // 고른 직무의 공고만
   if (!list.length) { go(`#/jobs/browse?role=${role}`); return; }
   view.innerHTML = `<div class="wrap">
     ${backLink(`#/jobs/browse?role=${role}`, T('기업 선택'))}
-    <h1 style="margin-top:14px">${esc(list[0].company)}</h1><p class="sub">${T('이 기업의 공고 {n}개입니다. 준비 중인 직무의 공고는 볼 수만 있고 지원할 수 없습니다.', { n: list.length })}</p>
+    <h1 style="margin-top:14px">${esc(T(list[0].company))}</h1><p class="sub">${T('이 기업의 공고 {n}개입니다. 준비 중인 직무의 공고는 볼 수만 있고 지원할 수 없습니다.', { n: list.length })}</p>
     <div class="grid3" style="margin-top:20px">${list.map(jobCard).join('')}</div></div>`;
   $$('[data-job]').forEach((b) => (b.onclick = () => go(`#/jobs/${b.dataset.job}`)));
 }
@@ -334,9 +345,9 @@ async function jobDetail(id) {
   const j = await get(`/api/jobs/${id}`);
   const closed = j.status === 'closed';
   view.innerHTML = `<div class="wrap mid">
-    <a class="btn sm ghost" href="#/jobs/company/${j.company_id}">← ${T('{company} 공고', { company: esc(j.company) })}</a>
-    <h1 style="margin-top:14px">${esc(j.title)}${j.is_new ? '<span class="new-badge">NEW</span>' : ''}</h1>
-    <div class="sub">${esc(j.company)} · ${esc(T(j.role_name))} · ${esc(j.employment_type)} · ${esc(j.location)} · ${T('모집 {n}명', { n: j.headcount })}</div>
+    <a class="btn sm ghost" href="#/jobs/company/${j.company_id}?role=${j.role_code}">← ${T('{company} 공고', { company: esc(T(j.company)) })}</a>
+    <h1 style="margin-top:14px">${esc(L(j, 'title'))}${j.is_new ? '<span class="new-badge">NEW</span>' : ''}</h1>
+    <div class="sub">${esc(T(j.company))} · ${esc(T(j.role_name))} · ${esc(T(j.employment_type))} · ${esc(jobLoc(j))} · ${T('모집 {n}명', { n: j.headcount })}</div>
     <div id="viewers" style="margin-top:14px"></div>
     <div class="grid3" style="margin:22px 0">
       <div class="card"><div class="small">${T('접수 기간')}</div><b>${fmtYMD(j.open_date)} ~ ${fmtYMD(j.close_date)}</b></div>
@@ -344,10 +355,10 @@ async function jobDetail(id) {
       <div class="card"><div class="small">${T('1차 결과 공개')}</div><b>${fmtYMD(j.result_date)} 10:00</b></div>
     </div>
     <div class="card col">
-      <h3>${T('회사 소개')}</h3><p class="sub">${lines(j.company_intro)}</p>
-      <h3>${T('주요 업무')}</h3><p class="sub">${lines(j.duties)}</p>
-      <h3>${T('자격 요건')}</h3><p class="sub">${lines(j.requirements)}</p>
-      ${j.preferred ? `<h3>${T('우대 사항')}</h3><p class="sub">${lines(j.preferred)}</p>` : ''}
+      <h3>${T('회사 소개')}</h3><p class="sub">${lines(L(j, 'company_intro'))}</p>
+      <h3>${T('주요 업무')}</h3><p class="sub">${lines(L(j, 'duties'))}</p>
+      <h3>${T('자격 요건')}</h3><p class="sub">${lines(L(j, 'requirements'))}</p>
+      ${j.preferred ? `<h3>${T('우대 사항')}</h3><p class="sub">${lines(L(j, 'preferred'))}</p>` : ''}
     </div>
     <div class="note" style="margin:18px 0">${T('지원 후 이력서를 올리면 AI가 내용을 읽어 맞춤 질문 2개를 만듭니다. AI 면접은 1회만 응시할 수 있고 중단 버튼이 없습니다.')}</div>
     <button class="btn primary lg" id="apply" ${closed || j.role_status !== 'active' ? 'disabled' : ''}>${closed ? T('접수 마감됨') : j.role_status !== 'active' ? T('준비 중인 직무 · 지원 불가') : T('지원하기')}</button>
@@ -384,6 +395,8 @@ function continueApplication(app) {
 async function login(params) {
   setNav('');
   const next = safeNext(params.get('next'));
+  // 2026-11-20: 첫 페이지 '지원자로 시작하기'가 로그인으로 온다 — 이미 로그인한 상태면 로그인 창을 건너뛰고 바로 다음 화면(기본 마이페이지)으로
+  if (me) { go('#' + next); return; }
   view.innerHTML = `<div class="wrap narrow"><div class="card">
     <h1>${T('지원자 로그인')}</h1><p class="sub">${T('로그인 후 지원 절차로 돌아갑니다.')}</p>
     <div class="err" id="err" hidden></div>
@@ -538,9 +551,12 @@ const shuffle = (arr) => arr.map((v) => [Math.random(), v]).sort((x, y) => x[0] 
 async function mypage() {
   setNav('my');
   if (!requireLogin('/my')) return;
-  const [apps, notes, resumes, allJobs] = await Promise.all([
+  const [apps, allNotes, resumes, allJobs] = await Promise.all([
     get('/api/me/applications'), get('/api/me/notifications'), get('/api/me/resumes'), get('/api/jobs'),
   ]);
+  // '결과 도착' 알림인데 그 지원 건에 응시 기록이 없으면(응시 기록만 지워진 경우 등) 눌러도 결과가 없으므로 목록에서 뺀다
+  const attempted = new Set(apps.filter((a) => a.attempt_id).map((a) => a.id));
+  const notes = allNotes.filter((n) => !(n.type === 'result' && n.application_id && !attempted.has(n.application_id)));
   // 추천 공고: 헤드헌터랩 지점(서울·경기·인천) 접수 중 공고를 무작위로. 지원 여부와 무관하게 보여 준다
   const open = allJobs.filter((j) => j.status === 'published' && j.role_status === 'active');
   const branch = open.filter((j) => /^헤드헌터랩_/.test(j.company || ''));
@@ -979,6 +995,22 @@ async function envView(appId) {
         if (!prev || (isVirtual(prev) && !isVirtual(d))) byKey.set(key, d);
       }
       opts = [...byKey.values()];
+      // 2026-11-20 사용자 지시: 블루투스 헤드셋은 같은 기기가 '머리에 거는 수화기(… Hands-Free AG Audio)'·'헤드폰(… Stereo)'
+      // 두 항목으로 따로 잡힌다(groupId도 달라 위에서 안 합쳐짐) → 괄호 안 기기 이름이 같으면 하나만 남긴다.
+      // 남길 항목: 지금 고른 것 > 마이크가 그 헤드셋 통화 모드면 통화 항목(Stereo는 무음이 됨) > Stereo
+      const btKey = (d) => {
+        const m = !isVirtual(d) && (d.label || '').match(/\(([^()]+)\)/);
+        if (!m || !/hands[- ]?free|stereo|핸즈프리|스테레오/i.test(m[1])) return null;
+        return m[1].replace(/hands[- ]?free(\s+ag)?(\s+audio)?|stereo|핸즈프리|스테레오/ig, '').replace(/\s+/g, ' ').trim().toLowerCase();
+      };
+      const micKey = micDev() && isHfp(micDev().label) ? btKey(micDev()) : null;
+      const rank = (d) => (d.deviceId === cur ? 3 : (micKey && btKey(d) === micKey && isHfp(d.label)) ? 2 : !isHfp(d.label) ? 1 : 0);
+      const byDev = new Map();
+      for (const d of opts) {
+        const k = btKey(d);
+        if (k && (!byDev.has(k) || rank(d) > rank(byDev.get(k)))) byDev.set(k, d);
+      }
+      opts = opts.filter((d) => { const k = btKey(d); return !k || byDev.get(k) === d; });   // 원래 순서 유지
       const hasDefault = opts.some((d) => d.deviceId === 'default');
       const want = cur || (hasDefault ? 'default' : (opts[0] ? opts[0].deviceId : ''));
       const label = (d, i) => (d.label || `${base.slice(3)} ${i + 1}`).replace(/^(기본값|커뮤니케이션)\s*-\s*/, '');
@@ -1370,6 +1402,21 @@ async function interviewView(attemptId) {
     };
   }
 
+  /* 2026-11-20 사용자 지시: 질문이 길면 읽기 쉽게 문장 단위로 문단을 나눈다(데스크톱·모바일 공통).
+     짧은 질문(90자 미만)이나 한 문장은 그대로 한 덩어리. 아주 짧은 문장(25자 미만)은 앞 문단에 붙인다.
+     문장 끝 = '.·?·!' 뒤 공백(‘6.2%’처럼 공백 없는 마침표는 나누지 않음). 질문 문장 자체·음성은 그대로 */
+  function qParas(text) {
+    const s = String(text || '').trim();
+    const sents = s.split(/(?<=[.?!])\s+(?=\S)/);
+    if (s.length < 90 || sents.length < 2) return esc(s);
+    const paras = [];
+    for (const x of sents) {
+      if (paras.length && x.length < 25) paras[paras.length - 1] += ' ' + x;
+      else paras.push(x);
+    }
+    return paras.map((p) => `<p>${esc(p)}</p>`).join('');
+  }
+
   function renderInterview() {
     const q = st.question;
     if (!q) return;
@@ -1380,7 +1427,7 @@ async function interviewView(attemptId) {
         ${st.exit_count ? `<span class="pill">화면 이탈 ${st.exit_count}회</span>` : ''}</span></div>
       <div class="stage">
         <div class="between" style="align-items:flex-start;gap:20px">
-          <div style="flex:1;min-width:260px" class="col"><div class="small">${q.followup ? '' : `질문 ${q.seq}`}</div><div class="qbox" id="qtext">${esc(q.text)}</div></div>
+          <div style="flex:1;min-width:260px" class="col"><div class="small">${q.followup ? '' : `질문 ${q.seq}`}</div><div class="qbox" id="qtext">${qParas(q.text)}</div></div>
           <div class="col" style="justify-items:center"><div class="timer idle" id="timer">${q.time_limit}</div></div>
         </div>
         <div id="phase" class="small">질문을 읽어 드리고 있습니다…</div>
@@ -1808,7 +1855,9 @@ async function doneView(appId) { go('#/my'); }
 async function resultView(appId) {
   if (!requireLogin()) return;
   setNav('my');
-  const r = await get(`/api/applications/${appId}/result`);
+  let r;
+  try { r = await get(`/api/applications/${appId}/result`); }
+  catch (e) { toast(e.message || '결과를 불러오지 못했습니다.', true); go('#/my'); return; }   // 응시 기록이 없는 지원 건 등: 빈 화면 대신 마이페이지로
   if (!r.published) {
     // 2026-11-18 사용자 지시: 업계 표준 안내 문구(서버가 회사·지원자 이름을 넣어 내려준다)
     const head = r.headline || '결과 공개 전입니다';
@@ -1830,6 +1879,8 @@ async function resultView(appId) {
 
 /* ───────── boot ───────── */
 window.addEventListener('hashchange', router);
+// 하단 약관 링크 2개도 영어판에서는 영어 이름으로(2026-11-20). 연결된 문서 자체는 한국어
+if (HH.isEn() && $('#legal-foot')) $('#legal-foot').innerHTML = '<a href="/terms">Terms of Service</a><a href="/privacy"><b>Privacy Policy</b></a>';
 (async () => {
   await HH.devbar((bar) => {
     const b = document.createElement('button');

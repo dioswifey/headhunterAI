@@ -108,3 +108,21 @@ HH.addDict({
   /* 기업 담당자 로그인 */
   '기업 담당자 로그인': 'Recruiter sign-in',
 });
+
+HH.addDict({
+  /* 공고를 올린 기업 (2026-11-20). 공고 본문 영어판은 DB *_en 칸(backend/db/seed/job_texts.json) */
+  '헤드헌터랩': 'HeadhunterLab', '헤드헌터랩_서울': 'HeadhunterLab Seoul',
+  '헤드헌터랩_경기': 'HeadhunterLab Gyeonggi', '헤드헌터랩_인천': 'HeadhunterLab Incheon',
+  '사내 업무를 AI로 자동화하는 AX 솔루션을 만드는 데모 회사입니다. 문서 검색·요약 에이전트와 사내 LLM 플랫폼을 운영합니다.':
+    'A demo company building AX solutions that automate internal work with AI. It runs document search and summarization agents and an internal LLM platform.',
+  '금융·커머스 고객사에 AI 상담·검색 서비스를 공급하는 B2B AI 회사입니다. 고객 상담 기록과 상품 문서를 근거로 답하는 상담 에이전트를 직접 만들고 운영합니다.':
+    'A B2B AI company providing AI customer service and search to clients in finance and commerce. It builds and operates its own agents that answer from customer service records and product documents.',
+  '제조 현장의 AX(AI 전환)를 돕는 스마트팩토리 솔루션 회사입니다. 비전 검사와 설비 센서 데이터 분석으로 불량과 설비 정지를 줄입니다.':
+    'A smart-factory solutions company helping manufacturers with AX (AI transformation). It reduces defects and equipment downtime through vision inspection and equipment sensor data analysis.',
+  '항만·물류 기업의 운영 데이터를 다루는 물류 AI 회사입니다. 물동량 수요 예측과 배차·경로 최적화 서비스를 만듭니다.':
+    'A logistics AI company working with operations data from port and logistics businesses. It builds cargo demand forecasting and dispatch and route optimization services.',
+
+  /* 근무지 · 고용 형태 */
+  '서울 강남구': 'Gangnam-gu, Seoul', '경기 성남시 분당구': 'Bundang-gu, Seongnam, Gyeonggi', '인천 연수구': 'Yeonsu-gu, Incheon',
+  '정규직': 'Full-time', '계약직': 'Contract', '인턴': 'Internship', '파견직': 'Temporary (agency)', '프리랜서': 'Freelance',
+});

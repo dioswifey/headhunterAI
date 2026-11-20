@@ -70,8 +70,31 @@ def run_public(problem, code):
     return {"status": res["status"], "cases": view, "stderr": res.get("stderr", ""), "stdout": res.get("stdout", "")}
 
 
+def problem_points(passed, total):
+    """문제 1개의 점수(2026-11-20 사용자 지시): 통과율 70% 이상 = 1점(만점), 50% 이상 = 0.5점, 그 미만 = 0점.
+    완벽히 다 맞는 지원자는 드물어서, 핵심 로직이 맞으면 만점·절반쯤 맞으면 반점을 준다."""
+    if not total:
+        return 0.0
+    rate = passed / total
+    if rate >= config.CODING_FULL_RATE:
+        return 1.0
+    if rate >= config.CODING_HALF_RATE:
+        return 0.5
+    return 0.0
+
+
+def points_summary(attempt_id):
+    """채점된 제출 기준 문제별 점수 합계. {'points': 1.5, 'max': 3, 'passed': n, 'total': m} 또는 None."""
+    subs = db.all_("SELECT passed, total FROM coding_submissions WHERE attempt_id=%s", attempt_id)
+    if not subs:
+        return None
+    return {"points": sum(problem_points(s["passed"] or 0, s["total"] or 0) for s in subs), "max": len(subs),
+            "passed": sum(s["passed"] or 0 for s in subs), "total": sum(s["total"] or 0 for s in subs)}
+
+
 def grade(attempt_id):
-    """COD-06: (public + hidden) pass rate × 100, problems weighted equally."""
+    """COD-06 (2026-11-20 변경): 문제별 부분 점수(problem_points) 합계 / 문제 수 × 100.
+    예: 3문제 중 1문제 만점(70%+)·1문제 반점(50%+)·1문제 0점 → 1.5/3 = 50.0"""
     subs = db.all_("""SELECT s.*, p.tests, p.func_name FROM coding_submissions s
                       JOIN coding_problems p ON p.id = s.problem_id WHERE s.attempt_id=%s""", attempt_id)
     if not subs:
@@ -85,5 +108,5 @@ def grade(attempt_id):
             res = sandbox_run(s["code"], s["func_name"], tests, hide_hidden=True)
             passed = sum(1 for r in res.get("results", []) if r.get("ok"))
         db.run("UPDATE coding_submissions SET passed=%s, total=%s WHERE id=%s", passed, len(tests), s["id"])
-        rates.append(passed / len(tests))
+        rates.append(problem_points(passed, len(tests)))
     return round(sum(rates) / len(rates) * 100, 2)

@@ -14,6 +14,13 @@ def enabled():
     return bool(config.SMTP_HOST and config.SMTP_USER and config.SMTP_PASSWORD)
 
 
+def route(to_addr):
+    """실제로 보낼 주소. 개발 환경에서 테스트 계정 주소면 TEST_MAIL_REDIRECT로 바꾼다(그 외는 그대로)."""
+    if config.DEV_MODE and config.TEST_MAIL_REDIRECT and (to_addr or "").strip().lower() == config.TEST_APPLICANT_EMAIL.lower():
+        return config.TEST_MAIL_REDIRECT
+    return to_addr
+
+
 def send(to_addr, subject, text, html):
     if not enabled():
         raise MailError("smtp_not_configured")
