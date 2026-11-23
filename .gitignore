@@ -27,3 +27,9 @@ ADLC/followup/corpus_v3_1106n/
 #   공고 참고 : docker exec AI-Interview-project-api python -m app.agents.job_posting_graph run --force --raw /job_posting_resources
 # 원본(=기준)은 git에 그대로 있다: internal_documents/ · job_posting_resources/ · questionbank/regularDB/
 questionbank/vectorDB/chroma/
+
+# 프로젝트 소개 녹화 영상 (2026-11-23 사용자 결정 — git 제외)
+# 왜 뺐나: headhunterAI_finalproject_recording.mp4가 198MB로 GitHub 파일 1개 한도(100MB)를 넘어
+#          커밋하면 push 자체가 거부된다.
+# 실물 어디 있나: 사용자가 Google Drive에 직접 올림(headhunterAI_resources/) + 각 PC 로컬
+recording_videos/
