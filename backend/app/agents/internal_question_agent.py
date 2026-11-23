@@ -25,6 +25,7 @@
     python -m app.agents.internal_question_agent sync          # 조각 본문이 바뀐 것만 다시
     python -m app.agents.internal_question_agent stats
     python -m app.agents.internal_question_agent prune [--dry-run]
+    python -m app.agents.internal_question_agent retag [--dry-run]   # 조각 메타(dept 태그 등)만 질문에 다시 복사
     python -m app.agents.internal_question_agent export --out /tmp/iq     # 배포 사본(JSONL + 벡터)
 호스트에서도 돈다(DB 불필요, Ollama HTTP만): cd backend && EMBED_BASE_URL=http://localhost:11434 python -m app.agents.internal_question_agent stats
 """
@@ -560,6 +561,50 @@ def run_prune(dry=False):
     return total
 
 
+# ---------------- retag (2026-11-23 사용자 승인, 0단계) ----------------
+def run_retag(dry=False):
+    """저장된 질문의 **조각 유래 메타만** 원본 조각에서 다시 복사한다(모델·임베딩 호출 0회).
+
+    왜 필요한가: 관문 1(직무 일치)은 **질문 메타**의 `dept_<직무>`를 본다(`search_questions`). 그 값은 질문을
+    만들 때 조각 메타에서 복사되는데(`_meta_of`), `sync`는 **조각 본문 해시**로만 다시 만들 대상을 고르므로
+    (`run_generate`의 `only_changed`) 조각의 **메타만** 바뀐 경우(예: 문서에 dept 태그를 더한 0단계 2)에는
+    아무것도 다시 만들지 않는다 → 질문의 직무 태그가 옛 값으로 남는다.
+    질문 문장·벡터·근거는 건드리지 않는다 — 바꾸는 것은 dept_* · doc_type · dept · ct_band · status · disclosure뿐이다.
+    """
+    from app.agents.internal_docs_agent import DEPTS
+    chunks = {c["id"]: c["metadata"] for c in internal_store.chunks(internal_store.PUBLIC)}
+    keys = [f"dept_{d}" for d in DEPTS] + ["doc_type", "dept", "ct_band", "status", "disclosure",
+                                           "doc_title", "sec_title", "sec"]
+    total = {"checked": 0, "updated": 0, "chunk_gone": 0}
+    for q_cat in CATS:
+        rows = internal_store.questions_all(q_cat, documents=False)
+        ids, metas, changed_keys = [], [], {}
+        for r in rows:
+            total["checked"] += 1
+            m = dict(r["metadata"] or {})
+            cm = chunks.get(m.get("chunk_id") or "")
+            if cm is None:
+                total["chunk_gone"] += 1          # prune 대상(조각이 사라졌다)
+                continue
+            new = dict(m)
+            for k in keys:
+                v = cm.get(k)
+                new[k] = bool(v) if k.startswith("dept_") else (v if v is not None else m.get(k))
+            diff = [k for k in keys if new.get(k) != m.get(k)]
+            if diff:
+                for k in diff:
+                    changed_keys[k] = changed_keys.get(k, 0) + 1
+                ids.append(r["id"])
+                metas.append(new)
+        print(f"  [{q_cat}] 질문 {len(rows)} · 갱신 {len(ids)} {json.dumps(changed_keys, ensure_ascii=False)}"
+              + (" (--dry-run)" if dry else ""))
+        if ids and not dry:
+            internal_store.question_collection(q_cat).update(ids=ids, metadatas=metas)
+        total["updated"] += len(ids)
+    print(f"retag: 확인 {total['checked']} · 갱신 {total['updated']} · 조각 사라짐 {total['chunk_gone']}")
+    return total
+
+
 # ---------------- stats / export ----------------
 def run_stats():
     out = {"persist_dir": internal_store.PERSIST_DIR, "cats": {}}
@@ -723,6 +768,8 @@ def main(argv=None):
         s.add_argument("--dry-run", action="store_true")
     s = sub.add_parser("prune")
     s.add_argument("--dry-run", action="store_true")
+    s = sub.add_parser("retag")      # 조각 메타(dept 태그 등)만 질문에 다시 복사(2026-11-23 0단계)
+    s.add_argument("--dry-run", action="store_true")
     sub.add_parser("stats")
     sub.add_parser("ready")
     e = sub.add_parser("export")
@@ -737,6 +784,8 @@ def main(argv=None):
         print("\n" + json.dumps(rep, ensure_ascii=False, indent=1))
     elif a.cmd == "prune":
         run_prune(dry=a.dry_run)
+    elif a.cmd == "retag":
+        run_retag(dry=a.dry_run)
     elif a.cmd == "stats":
         print(json.dumps(run_stats(), ensure_ascii=False, indent=1))
     elif a.cmd == "ready":
