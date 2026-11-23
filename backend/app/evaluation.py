@@ -199,7 +199,10 @@ def summarize(blocks, scores_by_q, item_scores):
     allowed = report_guard.number_tokens(user, *item_scores.values())
     for _ in range(2):
         try:
-            res = llm.chat_json(SUMMARY_SYSTEM, user, SUMMARY_GEN_SCHEMA, temperature=0.2)
+            # 2026-11-24(컨텍스트 엔지니어링 ③): 이 user 프롬프트의 상한이 9,000자인데 창 기본값은 6144토큰이다.
+            # 실측 응시 10건의 최대값은 5.5k자(= 창 안)였지만 꼬리질문이 많은 세트에서는 넘길 수 있고, 넘기면
+            # Ollama가 조용히 잘라 요약이 앞 질문만 보고 쓰인다 → 상한보다 큰 창을 명시한다.
+            res = llm.chat_json(SUMMARY_SYSTEM, user, SUMMARY_GEN_SCHEMA, temperature=0.2, num_ctx=8192)
         except llm.LLMError:
             continue
         if _summary_problem(res, top, bottom, allowed) is None:

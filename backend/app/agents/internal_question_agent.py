@@ -286,10 +286,14 @@ def generate_for_chunk(chunk, q_cat, n=N_PER_CHUNK):
             usage = {**(usage or {}), "gen_model": "openai:" + str((usage or {}).get("model") or config.OPENAI_MODEL)}
         except Exception as e:  # noqa: BLE001 — 키 없음·한도·오류 → 로컬로 내려간다(생성이 멈추지 않게)
             log.warning("A17 OpenAI 생성 실패(%s) → 로컬 모델로 대체", e)
-            out = llm.chat_json(system, "위 조각으로 질문을 만들어라.", GEN_SCHEMA, timeout=120, temperature=0.4)
+            # 2026-11-24(컨텍스트 엔지니어링 ③): 지시문 5,493자 + 조각 3,000자 = 약 8.5k자로 창 기본값(6144토큰)을
+            # 넘긴다 → 로컬 대체 경로에서만 조각 뒷부분이 조용히 잘렸다. 창을 명시한다.
+            out = llm.chat_json(system, "위 조각으로 질문을 만들어라.", GEN_SCHEMA, timeout=120, temperature=0.4,
+                                num_ctx=8192)
             usage = {"gen_model": "local:" + config.LLM_MODEL, "fallback": type(e).__name__}
     else:
-        out = llm.chat_json(system, "위 조각으로 질문을 만들어라.", GEN_SCHEMA, timeout=120, temperature=0.4)
+        out = llm.chat_json(system, "위 조각으로 질문을 만들어라.", GEN_SCHEMA, timeout=120, temperature=0.4,
+                            num_ctx=8192)   # 위와 같은 이유(2026-11-24 ③)
         usage = {"gen_model": "local:" + config.LLM_MODEL}
     return (out.get("questions") or [])[:n], usage
 

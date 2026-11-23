@@ -428,6 +428,111 @@ def _posting_vector(job):
 
 
 _PV_CACHE = {}
+_PFV_CACHE = {}          # 공고 **필드별** 벡터(①)
+_GATE_Q_CACHE = {}       # 질문 쪽 관문 벡터(④) — 열쇠가 질문 문장이라 질문이 바뀌면 자동으로 빗나간다
+
+FIELD_UNIT_CHARS = 300   # 한 단위의 글자 상한(질문 평균 100자와 자릿수를 맞춘다)
+FIELD_MAX_UNITS = 8      # 단위 수 상한(공고당 임베딩 비용 상한 — 캐시되므로 공고마다 한 번)
+
+
+SENT_TAIL = tuple("다요음.!?")          # 문장 끝으로 볼 글자
+BULLETS = (chr(13), chr(10), "·", "•", "●", "–", "—")  # 줄바꿈·불릿
+
+
+def _split_units(body):
+    """공고 한 필드를 줄·불릿·문장 끝으로 끊는다. 정규식도 모델도 쓰지 않는다."""
+    nl = chr(10)
+    for ch in BULLETS:
+        body = body.replace(ch, nl)
+    out = []
+    for raw in body.split(nl):
+        raw = raw.strip()
+        if not raw:
+            continue
+        buf = ""
+        for word in raw.split(" "):
+            buf = (buf + " " + word).strip()
+            if word.endswith(SENT_TAIL) and len(buf) >= 40:   # 문장이 끝나면 한 단위로
+                out.append(buf)
+                buf = ""
+        if buf:
+            out.append(buf)
+    return out
+
+
+def _posting_field_texts(job):
+    """공고를 **짧은 단위 여러 개**로 쪼갠다(① 질의 분해). 모델을 쓰지 않는 규칙 분해다.
+
+    ·첫 단위 = 역할(제목·직무명·한 줄 요약) — 직무 자체를 가리키는 가장 짧은 표현.
+    ·나머지 = 주요 업무 · 자격 요건 · 우대 사항을 줄(불릿) 단위로 끊어 `FIELD_UNIT_CHARS`까지 모은 묶음.
+    HyDE가 아니다(모델이 문장을 만들지 않는다). 공고 원문을 자르기만 한다.
+    """
+    out = []
+    head = " ".join(str(job.get(k) or "") for k in ("title", "role_name"))
+    summary = str(job.get("summary") or "")[:160]
+    head = (head + " " + summary).strip()
+    if head:
+        out.append(head[:FIELD_UNIT_CHARS])
+    for field in ("duties", "requirements", "preferred"):
+        body = str(job.get(field) or "").strip()
+        if not body:
+            continue
+        buf = ""
+        for line in _split_units(body):
+            line = line.strip()
+            if not line:
+                continue
+            if len(buf) + len(line) + 1 > FIELD_UNIT_CHARS and buf:
+                out.append(buf)
+                buf = line
+            else:
+                buf = (buf + " " + line).strip()
+        if buf:
+            out.append(buf)
+    seen, uniq = set(), []
+    for t in out:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    return uniq[:FIELD_MAX_UNITS]
+
+
+def _posting_field_vectors(job):
+    """`_posting_field_texts`의 벡터 목록(공고당 1회 임베딩, 캐시). 못 만들면 None → 호출 쪽이 blob으로."""
+    key = (job.get("id"), job.get("title"))
+    hit = _PFV_CACHE.get(key)
+    if hit is not None:
+        return hit
+    texts = _posting_field_texts(job)
+    if len(texts) < 2:                      # 쪼갤 거리가 없으면 분해의 뜻이 없다
+        return None
+    from . import question_chain as QC
+    vecs = llm.embed([QC.QUERY_INSTRUCT + t for t in texts])
+    if len(vecs) != len(texts):
+        return None
+    if len(_PFV_CACHE) > 32:
+        _PFV_CACHE.clear()
+    _PFV_CACHE[key] = vecs
+    return vecs
+
+
+def _gate_vectors(texts):
+    """질문 쪽 관문 벡터 — 캐시에 없는 것만 임베딩한다(④ 사전계산).
+
+    같은 질문이 면접마다·카테고리마다 다시 후보로 올라오는데 전에는 그때마다 다시 임베딩했다
+    (면접 1건에 30~45문장). 열쇠가 **질문 문장 자체**라 질문 풀을 다시 만들면 자동으로 빗나간다.
+    """
+    from . import question_chain as QC
+    want = list(dict.fromkeys(texts))
+    miss = [t for t in want if t not in _GATE_Q_CACHE]
+    if miss:
+        vecs = llm.embed([QC.QUERY_INSTRUCT + t for t in miss])
+        if len(vecs) != len(miss):
+            raise llm.LLMError("gate embed count mismatch")
+        if len(_GATE_Q_CACHE) > 4096:
+            _GATE_Q_CACHE.clear()
+        _GATE_Q_CACHE.update(zip(miss, vecs))
+    return [_GATE_Q_CACHE[t] for t in texts]
 
 
 def _cos(a, b):
@@ -446,27 +551,45 @@ def _gate_text(t):
     return QR.core(_SLOT_HEAD.sub("", t or "")).replace("{회사}", "").strip()
 
 
+def _gate_reference(job):
+    """관문 2의 공고 쪽 기준 — (벡터 목록, 하한). 2026-11-24 ①.
+
+    `POSTING_GATE_MODE=fields`면 공고를 짧은 단위로 쪼갠 벡터 목록과 `POSTING_FIELD_MIN_SIM`을 쓴다.
+    쪼갤 거리가 없거나(필드가 비었다) 임베딩이 모자라면 **기존 blob 1개 + 0.50**으로 내려간다 —
+    면접이 멈추지 않게 하는 쪽이 먼저다(H-01~09).
+    """
+    if config.POSTING_GATE_MODE == "fields":
+        vecs = _posting_field_vectors(job)
+        if vecs:
+            return vecs, config.POSTING_FIELD_MIN_SIM
+    jv = _posting_vector(job)
+    return ([jv], POSTING_MIN_SIM) if jv is not None else (None, POSTING_MIN_SIM)
+
+
 def _filter_by_posting(cands, job, cat):
     """공고 본문과 유사도가 낮은 후보를 버린다. 전부 버려지면 None(→ 백업 층).
     임베딩·공고 벡터를 못 구하면 **막지 않는다**(면접이 멈추면 안 된다)."""
     if not cands:
         return cands
     try:
-        jv = _posting_vector(job)
-        if jv is None:
+        jvs, floor = _gate_reference(job)
+        if jvs is None:
             return cands
-        from . import question_chain as QC
         # 2026-11-20: A17 질문 앞의 회사 자리("{회사}에서 ~를 맡는다면")는 공고 내용이 아니라 질문 틀이다. 그대로 넣으면
         # 공고와의 코사인이 0.03~0.10 낮아져(실측: 공고 1 LLM 서비스 0.58 이상 1개 → 떼면 5개) 관련 질문까지 버려졌다 → 떼고 잰다.
-        qvs = llm.embed([QC.QUERY_INSTRUCT + _gate_text(c.get("text") or "") for c in cands])
+        qvs = _gate_vectors([_gate_text(c.get("text") or "") for c in cands])   # ④ 캐시에 없는 것만 임베딩
     except Exception as e:  # noqa: BLE001 — 임베딩 실패 → 거르지 않고 그대로 간다
         log.info("공고 관련성 검사 생략(%s): %s", cat, type(e).__name__)
         return cands
-    kept = []
+    kept, reserve = [], []
+    tiered = config.POSTING_GATE_MODE == "tiered"
     for c, qv in zip(cands, qvs):
-        sim = _cos(jv, qv)
-        if sim >= POSTING_MIN_SIM:                      # **통과 판정은 원시 코사인으로만** — 감점이 뒤집지 않는다
-            kept.append((sim - DEMOTED_TYPES.get((c.get("doc_type_code") or c.get("doc_type") or ""), 0.0), sim, c))
+        sim = max(_cos(v, qv) for v in jvs)             # fields 모드면 가장 가까운 공고 단위와의 코사인(①)
+        demote = DEMOTED_TYPES.get((c.get("doc_type_code") or c.get("doc_type") or ""), 0.0)
+        if sim >= floor:                                # **통과 판정은 원시 코사인으로만** — 감점이 뒤집지 않는다
+            kept.append((sim - demote, sim, c))
+        elif tiered and sim >= config.POSTING_RESERVE_MIN_SIM:
+            reserve.append((sim - demote, sim, c))      # 2단: 버리지 않고 뒤로 보낸다(1단이 모자랄 때만 쓰인다)
         else:
             log.info("공고 무관 질문 제외(%s, sim=%.3f): %s", cat, sim, (c.get("text") or "")[:50])
     # 2026-11-20: 공고와 가까운 순(호출 쪽이 앞에서 n개를 쓴다).
@@ -474,7 +597,8 @@ def _filter_by_posting(cands, job, cat):
     # 쓰고 위 통과 판정에는 쓰지 않으므로 **커버리지가 줄지 않는다**(기업 질문을 251 → 179로 줄이는 제외안은
     # ai_ax 태그가 118 → 47로 깨져 폐기했다 — 사용자가 싫어한 '지원한 이유' Redis 질문이 돌아온다).
     kept.sort(key=lambda x: (-x[0], -x[1]))
-    return [c for _, _, c in kept] or None
+    reserve.sort(key=lambda x: (-x[0], -x[1]))
+    return [c for _, _, c in kept + reserve] or None
 
 
 def retrieve(s: GenState) -> GenState:
