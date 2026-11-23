@@ -39,22 +39,41 @@ BLOCKLIST = re.compile(r"(나이|몇 살|연령|공백기|결혼|자녀|가족|�
 # 같은 날 사용자 응시 피드백 F3: 이력서 프로젝트를 그대로 되묻지 말고 **지원 회사 맥락의 가정형**으로 잇는다
 #   ("이 검사를 [회사]에서 진행한다고 가정할 때 어떤 방식을 택하시겠습니까? 비슷한 경험이 있다면 …답해 주셔도 좋습니다").
 #   회사 이름 뒤에는 반드시 가정형(~한다면·~가정할 때) — 과거형과 이으면 F9(그 회사 경력 전제) 위반이다.
-TEMPLATE = "{label}에서 겪은 가장 어려운 문제를 {company}에서 다시 맡는다면 어떤 방식으로 해결하시겠습니까? 비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다."
+# **2026-11-23 F11 정정**: 가정형이면 안전하다고 본 것이 빈틈이었다 — "{회사}에서 ~를 **다시** 맡는다면"은
+#   가정형이어도 **그 회사에서 예전에 해 봤다**는 뜻이 된다(사용자: "여기서 일해 본 적이 없는데 말이 됨?").
+#   그래서 템플릿에서 '다시'를 걷어내고, 이전 회사명이 있으면 그 이름을 앞에 두어 어디서 한 일인지 밝힌다.
+#   `TEMPLATE_2`는 원래 '다시'가 없어 그대로 둔다.
+TEMPLATE = ("{label}에서 겪은 가장 어려운 문제를 {company}에서 같은 문제로 마주한다면 어떤 방식으로 해결하시겠습니까? "
+            "비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다.")
 TEMPLATE_2 = "{label}에서 쓴 기술을 {company}의 비슷한 업무에 적용한다고 가정할 때, 어떤 기술 스택을 택하시겠습니까? 비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다."
-TEMPLATE_3 = "{label}의 성과를 {company}에서 다시 검증해야 한다면, 어떤 지표로 확인하시겠습니까? 비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다."
+TEMPLATE_3 = ("{label}의 성과를 {company}에서 같은 기준으로 확인해야 한다면, 어떤 지표로 확인하시겠습니까? "
+              "비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다.")
+# 이전 회사명을 아는 경우(경력 항목 또는 경력이 하나뿐인 지원자)에는 어디서 한 일인지 밝혀 F11을 피한다.
+TEMPLATE_PREV = ("{prev}에서 하신 {label}을, {company}에서 같은 문제로 마주한다면 어떤 방식으로 해결하시겠습니까? "
+                 "비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다.")
 TEMPLATES = (TEMPLATE, TEMPLATE_2, TEMPLATE_3)
-ANGLES = ("가장 어려웠던 문제를 회사에서 다시 맡는다면 어떻게 해결할지", "쓴 기술을 회사의 비슷한 업무에 어떻게 적용할지",
-          "성과를 회사에서 다시 검증한다면 어떤 지표로 볼지")
+ANGLES = ("가장 어려웠던 문제를 이 직무에서 같은 문제로 마주한다면 어떻게 해결할지", "쓴 기술을 회사의 비슷한 업무에 어떻게 적용할지",
+          "성과를 이 직무에서 같은 기준으로 확인한다면 어떤 지표로 볼지")
 
 
-def template_text(angle, label, company=""):
-    """이력서 질문 템플릿(모델 생성이 실패했을 때). 회사 이름이 없으면 '지원하신 회사'."""
-    return TEMPLATES[angle].format(label=label, company=(company or "").strip() or "지원하신 회사")
+def template_text(angle, label, company="", prev_company=""):
+    """이력서 질문 템플릿(모델 생성이 실패했을 때). 회사 이름이 없으면 '지원하신 회사'.
+
+    `prev_company`(2026-11-23 F11)가 있으면 **어디서 한 일인지 밝히는** 문장을 쓴다
+    ("다온팩토리솔루션에서 하신 소비기한 인쇄 불량 검사를, {회사}에서 같은 문제로 마주한다면 …").
+    항목 라벨이 곧 그 회사 이름인 경우(경력 항목)에는 같은 이름이 두 번 나오므로 쓰지 않는다.
+    """
+    comp = (company or "").strip() or "지원하신 회사"
+    prev = (prev_company or "").strip()
+    if prev and prev != label and angle == 0:
+        return TEMPLATE_PREV.format(prev=prev, label=label, company=comp)
+    return TEMPLATES[angle].format(label=label, company=comp)
 
 
 # 라벨 없는 대체 템플릿(2026-11-20 지원 20 점검, F4): 이력서 항목이 2개뿐인데 둘이 같은 프로젝트를 다루면(경력 항목에 그 프로젝트가
 # 적힌 경우) 라벨 템플릿도 같은 주제가 된다. 앞 질문과 주제가 겹칠 때만 이 문장을 쓴다(문구 초안 — 사용자 확정 대기).
-TEMPLATE_GENERIC = "지금까지의 경험 중 {company}의 이 직무와 가장 가까운 일을 하나 골라, 그 일을 {company}에서 다시 한다면 무엇을 다르게 하시겠습니까?"
+# 2026-11-23 F11: "그 일을 {회사}에서 **다시** 한다면"도 그 회사 근무 이력을 전제한다 → '다시'를 걷어냈다.
+TEMPLATE_GENERIC = "지금까지의 경험 중 {company}의 이 직무와 가장 가까운 일을 하나 골라, 그 일을 이 직무에서 맡게 된다면 무엇을 다르게 하시겠습니까?"
 
 
 def generic_template_text(company=""):
@@ -412,12 +431,23 @@ def resume_candidates(snapshot):
             blob = " ".join([label, it.get("role", ""), it.get("detail", ""), " ".join(it.get("tech", []))]).lower()
             score = sum(1 for t in AI_TERMS if t in blob)
             cands.append({"section": sec, "index": i, "label": label, "item": it, "ai": score, "year": _year(it.get("period"))})
+    # F11(2026-11-23 사용자 지적): 이력서 질문에 "{지원 회사}에서 ~를 **다시** 맡는다면"이라고 쓰면 그 회사에서
+    # 예전에 해 봤다는 뜻이 된다. '다시'를 쓸 수 있는 건 **이전 회사 이름이 같은 문장에 있을 때**뿐이라, 항목마다
+    # 이전 회사명을 같이 넘긴다. 다만 **없는 연결을 만들지 않는다**:
+    #   · 경력 항목 → 그 항목의 회사명이 곧 이전 회사다(확실).
+    #   · 프로젝트 항목 → 스냅샷에 '이 프로젝트가 어느 회사 것인지'가 없다. 경력이 **정확히 하나**일 때만
+    #     그 회사로 잇고, 둘 이상이면 비워 둔다(회사명 없는 형태로 질문이 만들어진다).
+    careers = [(it.get("company") or "").strip() for it in snapshot.get("career", []) if (it.get("company") or "").strip()]
+    only_career = careers[0] if len(careers) == 1 else ""
+    for c in cands:
+        c["prev_company"] = (c["label"] if c["section"] == "career" else only_career) or ""
     cands.sort(key=lambda c: (-c["ai"], -c["year"]))
     if not cands:  # RSQ-04: 학력으로 대체
         for i, it in enumerate(snapshot.get("education", [])):
             if (it.get("major") or it.get("detail")):
                 label = " ".join(x for x in [it.get("school", ""), it.get("major", "")] if x).strip() or "학력"
-                cands.append({"section": "education", "index": i, "label": label, "item": it, "ai": 0, "year": _year(it.get("period"))})
+                cands.append({"section": "education", "index": i, "label": label, "item": it, "ai": 0,
+                              "year": _year(it.get("period")), "prev_company": ""})
     return cands
 
 
@@ -431,15 +461,61 @@ def _snapshot_text(snapshot):
     return " ".join(parts).lower()
 
 
+_CITED_LATIN = re.compile(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|\d+(?:\.\d+)?%?")
+_CITED_HANGUL = re.compile(r"[가-힣]{2,}")
+# 인용 어구를 쪼갤 때 **빼고 보는 일반 낱말**(2026-11-23 ③). 어떤 기술·사실도 가리키지 않는 구조어라
+# 이력서에 그 낱말이 있는지는 근거와 무관하다. 실측: `C++ 코드`가 '코드' 때문에, `로트 정보`가 '정보'
+# 때문에 떨어졌다(이력서에는 'C++ 추론 모듈'·'로트 번호'가 있다). 고유한 쪽(C++·로트)은 그대로 검사한다.
+_CITED_GENERIC = frozenset((
+    "코드", "정보", "방식", "결과", "내용", "작업", "업무", "시스템", "기능", "환경", "처리", "구성",
+    "설계", "개선", "구현", "적용", "관리", "운영", "확인", "기록", "기준", "과정", "단계", "부분",
+    "문제", "상황", "판정", "사용", "진행", "변경", "요청", "제공", "지원", "대응",
+))
+
+
+def _in_snapshot(term, text, squash):
+    """이력서 본문에 있는가 — 공백은 무시하고 본다(기존 `grounded`와 같은 판정)."""
+    tl = (term or "").lower().strip(".")
+    return bool(tl) and (tl in text or re.sub(r"\s+", "", tl) in squash)
+
+
+def _cited_ok(term, text, squash):
+    """인용 어구 1개가 이력서에 근거하는가 — 2026-11-23 사용자 승인(③).
+
+    전에는 어구 **전체**가 글자 그대로 있어야 했다. 그래서 의미는 맞고 표현만 합친 인용이 전부 떨어졌다
+    (실측: `상담 티켓 목록 API` — 이력서에 '상담 티켓 플랫폼'·'티켓 목록·검색 화면'·'상담 이력 목록 API'가
+    다 있는데도 탈락. 같은 유형으로 `C++ 코드`(이력서는 'C++ 추론 모듈') · `로트 정보`('로트 번호') ·
+    `결과 판정`('판정 결과')가 떨어져 이력서 질문 8개 중 7개가 템플릿으로 추락했다).
+
+    새 기준 — 어구를 쪼개서 본다:
+      · 영문·숫자 토큰(`API`·`C++`·`6.2%`)은 **그대로 유지**해 완전일치를 요구한다. 지어낸 기술명·수치를
+        막는 것이 이 검사의 핵심이고, 거기를 느슨하게 하면 RSQ-03이 무너진다.
+      · 한글 낱말(2자 이상)은 **낱말마다** 이력서에 있으면 통과한다. 어구 전체가 그대로 있을 필요는 없다.
+      · 단 `_CITED_GENERIC`(코드·정보·방식 같은 구조어)은 어떤 사실도 가리키지 않으므로 빼고 본다.
+    즉 `상담 티켓 목록 API` → `API` + `상담`·`티켓`·`목록` → 통과. `C++ 코드` → `C++`만 보고 통과.
+    `로트 정보` → `로트`만 보고 통과. 반대로 `Kubernetes 오토스케일링`·`블록체인 정산`은 고유한 쪽이
+    이력서에 없으므로 그대로 탈락한다(지어내기 차단은 유지된다).
+    """
+    if _in_snapshot(term, text, squash):          # 어구 전체가 그대로 있으면 바로 통과(기존 경로)
+        return True
+    parts = _CITED_LATIN.findall(term or "") + _CITED_HANGUL.findall(term or "")
+    specific = [p for p in parts if p not in _CITED_GENERIC]
+    if not parts:
+        return False                              # 쪼갤 것이 없으면(기호뿐) 통과시키지 않는다
+    if not specific:
+        return True                               # 구조어뿐인 어구는 가리키는 사실이 없다 → 막을 이유가 없다
+    return all(_in_snapshot(p, text, squash) for p in specific)
+
+
 def grounded(question, cited, snapshot):
-    """RSQ-03: latin tokens / numbers / cited terms must exist in the snapshot."""
+    """RSQ-03: 질문 속 영문·숫자 토큰은 이력서에 **그대로** 있어야 하고, 인용 어구는 `_cited_ok` 기준을 따른다."""
     text = _snapshot_text(snapshot)
     squash = re.sub(r"\s+", "", text)
-    tokens = set(re.findall(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|\d+(?:\.\d+)?%?", question))
-    tokens |= {c for c in cited if c}
-    for t in tokens:
-        tl = t.lower().strip(".")
-        if tl and tl not in text and re.sub(r"\s+", "", tl) not in squash:
+    for t in set(_CITED_LATIN.findall(question)):             # 질문 본문의 영문·숫자 = 완전일치(그대로)
+        if not _in_snapshot(t, text, squash):
+            return False
+    for c in {c for c in (cited or []) if c}:                 # 인용 어구 = 쪼개서 검사(2026-11-23 ③)
+        if not _cited_ok(c, text, squash):
             return False
     return True
 
@@ -447,17 +523,12 @@ def grounded(question, cited, snapshot):
 def ungrounded_terms(question, cited, snapshot):
     """`grounded`가 거절할 때 **어떤 토큰이 걸렸는지** — 관측 전용(2026-11-18).
     판정은 `grounded`가 그대로 하고 이 함수는 사유 기록에만 쓴다(RSQ-03 로직은 건드리지 않는다).
-    규칙은 `grounded`와 같다: 영문·숫자 토큰과 cited_terms가 스냅샷 본문에 있어야 한다."""
+    규칙은 `grounded`와 같다(2026-11-23 ③ 포함): 질문의 영문·숫자 토큰은 완전일치, 인용 어구는 쪼개서 본다."""
     text = _snapshot_text(snapshot)
     squash = re.sub(r"\s+", "", text)
-    toks = set(re.findall(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}|\d+(?:\.\d+)?%?", question))
-    toks |= {c for c in cited if c}
-    bad = []
-    for t in toks:
-        tl = t.lower().strip(".")
-        if tl and tl not in text and re.sub(r"\s+", "", tl) not in squash:
-            bad.append(t)
-    return sorted(bad)
+    bad = [t for t in set(_CITED_LATIN.findall(question)) if not _in_snapshot(t, text, squash)]
+    bad += [c for c in {c for c in (cited or []) if c} if not _cited_ok(c, text, squash)]
+    return sorted(set(bad))
 
 
 def _reject_reason(q, cited, snapshot):
@@ -537,8 +608,13 @@ def make_resume_question(cand, angle, snapshot, bank=None, role_name="", company
     hint = ""
     for _ in range(2):  # 1회 재생성 (RSQ-03)
         try:
-            out = llm.chat_json(system, f"질문 관점: {ANGLES[angle]}{bank_txt}\n이력서 항목:\n{desc}{avoid_txt}{hint}", MERGE_SCHEMA,
-                                timeout=90, temperature=0.4)
+            # F11(2026-11-23): 이전 회사를 알면 그 이름을 알려 줘 "[이전 회사]에서 하신 ~를 {회사}에서 같은 문제로
+            # 마주한다면"으로 쓰게 한다. 모르면 그 줄을 비워 회사명 없는 형태("이 직무에서 마주한다면")로 가게 둔다.
+            prev = (cand.get("prev_company") or "").strip()
+            prev_txt = (f"\n이력서 항목의 이전 회사: {prev}" if prev and prev != cand["label"]
+                        else "\n이력서 항목의 이전 회사: (모름 — 회사 이름 없이 '이 직무에서 마주한다면'으로 쓴다)")
+            out = llm.chat_json(system, f"질문 관점: {ANGLES[angle]}{bank_txt}\n이력서 항목:\n{desc}{prev_txt}{avoid_txt}{hint}",
+                                MERGE_SCHEMA, timeout=90, temperature=0.4)
         except llm.LLMError:
             why.append({"stage": "llm_error"})
             break
@@ -550,7 +626,8 @@ def make_resume_question(cand, angle, snapshot, bank=None, role_name="", company
             if not BLOCKLIST.search(q) and one_sentence(q):
                 # 2026-11-20: 사내문서 질문과 같은 문장 규칙(QST-20) + 수치 결론형 금지 + 회사 경력 전제 금지.
                 # 전에는 이 경로에 문장 검사가 없어 "…DB 용량을 60% 줄인 경험을 설명해 주세요"가 그대로 나갔다.
-                issue = QR.resume_issue(q, company)
+                # F11(2026-11-23): 이전 회사·프로젝트 이름을 같이 넘겨 "그 회사에서 하신 ~를 {회사}에서"는 허용한다.
+                issue = QR.resume_issue(q, company, (cand.get("prev_company") or "", cand["label"]))
                 if not issue:
                     from .agents import fewshot_guard
                     leak = fewshot_guard.leak_terms(q, _snapshot_text(snapshot), desc, bank_txt, ignore_text, company)
@@ -571,7 +648,7 @@ def make_resume_question(cand, angle, snapshot, bank=None, role_name="", company
             _note_reject(why, q, out, snapshot)      # fit_scope 뒤 재검사에서 걸림
         else:
             _note_reject(why, q, out, snapshot)
-    tpl = template_text(angle, cand["label"], company)
+    tpl = template_text(angle, cand["label"], company, cand.get("prev_company"))
     if any(QR.shared_topic(tpl, a, ignore=[company, ignore_text]) for a in avoid):
         tpl = generic_template_text(company)            # F4: 라벨 템플릿도 앞 질문과 같은 주제 → 라벨 없는 문장
     r = {"text": tpl, "resume_ref": ref, "gen_method": "template"}
@@ -591,7 +668,8 @@ def resume_questions(snapshot, use_llm=True, banks=None, role_name="", company="
             out.append(make_resume_question(cand, angle, snapshot, bank, role_name, company, avoid=[o["text"] for o in out]))
         else:
             ref = {"section": cand["section"], "index": cand["index"], "label": cand["label"], "quote": (cand["item"].get("detail") or cand["item"].get("source") or "")[:160]}
-            out.append({"text": template_text(angle, cand["label"], company), "resume_ref": ref, "gen_method": "template"})
+            out.append({"text": template_text(angle, cand["label"], company, cand.get("prev_company")),
+                        "resume_ref": ref, "gen_method": "template"})
     return out
 
 

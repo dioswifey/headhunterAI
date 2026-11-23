@@ -43,9 +43,14 @@ REGISTRY = [
     {"id": "IQ-6-6-good-assistant", "prompt": "generate/internal_question", "kind": "good",
      "text": "상담사가 쓰는 답변 도우미를 만든다고 할 때**, 사내 문서에서 근거를 찾지 못한 질문에 대해 시스템이 무엇을 하도록 설계하시겠습니까?",
      "key_terms": [], "style_terms": ["답변 도우미"]},
-    {"id": "RM-7-good-F3-inspection", "prompt": "generate/resume_question_merger", "kind": "good", "feedback": "F3",
-     "text": "[이력서에 적힌 검사 업무]를 {company_name}의 생산 라인에서 다시 진행한다고 가정할 때, 어떤 검사 방식과 기술 스택을 택하시겠습니까?",
-     "key_terms": ["생산 라인"], "style_terms": ["검사 방식"]},
+    # 2026-11-23 F11로 문구가 바뀌었다 — 옛 예문("{company_name}의 생산 라인에서 **다시** 진행한다고 가정할 때")이
+    # 그 회사에서 예전에 해 봤다는 뜻이 돼 사용자가 지적했다. 지금 지시문은 좋은 예를 **두 가지**로 나눠 둔다.
+    {"id": "RM-7-good-F11-prev-company", "prompt": "generate/resume_question_merger", "kind": "good", "feedback": "F3·F11",
+     "text": "[이전 회사]에서 하신 [이력서에 적힌 업무]를, {company_name}에서 같은 문제로 마주한다면 어떤 방식과 기술 스택을 택하시겠습니까?",
+     "key_terms": [], "style_terms": ["기술 스택"]},
+    {"id": "RM-7-good-F11-no-company", "prompt": "generate/resume_question_merger", "kind": "good", "feedback": "F3·F11",
+     "text": "[이력서에 적힌 업무]에서 겪은 [그 문제]를 이 직무에서 마주한다면 어떤 방식과 기술 스택을 택하시겠습니까?",
+     "key_terms": [], "style_terms": ["기술 스택"]},
     {"id": "RM-bad-unrelated-merge", "prompt": "generate/resume_question_merger", "kind": "bad",
      "text": "이력서에 없는 '신상품 출시 후 경과 일수'를 끌어옴",
      "key_terms": ["신상품 출시", "경과 일수", "중고 상품"], "style_terms": []},

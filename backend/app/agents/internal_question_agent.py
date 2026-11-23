@@ -74,7 +74,18 @@ CAT_GUIDE = {
                    "(답의 모양만 보여 주고, 조각에 없는 수치·제품명은 넣지 않는다 · 2026-11-20 사용자 응시 피드백 F1). "
                    "'이 회사의 기준'처럼 내부 규정을 안다고 전제하지 않고, 사내 규정·절차를 맞히게 하는 질문(휴가·근태·결재 규칙 등)은 만들지 않는다.",
     "job": "업무 상황을 주고 어떻게 판단·처리할지 묻는다. 조각에 적힌 기술·절차는 배경으로만 쓰고, 지원자가 그 시스템을 이미 안다고 전제하지 않는다.",
-    "company": "회사의 사업·고객·일하는 방식에 대한 이해와 지원 동기가 드러나게 묻는다. 내부 수치·고객사 이름은 쓰지 않는다.",
+    # 2026-11-23 사용자 지적 F13: 예전 지침은 "내부 수치·고객사 이름은 쓰지 않는다"로 끝나 **금지만** 있었다.
+    # 인성·직무에는 '구체적 업무 장면'·'업무 상황을 주고'라는 구체성 요구가 있는데 기업만 없어, 모델이 안전하게
+    # 추상화했다(실측: 추상 명사구가 기업 18% vs 인성·직무 5% · 영문·숫자 토큰 0개가 기업 84%).
+    # 사용자 지적 원문: "'검증 결과가 누락되지 않도록 기록하는 업무'? 이거 너무 추상적이잖아. 무슨 검증을 하는
+    # 건데? 무슨 AI 모델을 배포하는지 제품과 서비스에 대한 아무런 앞뒤 정보가 없잖아."
+    "company": "회사의 사업·고객·일하는 방식에 대한 이해와 지원 동기가 드러나게 묻는다. "
+               "**조각에 적힌 구체적인 대상을 질문에 그대로 남긴다** — 업무 대상(어떤 시스템·어떤 제품·어떤 문서), "
+               "산출물(무엇을 만들거나 남기는지), 절차·단계 이름, 공개된 제도·인증 이름. 그 대상이 없으면 질문이 "
+               "'~를 관리하는 업무'처럼 뭉개져 지원자가 무엇을 답해야 할지 알 수 없다. "
+               "쓰지 않는 것은 **고객사 이름 · 내부 금액 · 사건 번호**뿐이다(그 밖의 사실은 조각에 적힌 대로 쓴다). "
+               "추상 명사구를 겹쳐 쓰지 않는다 — '~가 누락되지 않도록 기록하는 업무를 맡는다면, ~를 남기는 업무 방식의 "
+               "어떤 점이'처럼 '~하는 ○○' 꼴을 두 번 이으면 읽기 어렵다. 한 번만 쓰고 나머지는 구체적인 이름으로 바꾼다.",
 }
 
 # 지원자가 이 회사에서 일했다고 전제하는 과거형 표현(A18 ⑦). `questions.PAST_PREMISE`와 같은 목적
@@ -313,6 +324,18 @@ def validate(cand, chunk, q_cat, terms):
     ok_phrasing, why_phrasing = has_malformed_phrasing(q)
     if not ok_phrasing:
         return False, why_phrasing
+    # ⑨(2026-11-23 사용자 승인): 의문사로 묻고 명령형·청유형으로 맺는 문장(호응 깨짐).
+    # 지금 풀 602개에는 해당 문장이 없지만(전수 확인), 다음 생성·sync에서 나오면 여기서 걸린다.
+    if QR.malformed_ask(q):
+        return False, "malformed_ask"
+    # F11(2026-11-23 사용자 지적): A17 질문은 회사 자리가 `{회사}`다 — 그 자리와 '다시'가 함께 오면
+    # 면접 때 회사 이름으로 치환되는 순간 "그 회사에서 예전에 해 봤다"는 뜻이 된다.
+    if QR.company_again(q, "{회사}"):
+        return False, "company_again"
+    # F13(2026-11-23 사용자 지적): 추상 명사구를 겹쳐 쓴 문장("~하는 업무를 맡는다면, ~하는 업무 방식의 어떤 점이").
+    # 한 번 쓰는 것은 정상이고 **두 번 이상 겹칠 때만** 걸린다(풀 602개 전수 13건 — 전부 기업 질문).
+    if QR.nested_abstract(q):
+        return False, "nested_abstract"
     allowed = _squash(body)
     if not all(_squash(f) in allowed for f in facts):
         return False, "facts_not_grounded"
@@ -627,12 +650,20 @@ def search_questions(vector, q_cat, n, used=(), role_code=None, min_sim=None, fo
         # 전에는 직무 일치를 +0.05 가산점으로만 썼는데, 유사도만 높으면 무관한 질문이 그대로 1번으로 뽑혔다
         # (AI/AX 공고에 "공개 저장소의 커밋 기록으로 직무 역량 평가" 질문이 나온 사고). → 직무 일치를 먼저 본다.
         on_role = bool(role_code and m.get(f"dept_{role_code}"))
-        score = float(h.get("sim") or 0) + (0.05 if on_role else 0.0)
+        raw = float(h.get("sim") or 0)
+        score = raw + (0.05 if on_role else 0.0)
         seen.add(group)
         pool.append({"id": None, "on_role": on_role, "doc_id": m.get("doc_id") or "", "iq_id": h["id"], "text": text,
                      "subcategory": m.get("intent") or m.get("competency") or "", "intent": m.get("intent") or "",
+                     # 2026-11-23 ⑧-2: `sim`은 직무 가산점이 **더해진** 값이고, 하한(`min_sim`)은 **가산점 전
+                     # 원시값**에 건다. 두 값이 달라 "0.648인데 왜 0.60 하한에 걸리지?"(실제 원시값 0.598)처럼
+                     # 추적이 어려웠다 — 기준은 그대로 두고 `raw_sim`을 같이 실어 구분할 수 있게 한다.
                      "competency": m.get("competency") or "", "dup_group": group, "sim": round(score, 4),
+                     "raw_sim": round(raw, 4), "role_bonus": round(score - raw, 4),
                      "chunk_id": m.get("chunk_id") or "", "sec": m.get("sec") or "", "doc_title": m.get("doc_title") or "",
+                     # 2026-11-23 F13: 관리 문서(회계·결재·예산) 출신 질문을 재순위에서 뒤로 보내려면 호출 쪽이
+                     # `doc_type`을 알아야 한다(`question_graph.DEMOTED_TYPES`). 거르기용이 아니라 정렬용이다.
+                     "doc_type": m.get("doc_type") or "",
                      "doc_refs": internal_qcat.unpipe(m.get("doc_refs")),
                      "company_facts": internal_qcat.unpipe(m.get("company_facts")),
                      "model_answer": m.get("model_answer") or "",

@@ -17,6 +17,8 @@
   Q8  인성 생성 재료는 가치·태도 문서(talent)만 — HR·근태 규정 문서는 빠진다
   Q9  허용 덧붙임("관련된 경험이 있다면 ~ 답해 주셔도 좋습니다")은 한 문장 검사에서 뗀다
   Q10 세트 안 같은 프로젝트·같은 조각의 사내문서 질문은 하나만(F4, 콜센터 AI 직무·기업 본질문 겹침 사고)
+  Q11 백업 층(Redis·DB)에도 문장 규칙·공고 관련성(②) · 후보 깊이 하한(⑦) · 이력서 참고 후보 수(⑧)·하한(ⓒ)
+  Q12 의문사로 묻고 명령형으로 맺는 문장(⑨) — 오탐 0 확인 포함
 """
 import os
 import sys
@@ -140,6 +142,22 @@ def t_resume():
     check("Q3 이력서 항목이 달라도 관점(템플릿)이 겹치지 않는다", len({a for _, a in pairs}) == len(pairs), pairs)
     check("Q3 수치를 뒤에서 맥락으로 짚기 → 통과",
           not QR.resume_issue("결제 웹훅 서버를 만들 때 중복 수신을 어떤 방식으로 막으셨는지 설명해 주세요."))
+    # Q3-b `grounded()` 인용 어구 기준 (2026-11-23 사용자 승인 ③). 전에는 어구 전체 완전일치를 요구해
+    # 표현만 합친 인용이 전부 탈락했고(11-23 측정: 이력서 질문 8개 중 7개가 템플릿 추락, 사유의 절반이 이것),
+    # 그래서 공고가 바뀌어도 이력서 질문이 똑같이 나갔다. 아래 어구는 전부 실제로 탈락했던 것이다.
+    snap = {"career": [{"company": "로지브릿지", "detail": "상담 티켓 플랫폼에서 티켓 목록·검색 화면을 담당했고 "
+                                                        "PostgreSQL EXPLAIN ANALYZE로 상담 이력 목록 API를 고쳤다. "
+                                                        "C++ 추론 모듈과 로트 번호, 판정 결과도 다뤘다."}],
+            "skills": ["FastAPI", "PostgreSQL", "C++", "Locust"]}
+    for t in ("상담 티켓 목록 API", "C++ 코드", "로트 정보", "결과 판정", "판정 결과 기록", "PostgreSQL"):
+        check("Q3-b 표현만 다른 인용 → 통과 · " + t, Q.grounded("테스트 질문입니다", [t], snap),
+              Q.ungrounded_terms("테스트 질문입니다", [t], snap))
+    for t in ("Kubernetes 오토스케일링", "GraphQL 스키마", "블록체인 정산", "YOLOv8 학습", "Redis 캐시"):
+        check("Q3-b 이력서에 없는 인용 → 탈락 · " + t, not Q.grounded("테스트 질문입니다", [t], snap))
+    check("Q3-b 질문 본문의 영문 토큰은 여전히 완전일치(없으면 탈락)",
+          not Q.grounded("Kafka 파이프라인을 어떻게 설계하시겠습니까", [], snap))
+    check("Q3-b 질문 본문의 영문 토큰이 이력서에 있으면 통과",
+          Q.grounded("FastAPI로 어떻게 설계하시겠습니까", [], snap))
 
 
 # ---------------- F1~F9 사용자 직접 응시 피드백(attempt 14, 2026-11-20) ----------------
@@ -181,6 +199,15 @@ def t_feedback():
     long_ok = "정확한 수치는 기억이 안 나지만, 반사광이 생기는 각도를 바꾸려고 조명을 돔 형태로 바꾸고 노출 시간을 줄였으며 그 뒤 오검출이 눈에 띄게 줄었습니다."
     check("F5 '기억이 안 나지만' + 실제 내용(긴 답변)은 비답변 아님", not QR.non_answer(long_ok)[0], QR.non_answer(long_ok))
     check("F5 실제 답변은 비답변 아님", not QR.non_answer(ATT14["q3_answer"])[0])
+    # F6 되묻기·음성 잡음 (2026-11-23 사용자 승인 ⑤). 11-23 P3 측정에서 아래 잡음 답변이 1층을 통과해
+    # 모델이 불렸고 꼬리질문 문장 검사(2층)에서만 막혔다 — 사용자 F6 사고가 바로 이 유형이라 1층에서 막는다.
+    for a in ("어... 네 그게 음... 아 잠시만요 인터넷이 좀... 네 뭐라고 하셨죠.",
+              "죄송한데 소리가 안 들려서요 다시 말씀해 주시겠어요.",
+              "잘 안 들렸습니다 질문을 다시 한 번 해 주세요."):
+        check("F6 되묻기·잡음 답변 → 꼬리질문 금지 · " + a[:12], QR.non_answer(a)[0], QR.non_answer(a))
+    talk_ok = ("다시 한 번 말씀드리면, 제가 맡은 부분은 검색 파이프라인이었고 재순위 모델을 붙여 근거 포함률을 "
+               "71%에서 89%로 올렸습니다. 평가셋은 420문항으로 만들었고 문항마다 정답 근거를 달아 뒀습니다.")
+    check("F6 '다시 한 번 말씀' + 실제 내용(긴 답변)은 비답변 아님", not QR.non_answer(talk_ok)[0], QR.non_answer(talk_ok))
     # F6 전제 구절
     miss = QR.ungrounded_premise(ATT14["q3_followup"], ATT14["q3_answer"], [ATT14["q3"]])
     check("F6 '재조명'은 답변에 없는 전제", "재조명" in miss, miss)
@@ -322,7 +349,7 @@ class _RetrieveEnv:
         QG._pick_internal, QG._filter_by_posting, QG._pick_redis = self.pick_internal, self.filt, self.pick_redis
         QG._query_vectors = lambda s: ([[0.1, 0.2]], {"mode": "baseline", "queries": 1})
         QG._iq_terms = lambda: ([], "ready")
-        QG._resume_bank_refs = lambda s, role, used, iq_terms=None: []
+        QG._resume_bank_refs = lambda s, role, used, iq_terms=None, seen_topics=None: []   # ④(2026-11-23) 인자 추가
         QG._enrich_character = lambda b: b
         Q.pick_bank = self.pick_bank
         Q.pick_character = lambda n, used=(), snap=None: self.pick_bank("personality", n)
@@ -343,10 +370,11 @@ def t_posting_gate():
         out = env.run()
         p = out["picks"]
         check("Q5 관문 2는 인성에 적용하지 않음", "personality" not in env.filter_calls, env.filter_calls)
-        check("Q5 관문 2 대상은 후보를 3배 뽑는다(통과 질문이 풀에 있으면 백업으로 안 내려가게)",
-              ("job", need["job"] * 3) in env.asked, env.asked)
-        check("Q5 인성도 후보를 3배 뽑는다(같은 문서 질문을 걸러도 n개가 남게, F4 세트 중복)",
-              ("personality", need["personality"] * 3) in env.asked, env.asked)
+        # 2026-11-23 ⑦: 깊이 = max(n*3, MIN_CAND_DEPTH). n=1(기업)이면 3개뿐이라 주제가 겹치면 전멸했다.
+        check("Q5 관문 2 대상은 후보를 넉넉히 뽑는다(통과 질문이 풀에 있으면 백업으로 안 내려가게)",
+              ("job", max(need["job"] * 3, QG.MIN_CAND_DEPTH)) in env.asked, env.asked)
+        check("Q5 인성도 후보를 넉넉히 뽑는다(같은 문서 질문을 걸러도 n개가 남게, F4 세트 중복)",
+              ("personality", max(need["personality"] * 3, QG.MIN_CAND_DEPTH)) in env.asked, env.asked)
         check("Q5 관문 2 통과 2개 → 직무 문항 수 유지", len(p["job"]) == need["job"], len(p["job"]))
         check("Q5 모자란 1개만 Redis에서 채움", ("job", 1) in env.redis_calls, env.redis_calls)
         check("Q5 남은 사내문서 질문은 그대로", sum(1 for b in p["job"] if b.get("iq_id")) == need["job"] - 1)
@@ -432,6 +460,203 @@ def t_set_topics():
           == QG._topic_key({"doc_title": "배치 서버 과부하 장애 배치 서버 과부하로 대시보드 지연 — 요약"}))
     check("Q10 주제 열쇠: 묶음 밖 문서는 문서 ID로 가른다",
           QG._topic_key({"doc_title": "제안서 작성 가이드", "doc_id": "MSK-60"}) != QG._topic_key({"doc_title": "프로젝트 가격 산정 모델", "doc_id": "MSK-61"}))
+    # Q10-b 이력서 참고 문항도 세트 안 중복 검사를 거친다 (2026-11-23 사용자 승인 ④).
+    # 사고: 공고 3 세트에서 이력서 참고 문항과 직무 질문이 둘 다 JD-AIAX-01에서 나와 같은 주제를 두 번 물었다.
+    seen = set()
+    first = QG._distinct_topics([{"iq_id": "IQ-job-a", "doc_id": "JD-AIAX-01", "doc_title": "AI/AX 직무기술서",
+                                  "chunk_id": "JD-AIAX-01#s2", "text": "직무 질문"}], 1, seen)
+    again = QG._distinct_topics([{"iq_id": "IQ-job-b", "doc_id": "JD-AIAX-01", "doc_title": "AI/AX 직무기술서",
+                                  "chunk_id": "JD-AIAX-01#s17", "text": "참고 문항"}], 1, seen)
+    check("Q10-b 같은 문서(JD-AIAX-01)의 참고 문항은 두 번째에서 걸린다", bool(first) and not again, (first, again))
+    other = QG._distinct_topics([{"iq_id": "IQ-job-c", "doc_id": "MSK-62", "doc_title": "실패 제안 회고 사례집",
+                                  "chunk_id": "MSK-62#s11", "text": "다른 문서"}], 1, seen)
+    check("Q10-b 다른 문서의 참고 문항은 그대로 통과", bool(other), other)
+    import inspect  # noqa: E402 — 호출부가 seen_topics를 실제로 넘기는지(④가 연결됐는지) 확인
+    check("Q10-b `_resume_bank_refs`가 seen_topics를 받는다", "seen_topics" in inspect.signature(QG._resume_bank_refs).parameters)
+    check("Q10-b retrieve가 seen_topics를 넘겨 부른다",
+          "_resume_bank_refs(s, role, used, iq_terms, seen_topics)" in inspect.getsource(QG.retrieve))
+
+
+# ---------------- Q11 백업 층 검사 ② · 후보 깊이 ⑦ · 이력서 참고 깊이 ⑧ (2026-11-23) ----------------
+def t_backup_screen():
+    import inspect  # noqa: E402 — 호출부가 실제로 연결됐는지(⑦·⑧) 확인
+    job = {"id": 1, "role_code": "backend", "title": "백엔드 개발자 (상담 플랫폼 API)",
+           "duties": "상담 티켓 API 설계·운영", "requirements": "FastAPI, PostgreSQL"}
+    # ② 사용자가 실제로 받은 백업 층 질문 = 탈락해야 할 유형
+    bad = [{"text": "비전문가에게 기술적인 내용을 설명해야 했던 경험과 그때 쓴 방법을 설명해 주세요."},   # abstract_experience
+           {"text": "헤드헌터랩_경기에서 비전 모델 개발 업무를 맡아 어떤 접근을 취했는지 설명해 주세요."}]  # company_past
+    for b in bad:
+        check("Q11 백업 층 문장 검사 → 탈락 · " + b["text"][:16], bool(QG.backup_issue(b["text"])), QG.backup_issue(b["text"]))
+    ok_text = "상담 티켓 목록 API가 느려졌을 때 어떤 지표를 먼저 확인하시겠습니까?"
+    check("Q11 멀쩡한 백업 문항은 통과", not QG.backup_issue(ok_text), QG.backup_issue(ok_text))
+    # 안전망 ⓐ — 전부 문장 규칙에 걸려도 **후보를 돌려준다**(8문항이 깨지면 안 된다)
+    rep = {"checked": 0, "rule_rejects": []}
+    out = QG.screen_backup(list(bad), job, "job", rep)
+    check("Q11 전부 탈락 → 안전망이 원래 후보를 유지한다", len(out) == len(bad), out)
+    check("Q11 안전망 작동이 기록된다", rep.get("fallback") == "rule", rep)
+    check("Q11 탈락 사유가 기록된다", len(rep["rule_rejects"]) == 2, rep["rule_rejects"])
+    check("Q11 검사 건수가 기록된다", rep["checked"] == 2, rep)
+    check("Q11 빈 후보는 그대로", QG.screen_backup([], job, "job", {}) == [])
+    # 인성은 공고 관련성을 적용하지 않는다(임베딩을 부르지 않는지까지 확인)
+    called = []
+    real = QG.llm.embed
+    QG.llm.embed = lambda *a, **k: called.append(1) or real(*a, **k)
+    try:
+        QG.screen_backup([{"text": ok_text}], job, "personality", {})
+    finally:
+        QG.llm.embed = real
+    check("Q11 인성 백업에는 공고 관련성을 걸지 않는다(임베딩 호출 없음)", not called, called)
+    # ⑦ 후보 깊이 · ⑧ 참고 깊이 상수와 연결
+    check("Q11 ⑦ 후보 깊이 하한 상수", QG.MIN_CAND_DEPTH >= 8, QG.MIN_CAND_DEPTH)
+    check("Q11 ⑦ retrieve가 max(n*3, 하한)으로 부른다", "depth = max(n * 3, MIN_CAND_DEPTH)" in inspect.getsource(QG.retrieve))
+    check("Q11 ⑧ 이력서 참고 후보 수 상수", QG.RESUME_BANK_DEPTH > 1, QG.RESUME_BANK_DEPTH)
+    # 2026-11-23 ⓒ로 사내문서 경로만 하한이 0.55로 갈라졌다(Redis 경로는 0.60 그대로) — 아래 ⓒ 검사로 이어진다.
+    check("Q11 ⑧ 참고 검색이 하한 상수를 인자로 넘긴다",
+          "min_sim=RESUME_BANK_IQ_MIN_SIM" in inspect.getsource(QG._resume_bank_refs))
+    check("Q11 ⑧-2 검색 결과에 raw_sim·role_bonus가 실린다",
+          '"raw_sim"' in inspect.getsource(IQ.search_questions) and '"role_bonus"' in inspect.getsource(IQ.search_questions))
+    # ⓒ(2026-11-23) 이력서 참고 하한 — 사내문서 경로만 0.55, Redis 경로는 0.60 그대로
+    check("Q11 ⓒ 사내문서 참고 하한 0.55", QG.RESUME_BANK_IQ_MIN_SIM == 0.55, QG.RESUME_BANK_IQ_MIN_SIM)
+    check("Q11 ⓒ Redis 참고 하한은 0.60 그대로", QG.RESUME_BANK_MIN_SIM == 0.60, QG.RESUME_BANK_MIN_SIM)
+    src_rb = inspect.getsource(QG._resume_bank_refs)
+    check("Q11 ⓒ 사내문서 경로가 새 하한을 쓴다", "min_sim=RESUME_BANK_IQ_MIN_SIM" in src_rb)
+    check("Q11 ⓒ Redis 경로는 기존 하한을 쓴다", "< RESUME_BANK_MIN_SIM" in src_rb)
+    # Q11-c ⑧ 버그 고정(2026-11-23 4차 재측정에서 발견) — `n`(요구 개수)을 깊이로 쓰면 "하한 통과 후보가 n개
+    # 있어야 한다"가 돼, 실제 분포(0.55↑ 2개)에서 참고가 **한 건도** 붙지 않았다. 깊이는 `k`로만 넓힌다.
+    asked = []
+
+    def _spy_pick(vectors, role_code, cat, n, used, terms, min_sim=None, k=None):
+        asked.append({"cat": cat, "n": n, "k": k, "min_sim": min_sim})
+        if len(asked) > 9:
+            return None
+        # 하한을 통과한 후보가 **1개뿐인** 상황을 재현한다(지금 코드면 n=1이라 통과, 옛 코드면 n=5라 None)
+        return None if n > 1 else [{"iq_id": "IQ-job-x", "doc_id": "MSK-12", "text": "{회사}에서 …를 맡는다면 …?",
+                                    "dup_group": "g1", "competency": "g1", "sim": 0.6477, "raw_sim": 0.5977,
+                                    "chunk_id": "MSK-12#s1", "doc_title": "단위코드", "doc_refs": [], "company_facts": []}]
+    real_pick, real_embed = QG._pick_internal, QG.llm.embed
+    QG._pick_internal, QG.llm.embed = _spy_pick, (lambda texts, **kw: [[0.1, 0.2, 0.3] for _ in texts])
+    try:
+        s = {"use_llm": True, "job": {"role_code": "ai_ax", "title": "AI"}, "candidates": [{"label": "A", "item": {"detail": "가"}},
+                                                                                           {"label": "B", "item": {"detail": "나"}}],
+             "snapshot": {}, "log": []}
+        refs = QG._resume_bank_refs(s, "ai_ax", set(), ["금지"], set())
+        got_iq = [r for r in (refs or []) if r and r.get("iq_id")]
+        rb_calls = [a for a in asked if a["cat"] == "job"]
+        check("Q11-c ⑧ 참고 검색은 요구 개수 1로 부른다", rb_calls and all(a["n"] == 1 for a in rb_calls), rb_calls)
+        check("Q11-c ⑧ 깊이는 k로 넓힌다", rb_calls and all((a["k"] or 0) > 1 for a in rb_calls), rb_calls)
+        check("Q11-c 하한 통과 후보가 1개뿐이어도 참고가 붙는다", len(got_iq) >= 1, refs)
+    finally:
+        QG._pick_internal, QG.llm.embed = real_pick, real_embed
+
+
+# ---------------- Q12 ⑨ 문장 호응 깨짐 (2026-11-23) ----------------
+def t_malformed_ask():
+    import inspect  # noqa: E402 — 호출부 연결 확인용
+    # 사용자가 받은 문장(Redis 은행 원문) — 반드시 탈락
+    bad = ["현장에서 불량 기준이 모호할 때, 어떻게 데이터 수집과 라벨링 기준을 정의하고 모델 성능을 개선해 주세요.",
+           "무엇을 먼저 점검하고 다음 단계를 진행해 주세요.",
+           "왜 그런 선택을 했고 다음에는 다르게 적용하십시오."]
+    for t in bad:
+        check("Q12 ⑨ 의문사+명령형 맺음 → 탈락 · " + t[:18], QR.malformed_ask(t), t)
+        check("Q12 ⑨ 백업 층 검사에도 걸린다 · " + t[:12], QG.backup_issue(t) == "malformed_ask", QG.backup_issue(t))
+    # 오탐 0 — 특히 '~는지 설명해 주세요'·'~처럼 설명해 주세요'(인성 질문의 답변 형식 예시)는 통과해야 한다
+    good = ["현장에서 불량 기준이 모호할 때 무엇을 먼저 확인하시는지 설명해 주세요.",
+            "제조 현장에서 학습 데이터와 실제 서비스 데이터의 분포가 달라졌을 때, 어떻게 감지하고 대응할지 설명해 주세요.",
+            "객체 탐지 모델의 성능을 평가할 때 mAP가 무엇을 의미하는지 설명해 주세요.",
+            "학습이 잘 되지 않을 때 확인하는 순서를 설명해 주세요.",
+            "정밀도와 재현율의 차이를 설명하고, 어떤 것을 더 중시해야 하는지 이유를 설명해 주세요.",
+            "비전 모델 개발 업무를 맡아 현장 적용 시 오탐과 미탐 문제가 생긴다면, 어떻게 접근할지 설명해 주세요.",
+            "우리 회사에 지원한 이유와 입사 후 하고 싶은 일을 설명해 주세요.",
+            "헤드헌터랩_경기에서 규정 안내 모델 개발을 맡는다면, 허용할 실패 수준을 정하기 위해 업무 담당자와 어떻게 "
+            "의견을 조율하시겠습니까? 예를 들어 '의견을 이렇게 조율했고, 그 결과 합의 내용이 이렇게 달라졌다'처럼 설명해 주세요."]
+    for t in good:
+        check("Q12 ⑨ 정상 문장은 통과 · " + t[:20], not QR.malformed_ask(t), t)
+    check("Q12 ⑨ A18 검증에도 연결됐다", "malformed_ask" in inspect.getsource(IQ.validate))
+
+
+# ---------------- Q13 F11 "다시 맡는다면" · Q14 F12 회사명 반복 (2026-11-23 사용자 지적) ----------------
+def t_company_again():
+    import inspect  # noqa: E402 — 호출부 연결 확인용
+    CO = "헤드헌터랩_경기"
+    # 사용자가 지적한 5차 Q3·Q4 원문 — 반드시 탈락
+    bad = ["헤드헌터랩_경기에서 소비기한 인쇄 불량 검사를 다시 맡는다면, 반사광으로 인한 오검출 문제를 어떻게 해결하시겠습니까? "
+           "비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다.",
+           "헤드헌터랩_경기에서 비전 검사 시스템을 다시 맡는다면, 영상 전처리 단계에서 입력 영상 밝기 조절과 작업자 육안 판정을 "
+           "비교해 결과를 기록하는 방식을 어떻게 개선하시겠습니까? 비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다."]
+    for t in bad:
+        check("Q13 F11 회사명+'다시' → 탈락 · " + t[:22], QR.company_again(t, CO) == "company_again", QR.company_again(t, CO))
+        check("Q13 F11 이력서 질문 검사에도 걸린다 · " + t[:14], QR.resume_issue(t, CO) == "company_again", QR.resume_issue(t, CO))
+    # 허용: 이전 회사·프로젝트 이름을 같은 문장에 밝힌 형태
+    ok_prev = ("다온팩토리솔루션에서 하신 소비기한 인쇄 불량 검사를, 헤드헌터랩_경기에서 같은 문제로 마주한다면 어떤 방식으로 "
+               "해결하시겠습니까? 비슷한 경험이 있다면 그 경험을 바탕으로 답해 주셔도 좋습니다.")
+    check("Q13 F11 이전 회사명을 밝히면 통과", not QR.company_again(ok_prev, CO, ("다온팩토리솔루션",)), QR.company_again(ok_prev, CO, ("다온팩토리솔루션",)))
+    check("Q13 F11 '다시'가 함께 있어도 이전 회사명이 있으면 통과",
+          not QR.company_again("다온팩토리솔루션에서 하신 검사를 헤드헌터랩_경기에서 다시 맡는다면 어떻게 하시겠습니까?", CO, ("다온팩토리솔루션",)))
+    # 템플릿 — 새 문구는 전부 통과해야 한다('다시' 제거 확인)
+    for i in range(len(Q.TEMPLATES)):
+        t = Q.template_text(i, "소비기한 인쇄 불량 검사 개선", CO)
+        check(f"Q13 템플릿 {i + 1}에 F11 위반 없음", not QR.company_again(t, CO), t)
+    tp = Q.template_text(0, "소비기한 인쇄 불량 검사", CO, "다온팩토리솔루션")
+    check("Q13 이전 회사명을 알면 그 이름을 밝히는 템플릿", "다온팩토리솔루션에서 하신" in tp and not QR.company_again(tp, CO, ("다온팩토리솔루션",)), tp)
+    check("Q13 TEMPLATE_GENERIC에 '다시' 없음", "다시" not in Q.TEMPLATE_GENERIC, Q.TEMPLATE_GENERIC)
+    check("Q13 ANGLES에 '회사에서 다시' 없음", not any("다시" in a for a in Q.ANGLES), Q.ANGLES)
+    check("Q13 TEMPLATE_2는 그대로(원래 '다시'가 없다)", "적용한다고 가정할 때" in Q.TEMPLATE_2)
+    check("Q13 백업 층 검사에도 걸린다", QG.backup_issue(bad[0], CO) == "company_again" if "company" in
+          inspect.signature(QG.backup_issue).parameters else True)
+    check("Q13 A18 검증에 연결됐다", "company_again" in inspect.getsource(IQ.validate))
+    # 이전 회사 추정은 보수적이어야 한다 — 경력이 둘 이상이면 프로젝트에 회사를 붙이지 않는다
+    snap2 = {"career": [{"company": "다온팩토리솔루션", "detail": "가"}, {"company": "머신비전 장비사", "detail": "나"}],
+             "projects": [{"name": "소비기한 인쇄 불량 검사", "detail": "다"}]}
+    cands2 = {c["label"]: c for c in Q.resume_candidates(snap2)}
+    check("Q13 경력이 둘이면 프로젝트의 이전 회사는 비워 둔다", cands2["소비기한 인쇄 불량 검사"]["prev_company"] == "",
+          cands2["소비기한 인쇄 불량 검사"])
+    check("Q13 경력 항목은 그 회사명이 이전 회사", cands2["다온팩토리솔루션"]["prev_company"] == "다온팩토리솔루션")
+    snap1 = {"career": [{"company": "다온팩토리솔루션", "detail": "가"}], "projects": [{"name": "소비기한 인쇄 불량 검사", "detail": "다"}]}
+    c1 = {c["label"]: c for c in Q.resume_candidates(snap1)}
+    check("Q13 경력이 하나면 프로젝트도 그 회사로 잇는다", c1["소비기한 인쇄 불량 검사"]["prev_company"] == "다온팩토리솔루션")
+
+
+def t_nested_abstract():
+    """Q15 F13(2026-11-23 사용자 지적) — 추상 명사구 겹침. 사용자 원문 Q8을 '반드시 탈락'으로 고정한다."""
+    import inspect  # noqa: E402 — 호출부 연결 확인용
+    q8 = ("헤드헌터랩_경기에서 AI 모델 배포 시 검증 결과가 누락되지 않도록 기록하는 업무를 맡는다면, 검증 증거를 "
+          "남기는 업무 방식의 어떤 점이 본인의 지원 동기와 맞는다고 생각하십니까?")
+    check("Q15 F13 사용자 지적 Q8 → 탈락", QR.nested_abstract(q8), QR.NESTED_ABSTRACT.findall(QR.core(q8)))
+    check("Q15 F13 겹친 조각을 두 개 찾는다", len(QR.NESTED_ABSTRACT.findall(QR.core(q8))) >= 2)
+    check("Q15 F13 백업 층 검사에도 걸린다", QG.backup_issue(q8) in ("nested_abstract", "company_again"), QG.backup_issue(q8))
+    check("Q15 F13 A18 검증에 연결됐다", "nested_abstract" in inspect.getsource(IQ.validate))
+    # 오탐 0 — '~하는 업무'를 **한 번만** 쓴 문장은 정상이다(풀 602개 중 44개가 그 형태였고 그 자체는 문제가 아니다)
+    ok = ["{회사}에서 부서 사업계획서 제출 전 인력의 중복 배치를 확인하는 업무를 맡는다면, 계획의 실행 가능성을 높이는 데 "
+          "사전 확인이 어떤 의미가 있다고 보십니까?",
+          "헤드헌터랩_서울에서 고객 보고서용 데이터를 분석한다고 가정할 때, 집계한 데이터 총량이 고객의 기존 보고서와 "
+          "다르다면 차이의 원인을 파악하기 위해 무엇을 확인하시겠습니까?",
+          "{회사}에서 API 기능 구현을 맡는다면, 요청 처리 중 오류가 발생했을 때 처리 흐름을 확인할 수 있도록 로그를 "
+          "어떻게 설계하시겠습니까?",
+          "헤드헌터랩_경기에서 규정 안내 모델 개발을 맡는다면, 허용할 실패 수준을 정하기 위해 업무 담당자와 어떻게 "
+          "의견을 조율하시겠습니까? 예를 들어 '의견을 이렇게 조율했고, 그 결과 합의 내용이 이렇게 달라졌다'처럼 설명해 주세요."]
+    for t in ok:
+        check("Q15 F13 '~하는 업무'를 한 번만 쓰면 통과 · " + t[:18], not QR.nested_abstract(t), t)
+    # 지시문: 기업 카테고리 지침이 구체성을 **요구**하는지(예전에는 금지만 있었다)
+    g = IQ.CAT_GUIDE["company"]
+    check("Q15 F13 기업 지침이 구체적 대상을 요구한다", "그대로 남긴다" in g or "구체적인 대상" in g, g[:60])
+    check("Q15 F13 기업 지침의 금지가 세 가지로 좁혀졌다", "고객사 이름" in g and "내부 금액" in g and "사건 번호" in g)
+    check("Q15 F13 기업 지침에 추상 명사구 겹침 금지가 있다", "겹쳐 쓰지 않는다" in g)
+
+
+def t_company_head():
+    import inspect  # noqa: E402 — 호출부 연결 확인용
+    # F12: 세트 8문항 중 회사명을 쓰는 문항은 상한까지만
+    job = {"company_name": "헤드헌터랩_경기"}
+    st = {"company_used": 0, "company_dropped": 0}
+    outs = [QG.fill_company("{회사}에서 A를 맡는다면 무엇을 확인하시겠습니까?", job, st) for _ in range(8)]
+    named = [t for t in outs if "헤드헌터랩_경기" in t]
+    check(f"Q14 F12 회사명 쓰는 문항은 {QG.COMPANY_NAME_MAX}개 이하", len(named) <= QG.COMPANY_NAME_MAX, len(named))
+    check("Q14 F12 나머지는 '이 직무에서'로 맥락 유지(F1 유지)",
+          all("이 직무에서" in t for t in outs if "헤드헌터랩_경기" not in t), outs[-1])
+    check("Q14 F12 회사명 문항의 문두 표현이 하나가 아니다", len({t.split(" ")[0] for t in named}) > 1, named)
+    check("Q14 F12 state 없이 부르면 기존 동작(전부 회사명)",
+          "헤드헌터랩_경기" in QG.fill_company("{회사}에서 A를 맡는다면?", job))
+    check("Q14 F12 버린 수가 기록된다", st["company_dropped"] == 8 - len(named), st)
 
 
 # ---------------- Q6 A6·A7은 A17을 다시 쓰지 않는다 ----------------
@@ -563,6 +788,11 @@ def main():
     t_followup()
     t_posting_gate()
     t_set_topics()
+    t_backup_screen()
+    t_malformed_ask()
+    t_company_again()
+    t_nested_abstract()
+    t_company_head()
     t_no_rewrite()
     t_gen_model()
     t_personality_docs()

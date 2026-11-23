@@ -46,7 +46,13 @@ def _is_a17(d):
 
 REVIEW = config.QGRAPH_REVIEW          # 0이면 A5·A6 모델 검수를 건너뛴다(규칙 검사는 그대로)
 MIN_KEYWORDS = 2
-RESUME_BANK_MIN_SIM = 0.60            # 이력서 항목 ↔ 은행 참고 문항 유사도 하한(2026-11-09 측정: 관련 0.65~0.75 · 무관 0.53~0.56)
+RESUME_BANK_MIN_SIM = 0.60            # 이력서 항목 ↔ **Redis** 참고 문항 유사도 하한(2026-11-09 측정: 관련 0.65~0.75 · 무관 0.53~0.56)
+# 사내문서 질문 경로만 별도 하한(2026-11-23 사용자 승인 ⓒ) — 0.60은 11-09 Redis 문항 실측값이고,
+# 사내문서 질문 분포는 11-23 실측에서 **최고 0.598**(깊이 30, 0.60↑ 0개)이라 그 하한으로는 한 건도 통과하지 못했다.
+RESUME_BANK_IQ_MIN_SIM = config.RESUME_BANK_IQ_MIN_SIM
+MIN_CAND_DEPTH = 8                    # 카테고리별 후보 하한(2026-11-23 ⑦). n=1(기업)이면 n*3=3이라 주제가 겹치면 전멸한다.
+RESUME_BANK_DEPTH = 5                 # 참고 문항 후보 수(2026-11-23 ⑧). 1개만 뽑으면 검색 깊이·후보 모음이 같이 좁아져
+                                      # 하한을 넘는 후보가 있어도 놓친다 — 여러 개 받아 적합한 첫 1개를 쓴다.
 PERSONAL = re.compile(Q.BLOCKLIST.pattern[:-1] + r"|복무|군필|전역|주소|생년)")   # 인적 정보 키워드는 모델이 남겨도 코드가 뺀다
 
 
@@ -75,6 +81,7 @@ class GenState(TypedDict, total=False):
     forbid_ready: bool          # 사전을 읽었는가. False면 사내문서 경로 미사용(보수적)
     guard_report: dict          # 7-B {checked, blocked, reasons{종류: 건수}, model} — 원문 없음
     retrieve_report: dict       # retrieve 카테고리별 출처 {personality|job|company|resume_bank: redis|db|md|-, error?} (2026-11-16)
+    backup_report: dict         # ②(2026-11-23) 백업 층(Redis·DB) 검사 기록 {checked, rule_rejects[], posting_rejects, fallback?}
     dual_report: dict           # Dual RAG 결과 {mode: dual|redis_only|chroma_only|safe, redis, chroma, job_rag, company_rag} (ADLC 6.18.3)
 
 
@@ -254,6 +261,82 @@ def _pick_redis(vector, role_code, cat, n, used):
     return [b for i, b in enumerate(pool) if i in keep]
 
 
+def backup_issue(text, company=""):
+    """② 백업 층(Redis·DB 은행) 문항의 문장 문제 — 사유 문자열, 문제없으면 "".
+
+    2026-11-23 사용자 승인. 지금까지 문장 규칙과 공고 관련성은 **사내문서 질문에만** 걸렸고, 사내문서가
+    모자라 백업 층으로 내려가면 아무 검사도 없이 그대로 나갔다. 실측으로 나간 예:
+      · 백엔드 공고에 "객체 탐지 모델의 성능을 평가할 때 mAP가 무엇을 의미하는지" (DB 은행)
+      · 제조 비전 공고에 "학습이 잘 되지 않을 때 확인하는 순서를 설명해 주세요." (Redis, 회사·공고 맥락 0)
+    검사 항목은 사내문서 질문에 쓰는 것과 같다(`question_rules`).
+    """
+    t = (text or "").strip()
+    if not t:
+        return "empty"
+    core = QR.core(t)
+    checks = (("company_past", lambda: QR.COMPANY_PAST.search(t)),
+              ("broken_word", lambda: QR.broken_word(t)),
+              ("abstract_experience", lambda: QR.ABSTRACT_EXPERIENCE.search(core)),
+              ("multi_interrog", lambda: QR.MULTI_INTERROG.search(core)),
+              ("bare_ask", lambda: QR.BARE_ASK.search(core)),
+              # ⑨(2026-11-23): 의문사로 묻고 명령형으로 맺는 문장. 은행 원문에서 실제로 나갔다
+              # ("…어떻게 … 모델 성능을 개선해 주세요.") — 은행 원문은 고치지 않고 출제 때 걸러낸다.
+              ("malformed_ask", lambda: QR.malformed_ask(t)),
+              # F11(2026-11-23): 회사 이름 + '다시' — 은행 원문에도 나올 수 있다(이전 회사명이 있으면 허용)
+              ("company_again", lambda: company and QR.company_again(t, company)),
+              # F13(2026-11-23): 추상 명사구 겹침 — 은행 원문에도 있을 수 있다
+              ("nested_abstract", lambda: QR.nested_abstract(t)))
+    for name, fn in checks:
+        try:
+            if fn():
+                return name
+        except Exception:  # noqa: BLE001 — 규칙 하나가 깨져도 질문 생성을 멈추지 않는다
+            continue
+    if not Q.one_sentence(t):
+        return "not_one_sentence"
+    if Q.BLOCKLIST.search(t):
+        return "blocklist"
+    return ""
+
+
+def screen_backup(cands, job, cat, report=None):
+    """② 백업 층 후보에 문장 규칙 + 공고 관련성을 건다. **8문항은 반드시 유지한다**.
+
+    안전망(사용자 원칙 ⓐ): **후보를 버리지 않고 순서만 바꾼다** — 검사를 통과한 것을 앞으로, 걸린 것을 뒤로
+    보낸다. 호출 쪽은 필요한 수만큼 앞에서 가져가므로, 깨끗한 후보가 모자라도 **8문항은 그대로 채워진다**
+    (면접이 8문항 아래로 내려가는 것보다 덜 나쁜 질문이 나가는 쪽이 낫다). 걸러낸 사유와 몇 개를 뒤로 보냈는지는
+    `report`에 남겨 측정할 수 있게 한다(사용자 원칙 ⓑ).
+    """
+    rep = report if report is not None else {}
+    if not cands:
+        return cands
+    rep.setdefault("checked", 0)
+    rep.setdefault("rule_rejects", [])
+    rep["checked"] += len(cands)
+    kept, demoted = [], []
+    for b in cands:
+        why = backup_issue(b.get("text") or "", ((job or {}).get("company_name") or ""))
+        if why:
+            rep["rule_rejects"].append({"cat": cat, "reason": why, "text": (b.get("text") or "")[:80]})
+            demoted.append(b)
+        else:
+            kept.append(b)
+    if not kept:                                   # 전부 문장 규칙에 걸렸다 → 그대로(덜 나쁜 것이라도 내보낸다)
+        rep["fallback"] = "rule"
+        return cands
+    if cat != "personality":                       # 인성에는 공고 관련성을 적용하지 않는다(2026-11-20 결정과 같음)
+        passed = _filter_by_posting(list(kept), job, cat)
+        if passed:
+            rep["posting_rejects"] = rep.get("posting_rejects", 0) + (len(kept) - len(passed))
+            ids = {id(b) for b in passed}
+            demoted = [b for b in kept if id(b) not in ids] + demoted
+            kept = list(passed)
+        else:                                      # 공고 관련성에 전부 걸렸다 → 문장 검사만 통과한 순서로
+            rep["fallback"] = "posting"
+            rep["posting_rejects"] = rep.get("posting_rejects", 0) + len(kept)
+    return kept + demoted                          # 통과분 먼저, 걸린 것은 뒤에 남겨 수를 보전한다
+
+
 def _iq_terms():
     """사내문서 질문을 쓸 수 있는가 + 질문 검사용 금지 용어. (terms, 사유). terms가 None이면 쓰지 않는다."""
     if config.RAG_QUESTION_SOURCE != "chroma" or not config.INTERNAL_DOCS_RAG:
@@ -268,16 +351,23 @@ def _iq_terms():
         return None, type(e).__name__
 
 
-def _pick_internal(vectors, role_code, cat, n, used, terms, min_sim=None):
+def _pick_internal(vectors, role_code, cat, n, used, terms, min_sim=None, k=None):
     """① 사내문서 질문 컬렉션(A17)에서 후보 n개 — 2026-11-17 사용자 지시로 **1순위 출처**(ADLC 6.19.5).
     질문은 이미 A18 검증을 통과한 한 문장이라 Redis 문항과 같은 모양으로 돌아온다.
-    꺼짐·부족·오류면 None → 호출 쪽이 Redis 질문 은행(백업)으로 내려간다."""
+    꺼짐·부족·오류면 None → 호출 쪽이 Redis 질문 은행(백업)으로 내려간다.
+
+    **`n`과 `k`의 역할이 다르다**(2026-11-23 — 이걸 혼동해 ⓒ가 무효가 된 적이 있다):
+      · `n` = **요구 개수**. `search_questions`는 하한을 통과한 후보가 n개보다 적으면 **전부 버리고 None**을 준다.
+      · `k` = **검색 깊이**(기본 `max(16, n*6)`). 더 많이 보고 싶을 때는 `n`을 올리지 말고 **`k`를 올려라.**
+    `n`을 깊이 삼아 5로 올렸더니 "하한 통과 후보가 5개 있어야 한다"가 돼, 2개뿐인 실제 분포에서 참고 문항이
+    한 건도 붙지 않았다(11-23 4차 재측정에서 발견).
+    """
     if terms is None:
         return None
     try:
         from . import internal_question_agent as IQ
         return IQ.search_questions(vectors if len(vectors) > 1 else vectors[0], cat, n, used,
-                                   role_code=role_code, forbid_terms=terms, min_sim=min_sim)
+                                   role_code=role_code, forbid_terms=terms, min_sim=min_sim, k=k)
     except Exception:  # noqa: BLE001 — 컬렉션 없음·Chroma 오류 → 백업 층으로
         return None
 
@@ -289,7 +379,34 @@ def _pick_internal(vectors, role_code, cat, n, used, terms, min_sim=None):
 # 어휘 겹침으로는 못 가린다(실측: 그 질문이 공고와 '답변'·'생성' 같은 흔한 말로 통과했다).
 # 그래서 **공고 본문 벡터와 질문 벡터의 코사인**으로 자른다. 2026-11-19 실측(AI/AX LLM 공고 기준):
 #   무관 0.236 · 0.420 · 0.521   |   관련 0.653 · 0.658 · 0.693   → 경계 0.58이 둘을 정확히 가른다.
-POSTING_MIN_SIM = 0.58
+#
+# 2026-11-23 사용자 승인으로 **0.58 → 0.50**(`config.POSTING_MIN_SIM`, 환경변수로 덮어쓸 수 있다).
+# 11-19 측정은 사내문서 질문끼리 줄 세울 때의 경계였고, **탈락한 자리에 무엇이 들어오는지**를 보지 않았다.
+# 11-23 실측(공고 15개 전수 · 질문 풀 602개, `eval_runs/p1_question_quality_2026-11-23/`):
+#   - 0.58이면 직무 3 + 기업 1을 사내문서 질문으로 채우는 공고가 **15개 중 2개**뿐이고, 나머지는 백업 층
+#     (Redis·DB 은행)으로 내려간다. 그 자리에 실제로 나간 질문 = 백엔드 공고에 "객체 탐지 mAP가 무엇인지",
+#     데이터 분석 공고에 "트랜스포머 셀프 어텐션" — 공고와 무관한 질문이다.
+#   - 같은 공고의 0.50~0.58 구간 후보는 전부 그 직무의 일이었다(공고 4 기준 8개: 응답 구조 설계 · 중계 API
+#     도입 판단 · ERP 연동 오류 복구 · 지연 메트릭 …). 0.50 아래로 내려가야 다른 팀 일·일반 동기 질문이 섞인다.
+#   - 0.50이면 직무 3 + 기업 1을 채우는 공고가 **15개 중 11개**가 된다.
+# 즉 기준을 내리면 관련성이 낮아지는 게 아니라, 더 무관한 백업 질문을 밀어낸다.
+POSTING_MIN_SIM = config.POSTING_MIN_SIM
+
+# F13(2026-11-23 사용자 승인) — **재순위 감점**(하드 필터 아님). `internal_search.PREFERRED_TYPES`와 같은 구조이고
+# 부호만 반대다. 사용자 지적: 기업 질문이 "검증 결과가 누락되지 않도록 기록하는 업무"처럼 추상적이고, 무슨 제품·무슨
+# 검증인지가 없다. 그 질문들의 출처가 회계·결재·예산·공지 같은 **관리 문서**라 제품·프로젝트 맥락이 애초에 없다.
+# 제외(안1: 기업 질문 251 → 179)는 **ai_ax 태그를 118 → 47로 깨뜨려 폐기**했다 — 커버리지가 무너지면 사용자가 더
+# 싫어한 "우리 회사에 지원한 이유"(Redis 백업)가 돌아온다. 그래서 **순서만** 뒤로 보낸다.
+#   · 회계·결재·예산·공지류 = 0.03 (관문 2 하한 0.50과 통과 코사인 사이 간격보다 작게 — 통과 여부는 안 바뀐다)
+#   · 영업 절차·가이드류 = 0.01 (제품·고객 맥락이 있는 문서가 섞여 있어 더 작게)
+DEMOTED_TYPES = {
+    "approval": 0.03, "approval_authority": 0.03, "settlement": 0.03, "closing": 0.03, "budget": 0.03,
+    "costing": 0.03, "revenue": 0.03, "receivable": 0.03, "foreign_tx": 0.03, "notice": 0.03,
+    "manpower_request": 0.03,
+    "bid_process": 0.01, "bid_decision": 0.01, "pricing_model": 0.01, "proposal_guide": 0.01,
+    "contract_guide": 0.01, "sales_plan": 0.01, "planning": 0.01, "asset_registry": 0.01,
+    "decision_guide": 0.01, "discovery_guide": 0.01,
+}
 
 
 def _posting_vector(job):
@@ -348,12 +465,16 @@ def _filter_by_posting(cands, job, cat):
     kept = []
     for c, qv in zip(cands, qvs):
         sim = _cos(jv, qv)
-        if sim >= POSTING_MIN_SIM:
-            kept.append((sim, c))
+        if sim >= POSTING_MIN_SIM:                      # **통과 판정은 원시 코사인으로만** — 감점이 뒤집지 않는다
+            kept.append((sim - DEMOTED_TYPES.get((c.get("doc_type_code") or c.get("doc_type") or ""), 0.0), sim, c))
         else:
             log.info("공고 무관 질문 제외(%s, sim=%.3f): %s", cat, sim, (c.get("text") or "")[:50])
-    kept.sort(key=lambda x: -x[0])                      # 2026-11-20: 공고와 가까운 순(호출 쪽이 앞에서 n개를 쓴다)
-    return [c for _, c in kept] or None
+    # 2026-11-20: 공고와 가까운 순(호출 쪽이 앞에서 n개를 쓴다).
+    # 2026-11-23 F13: 같은 구간이면 **관리 문서(회계·결재·예산·공지) 출신 질문을 뒤로** 보낸다. 감점은 이 정렬에만
+    # 쓰고 위 통과 판정에는 쓰지 않으므로 **커버리지가 줄지 않는다**(기업 질문을 251 → 179로 줄이는 제외안은
+    # ai_ax 태그가 118 → 47로 깨져 폐기했다 — 사용자가 싫어한 '지원한 이유' Redis 질문이 돌아온다).
+    kept.sort(key=lambda x: (-x[0], -x[1]))
+    return [c for _, _, c in kept] or None
 
 
 def retrieve(s: GenState) -> GenState:
@@ -364,6 +485,7 @@ def retrieve(s: GenState) -> GenState:
     어느 층이 비어도 면접은 끝까지 간다(H-01~H-09). 질의 벡터는 세 층이 **같은 것을 재사용**한다(임베딩 추가 0회)."""
     used, picks, src = set(), {}, {}
     seen_topics = set()                      # F4(2026-11-20): 세트 안에서 같은 프로젝트·같은 조각의 사내문서 질문은 1개만
+    backup_report = {"checked": 0, "rule_rejects": []}   # ②(2026-11-23) 백업 층 검사 기록(측정용)
     need = dict(Q.PLAN)
     vector, vectors, role = None, None, s["job"]["role_code"]
     mq = {"mode": "off"}
@@ -380,16 +502,21 @@ def retrieve(s: GenState) -> GenState:
         got, how = None, None
         if vector is not None:
             vecs = vectors if (vectors and len(vectors) > 1) else [vector]
+            # 2026-11-23 사용자 승인(⑦) — 후보를 `n*3`으로 뽑으면 **기업처럼 n=1인 카테고리는 후보가 3개뿐**이다.
+            # 실측: 공고 3의 기업 후보 3개가 전부 콜센터 묶음이라 `_distinct_topics`에 전부 걸려 Redis로 샜다
+            # (직무 질문이 그 묶음을 먼저 가져간 뒤였다). 깊이를 8로 올리면 묶음 밖 후보(MSK-57)가 **항상**
+            # 후보에 들어온다(깊이 3에서는 무작위 표집 때문에 빠질 수 있다, 깊이 3/8/12 실측).
+            depth = max(n * 3, MIN_CAND_DEPTH)
             if cat != "personality":
                 # 공고 무관이면 버린다(전제조건 2). 2026-11-20 리드 결정: **인성에는 적용하지 않는다** — 인성은
                 # 공고 적합성 질문이 아니고, 가치·태도 문서 질문은 공고 본문과 유사도가 낮게 나와 대부분 버려졌다.
                 # 2026-11-20: 전에는 이미 뽑힌 n개만 걸러 통과 질문이 풀에 있어도 백업으로 내려갔다 → 후보를 3배 뽑아
                 # 관문 2를 통과한 것 중 공고와 가까운 순으로 n개를 쓴다(후보가 모자라면 n개로 다시 뽑는다).
-                got = (_pick_internal(vecs, role, cat, n * 3, used, iq_terms)
+                got = (_pick_internal(vecs, role, cat, depth, used, iq_terms)
                        or _pick_internal(vecs, role, cat, n, used, iq_terms))  # ① 사내문서 질문(주 출처)
                 got = _filter_by_posting(got, s["job"], cat)
             else:
-                got = (_pick_internal(vecs, role, cat, n * 3, used, iq_terms)
+                got = (_pick_internal(vecs, role, cat, depth, used, iq_terms)
                        or _pick_internal(vecs, role, cat, n, used, iq_terms))  # ① 사내문서 질문(주 출처)
             got = _distinct_topics(got, n, seen_topics)
             how = "internal_q" if got else None
@@ -400,6 +527,8 @@ def retrieve(s: GenState) -> GenState:
                 taken = used | {_group(b) for b in (got or [])}
                 try:
                     more = _pick_redis(vecs if len(vecs) > 1 else vector, role, cat, short, taken)   # ② Redis(백업)
+                    more = screen_backup(more, s["job"], cat, backup_report)     # ②(2026-11-23) 백업 층도 검사
+                    more = list(more or [])[:short]
                 except Exception as e:
                     more = None
                     src["error"] = type(e).__name__
@@ -411,6 +540,9 @@ def retrieve(s: GenState) -> GenState:
         if short > 0:   # 인성 대체 = character_assessment md(없으면 DB), 나머지 = DB 은행 — 모자란 수만큼
             taken = used | {_group(b) for b in (got or [])}
             fill = Q.pick_character(short, taken, s["snapshot"]) if cat == "personality" else Q.pick_bank(cat, short, taken)
+            # ②(2026-11-23) DB 은행·인성 md도 같은 검사를 거친다. 모자라면 **검사를 건너뛴 원래 후보**가 돌아온다
+            # (안전망) — 여기서 8문항이 깨지면 면접 자체가 성립하지 않기 때문이다.
+            fill = list(screen_backup(list(fill), s["job"], cat, backup_report) or fill)[:short]
             if cat == "personality" and any(b.get("char_id") for b in fill):
                 src[key] = "md" if not got else src[key] + "+md"
             elif got:
@@ -421,18 +553,21 @@ def retrieve(s: GenState) -> GenState:
         picks[key] = got
         used |= {_group(b) for b in got}
     if not s["resume_fallback"]:                    # 이력서 질문 3개마다 질문 은행 참고 문항(RAG)
-        picks["resume_bank"] = _resume_bank_refs(s, role, used, iq_terms) if s["use_llm"] else []
+        picks["resume_bank"] = _resume_bank_refs(s, role, used, iq_terms, seen_topics) if s["use_llm"] else []
         _rb = [b for b in picks["resume_bank"] if b]
         src["resume_bank"] = ("internal_q" if any(b.get("iq_id") for b in _rb)
                               else "redis" if any(b.get("doc_id") for b in _rb) else "-")
     src["internal_q"] = iq_why
     return {"picks": picks, "query_vector": vector, "query_vectors": vectors or ([vector] if vector is not None else []),
-            "mq_report": mq, "retrieve_report": dict(src),
+            "mq_report": mq, "retrieve_report": dict(src), "backup_report": dict(backup_report),
             "log": s["log"] + ["retrieve: " + " · ".join(f"{k} {len(v)}({src.get(k)})" for k, v in picks.items())
                                + f" · 사내문서 질문 {iq_why}"
                                + (f" · redis 오류 {src['error']}" if "error" in src else "")
                                + f" · 쿼리 {mq.get('mode')} {mq.get('queries', 0)}개"
-                               + (f"({mq['reason']})" if mq.get("reason") else "")]}
+                               + (f"({mq['reason']})" if mq.get("reason") else "")
+                               + (f" · 백업 검사 {backup_report['checked']}건 중 탈락 "
+                                  f"{len(backup_report['rule_rejects'])}" if backup_report["checked"] else "")
+                               + (f"(안전망 {backup_report['fallback']})" if backup_report.get("fallback") else "")]}
 
 
 def retrieve_internal(s: GenState) -> GenState:
@@ -504,7 +639,7 @@ def _enrich_character(b):
     return {**b, **{k: it[k] for k in ("char_id", "competency", "intent", "scope", "keep", "signals", "probes")}} if it else b
 
 
-def _resume_bank_refs(s, role, used, iq_terms=None):
+def _resume_bank_refs(s, role, used, iq_terms=None, seen_topics=None):
     """이력서 질문 짝(항목·관점)마다 그 항목 내용으로 참고 문항 1개를 찾는다(이미 쓴 묶음 제외).
 
     출처 순서는 다른 카테고리와 같다(2026-11-18, ADLC 6.19.5 · M-55):
@@ -525,7 +660,23 @@ def _resume_bank_refs(s, role, used, iq_terms=None):
                 # 2026-11-19 사용자 지시 — 이력서 항목과 **상관없는** 사내문서 질문이 붙는 사고
                 # (Mercari 가격예측 이력서에 '신상품 출시 후 경과 일수'(수요예측 문서) 질문이 합성됨).
                 # 원인: 사내문서 경로가 전역 하한 0.30만 썼다. Redis 경로와 **같은 0.60**을 쓴다.
-                got = _pick_internal([vec], role, "job", 1, seen, iq_terms, min_sim=RESUME_BANK_MIN_SIM)
+                # 2026-11-23 사용자 승인(⑧) — **후보를 1개가 아니라 여러 개 받아** 적합한 첫 1개를 쓴다.
+                # 하한(0.60)은 그대로다. 11-23 실측: 이력서 질문 14개 중 사내문서 참고가 붙은 것이 **0개**였는데,
+                # 원인은 하한이 높아서가 아니라 **후보를 1개만 뽑아서**였다. `n=1`이면 검색 깊이가 16으로 좁아지고
+                # 후보 모음도 4개에서 끊긴 뒤 그중 하나를 무작위로 고르기 때문에(`search_questions`), 0.60을 넘는
+                # 후보가 풀에 있어도 후보군에 들어오지 못했다(YS-J3·NH-J4·OY-J5에서 0.60↑ 후보 존재를 실측).
+                # ⓒ 하한은 사내문서 경로만 0.55. **요구 개수는 1개**이고 ⑧은 `k`(검색 깊이)로만 넓힌다 —
+                # `n`을 깊이로 쓰면 "하한 통과 후보가 n개 있어야 한다"가 돼 한 건도 못 붙는다(4차 재측정에서 확인).
+                got = _pick_internal([vec], role, "job", 1, seen, iq_terms,
+                                     min_sim=RESUME_BANK_IQ_MIN_SIM, k=RESUME_BANK_DEPTH * 6) or []
+                # 2026-11-23 사용자 승인(④) — 참고 문항도 **세트 안 중복 검사**를 거친다.
+                # 사고: 공고 3 세트에서 이력서 참고 문항과 직무 질문이 둘 다 `JD-AIAX-01`에서 나와
+                # 같은 주제(회귀 평가 / 평가 데이터셋)를 두 번 물었다. F4가 지적한 '같은 주제 두 번'이
+                # 직무·기업끼리는 막혀 있었지만 **이력서 참고 문항 ↔ 직무 질문** 사이에는 열려 있었다.
+                # ⑧으로 후보가 여러 개가 됐으므로, 중복에 걸리면 **버리지 않고 다음 후보로 넘어간다**.
+                if got and seen_topics is not None:
+                    got = _distinct_topics(got, 1, seen_topics)
+                got = list(got or [])[:1]
                 if got:
                     b = got[0]
                     g = b.get("dup_group") or b.get("competency") or b.get("iq_id")
@@ -632,18 +783,44 @@ def _distinct_topics(cands, n, seen_topics):
     return out or None
 
 
-def fill_company(text, job):
-    """A17 질문의 `{회사}` 자리를 지원 회사 이름으로(2026-11-20 F1·F3, 문자열 치환 — 모델 호출 0회). 이름이 없으면 '지원하신 회사'."""
+# F12(2026-11-23 사용자 지적): 한 세트 8문항 중 6개가 "헤드헌터랩_경기에서…"로 시작해 전부 같은 틀로 보였다.
+# 회사 이름은 **세트당 이만큼만** 쓰고, 나머지는 회사 이름 없이 직무 맥락으로 돌린다(F1은 유지 — "이 직무에서"로
+# 공고·직무 맥락은 남는다). 문두 표현도 돌려 쓴다.
+COMPANY_NAME_MAX = 3
+_COMPANY_HEADS = ("{회사}에서", "{회사}에 입사해", "{회사}의 이 직무에서")
+
+
+def fill_company(text, job, state=None):
+    """A17 질문의 `{회사}` 자리를 채운다(2026-11-20 F1·F3, 문자열 치환 — 모델 호출 0회).
+
+    `state`(세트 단위 dict)를 주면 F12를 적용한다: 회사 이름을 **세트당 `COMPANY_NAME_MAX`개 문항까지만** 쓰고,
+    그 뒤에는 "이 직무에서"로 바꿔 같은 문두가 반복되지 않게 한다. 회사 이름을 쓰는 문항도 문두 표현을 돌려 쓴다.
+    `state`가 없으면(단독 호출·시험) 기존 동작 그대로 — 전부 회사 이름으로 채운다.
+    """
+    t = text or ""
     name = ((job or {}).get("company_name") or "").strip() or "지원하신 회사"
-    return (text or "").replace("{회사}", name)
+    if state is None:
+        return t.replace("{회사}", name)
+    used = state.get("company_used", 0)
+    if "{회사}" not in t:
+        return t
+    if used >= COMPANY_NAME_MAX:
+        # 회사 이름을 더 쓰지 않는다 — 문두는 '이 직무에서', 문장 중간의 회사 자리는 '이 직무'로 받는다.
+        state["company_dropped"] = state.get("company_dropped", 0) + 1
+        return t.replace("{회사}에서", "이 직무에서").replace("{회사}의", "이 직무의").replace("{회사}", "이 직무")
+    state["company_used"] = used + 1
+    head = _COMPANY_HEADS[used % len(_COMPANY_HEADS)]
+    if t.startswith("{회사}에서") and head != "{회사}에서":
+        t = head + t[len("{회사}에서"):]
+    return t.replace("{회사}", name)
 
 
-def _internal_draft(b, cat, job=None):
+def _internal_draft(b, cat, job=None, state=None):
     """A17 질문은 **면접마다 다시 쓰지 않는다**(기본, `RAG_IQ_REWRITE=0`). 이미 A18 검증(한 문장·금지 용어·
     마스킹 표식·조각 근거·지어낸 토큰·허위 경험 전제)을 통과한 문장이고, 면접 중 다시 쓰는 경로는 20명 중
     12명이 실패했다(QO-13). 조각 출처(`doc_refs`)·근거 문구(`company_facts`)를 붙여 7-B 관문 대상으로 남긴다.
     회사 자리(`{회사}`)만 지원 회사 이름으로 바꾼다."""
-    text = fill_company(b["text"], job)
+    text = fill_company(b["text"], job, state)       # F12(2026-11-23): 회사 이름은 세트당 상한까지만
     return {"category": cat, "eval_items": Q.EVAL_ITEMS[cat], "text": text, "orig": text,
             **_bank_fields(b), "intent": b.get("intent") or b.get("subcategory") or "",
             "company_facts": list(b.get("company_facts") or []), "doc_refs": list(b.get("doc_refs") or []),
@@ -658,10 +835,12 @@ def generate(s: GenState) -> GenState:
     role_name = s["job"].get("role_name") or ""
     n_iq = {"personality": 0, "job": 0, "company": 0}
     n_iq_resume = 0                       # 이력서 문항 중 참고 문항이 사내문서 질문이었던 수(2026-11-18, M-55)
+    # F12(2026-11-23): 세트 단위 회사 이름 카운터 — `seen_topics`처럼 이 세트 안에서만 들고 다닌다.
+    comp_state = {"company_used": 0, "company_dropped": 0}
     for b in s["picks"].get("personality", []):
         if b.get("iq_id") and not config.RAG_IQ_REWRITE:          # 사내문서 질문(인성) — 그대로 출제
             n_iq["personality"] += 1
-            drafts.append(_internal_draft(b, "personality", s["job"]))
+            drafts.append(_internal_draft(b, "personality", s["job"], comp_state))
             continue
         text = Q.contextualize_character(b, s["job"], s["snapshot"]) if use_llm else b["text"]
         if not _keep_rewrite(text, b["text"], s["job"].get("company_name")):   # 다시 쓴 문장이 문장 규칙을 어기면 원문(2026-11-20)
@@ -680,7 +859,7 @@ def generate(s: GenState) -> GenState:
         pairs = Q.resume_pairs(s["candidates"])
         spare = [c for c in s["candidates"] if all(c is not p for p, _ in pairs)]   # 짝에 안 들어간 이력서 항목(주제가 겹칠 때 교체용)
         for i, (cand, angle) in enumerate(pairs):
-            tpl = Q.template_text(angle, cand["label"], company)
+            tpl = Q.template_text(angle, cand["label"], company, cand.get("prev_company"))
             if use_llm:
                 bank = banks[i] if i < len(banks) else None
                 r = Q.make_resume_question(cand, angle, s["snapshot"], bank, role_name, company, avoid=prev,
@@ -692,7 +871,7 @@ def generate(s: GenState) -> GenState:
                     r2 = Q.make_resume_question(alt, angle, s["snapshot"], bank, role_name, company, avoid=prev,
                                                 ignore_text=_posting_text(s["job"]))
                     if not any(QR.shared_topic(r2["text"], p, ignore=[company, _posting_text(s["job"])]) for p in prev):
-                        cand, r, tpl = alt, r2, Q.template_text(angle, alt["label"], company)
+                        cand, r, tpl = alt, r2, Q.template_text(angle, alt["label"], company, alt.get("prev_company"))
             else:
                 ref = {"section": cand["section"], "index": cand["index"], "label": cand["label"],
                        "quote": (cand["item"].get("detail") or cand["item"].get("source") or "")[:160]}
@@ -717,7 +896,7 @@ def generate(s: GenState) -> GenState:
         for b in s["picks"].get(cat, []):
             if b.get("iq_id") and not config.RAG_IQ_REWRITE:      # 사내문서 질문(직무·기업) — 그대로 출제
                 n_iq[cat] += 1
-                drafts.append(_internal_draft(b, cat, s["job"]))
+                drafts.append(_internal_draft(b, cat, s["job"], comp_state))
                 continue
             rag = None
             if not use_llm:
@@ -789,6 +968,13 @@ def _rule_ok(d, text, snapshot, forbid_terms=()):
     return True
 
 
+def _prev_names(d):
+    """F11(2026-11-23): 이력서 질문의 '다시'를 허용할 근거 이름 — 이전 회사명과 항목 라벨.
+    A6가 고쳐 쓴 문장을 다시 검사할 때도 같은 기준을 쓴다(허용 범위가 생성 때와 달라지면 안 된다)."""
+    ref = (d or {}).get("resume_ref") or {}
+    return ((ref.get("prev_company") or ""), (ref.get("label") or ""))
+
+
 def evaluate_philosophy(s: GenState) -> GenState:
     """A6 철학 적합성(prompts/evaluate/philosophy_fit.md): 원칙 6개 모두 4점 이상이면 통과.
     고친 질문은 규칙을 다시 검사하고 최대 2번 고친다. 끝내 실패하면 은행 원문·템플릿으로 되돌린다. 인성 문항(은행 원문)은 검사하지 않는다."""
@@ -818,7 +1004,7 @@ def evaluate_philosophy(s: GenState) -> GenState:
                 ok = True
                 break
             nq = (r.get("revised_question") or "").strip()
-            if not nq or nq == text or not _rule_ok(d, nq, s["snapshot"], s.get("forbid_terms") or ()) or QR.resume_issue(nq, job.get("company_name")):
+            if not nq or nq == text or not _rule_ok(d, nq, s["snapshot"], s.get("forbid_terms") or ()) or QR.resume_issue(nq, job.get("company_name"), _prev_names(d)):
                 break                          # 2026-11-20: 고친 문장도 질문 문장 규칙(QST-20)을 지켜야 받는다
             text = nq
         if ok:
@@ -1014,7 +1200,8 @@ def generate_set(application, use_llm=True):
                             {"run_name": "question_graph", "tags": ["graph1", "generate"], "metadata": {"application_id": application["id"]}})
     return out["final_questions"], {"log": out.get("log", []), "keyword_report": out.get("keyword_report", {}),
                                     "internal_refs": out.get("internal_refs", []), "guard_report": out.get("guard_report", {}),
-                                    "dual_report": out.get("dual_report", {}), "mq_report": out.get("mq_report", {})}
+                                    "dual_report": out.get("dual_report", {}), "mq_report": out.get("mq_report", {}),
+                                    "backup_report": out.get("backup_report", {})}
 
 
 # ======================= B. 면접 루프 (답변 1개마다 한 걸음) =======================

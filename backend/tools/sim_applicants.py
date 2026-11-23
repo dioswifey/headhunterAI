@@ -115,6 +115,8 @@ def cmd_gen(a):
                               "log": st.get("log", []), "keyword_report": st.get("keyword_report", {}),
                               "internal_hits": hits, "internal_refs": st.get("internal_refs", []),
                               "guard_report": st.get("guard_report", {}), "dual_report": st.get("dual_report", {}),
+                              # ②(2026-11-23) 백업 층 검사 기록 — 몇 건을 검사해 몇 건을 뒤로 보냈는지
+                              "backup_report": st.get("backup_report", {}),
                               "questions": qs, "picks": picks})
         _dump(a.out, out)
         n_int = sum(1 for q in qs if "|internal:" in (q["gen_method"] or ""))
@@ -124,12 +126,18 @@ def cmd_gen(a):
 # ============================ 2. judge ============================
 def _skip_reason(att, q, answer, rec):
     from app import config, evaluation
+    from app.agents import question_rules as QR
     if q["parent_id"] is not None:
         return "꼬리질문에는 다시 꼬리질문을 달지 않음(질문당 1개)"
     if att["followups_used"] >= config.MAX_FOLLOWUPS:
         return f"전체 꼬리질문 {config.MAX_FOLLOWUPS}개를 이미 다 씀"
     if evaluation.NO_CONTENT.match(answer) or len(answer.strip()) < 5:
         return "내용 없는 답변(모르겠습니다 등) → 꼬리질문 생략, 1점 처리"
+    # 2026-11-23: F5(비답변) 차단은 `question_rules.non_answer`가 **모델 호출 전에** 하는데 이 함수에 분기가
+    # 없어서 "판단 없음"으로 찍혔다(P3 측정에서 Q4·Q6·Q8). 제품 동작은 정상이고 라벨만 틀렸던 것이라 분기를 더한다.
+    bad, why = QR.non_answer(answer)
+    if bad:
+        return f"F5 비답변 차단({why}) → 모델을 부르지 않고 꼬리질문 생략"
     if rec.get("error"):
         return f"모델 선평가 실패/시간 초과({rec['error']}) → 생략(INT-06)"
     r = rec.get("result") or {}

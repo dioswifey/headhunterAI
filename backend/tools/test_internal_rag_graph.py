@@ -187,7 +187,7 @@ class Env:
                                                           "subcategory": "관심", "dup_group": f"{cat}{i}"} for i in range(n)]
         # 2026-11-18: 호출부가 `_resume_bank_refs(s, role, used, iq_terms)`로 바뀌었다(이력서 참고 문항도
         # 사내문서 질문을 먼저 찾는다, M-55). 이 가짜 환경은 이력서 참고 문항을 쓰지 않으므로 인자만 맞춘다.
-        QG._resume_bank_refs = lambda s, role, used, iq_terms=None: [None, None, None]
+        QG._resume_bank_refs = lambda s, role, used, iq_terms=None, seen_topics=None: [None, None, None]   # ④(2026-11-23) 인자 추가
         QG.db.one = lambda *a, **k: dict(JOB)
         # 2026-11-20: 관문 2(공고 유사도)는 가짜 임베딩으로는 뜻이 없어 여기서는 통과시킨다(출처 순서만 검사).
         # 관문 2 자체(부분 탈락 → 보충 · 인성 미적용)는 tools/test_question_rules.py가 검사한다.

@@ -150,6 +150,14 @@ RAG_QUESTION_SOURCE = os.getenv("RAG_QUESTION_SOURCE", "chroma")
 RAG_IQ_MIN_SIM = _float("RAG_IQ_MIN_SIM", 0.30)   # 사내문서 질문 검색 유사도 하한. 질문↔공고는 조각↔공고보다 값이 낮다
                                                   # (실측: Redis 인성·기업 문항도 0.27~0.50 구간, ADLC 6.19.1)
 RAG_IQ_REWRITE = os.getenv("RAG_IQ_REWRITE", "0") == "1"
+# 관문 2(공고 관련성) 하한. 2026-11-23 사용자 승인으로 0.58 → 0.50(근거는 `agents/question_graph.POSTING_MIN_SIM` 주석).
+POSTING_MIN_SIM = _float("POSTING_MIN_SIM", 0.50)
+# 이력서 참고 문항 하한 — **사내문서 질문 경로만** 따로 둔다(2026-11-23 사용자 승인 ⓒ).
+# 0.60은 11-09 **Redis 문항**으로 실측한 값이고(관련 0.65~0.75 · 무관 0.53~0.56), 사내문서 질문은 분포가 다르다:
+# 11-23 실측에서 이력서 항목 ↔ 사내문서 질문의 Chroma 유사도가 **깊이 30까지 최고 0.598**로 0.60을 넘는 후보가
+# 0개였다(질문 임베딩은 접두어 없이 저장되고 질의에만 QUERY_INSTRUCT가 붙는 비대칭 구조 때문). 그래서 사내문서
+# 경로만 0.55로 두고 **Redis 경로의 0.60은 그대로** 쓴다.
+RESUME_BANK_IQ_MIN_SIM = _float("RESUME_BANK_IQ_MIN_SIM", 0.55)
 FOLLOWUP_INTERNAL_REF = os.getenv("FOLLOWUP_INTERNAL_REF", "0") == "1"   # 2026-11-18: 사내문서 질문의 기대 키워드·모범답안을 꼬리질문 판단에 쓸지.
 # 기본 0(끔) — 켜면 판단 ②③은 살아나지만 같은 변경이 B-07 힌트 금지 필터도 함께 깨워
 # 160문항 중 99문항(62%)에서 꼬리질문이 조용히 생략될 수 있다(질문 밖 기대 키워드가 문항당

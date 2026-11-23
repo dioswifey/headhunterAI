@@ -388,10 +388,12 @@ class ResumeIQEnv(IQEnv):
         self.knn_sim, self.iq_on = knn_sim, iq_on
         self.ref_calls = self.knn_calls = self.embed_calls = 0
 
-    def pick_internal(self, vecs, role, cat, n, used, terms, min_sim=None):
-        # 이력서 참고 문항 호출만 가로챈다(`_resume_bank_refs`는 cat="job" · n=1로 부른다).
+    def pick_internal(self, vecs, role, cat, n, used, terms, min_sim=None, k=None):
+        # 이력서 참고 문항 호출만 가로챈다 — `_resume_bank_refs`는 cat="job" · **n=1 + k(검색 깊이)**로 부른다.
+        # 2026-11-23: ⑧을 처음 n=5로 넓혔더니 "하한 통과 후보가 5개 있어야 한다"가 돼 참고가 한 건도 붙지
+        # 않았다(4차 재측정). 깊이는 `k`로만 넓히고 요구 개수는 1이다. 그래서 여기서는 **k가 있는 호출**로 가른다.
         # 카테고리 문항(직무 n=2 등)은 IQEnv의 기존 가짜 그대로.
-        if not (cat == "job" and n == 1):
+        if not (cat == "job" and n == 1 and k):
             return super().pick_internal(vecs, role, cat, n, used, terms, min_sim)
         self.ref_calls += 1
         if terms is None or not self.iq_on:

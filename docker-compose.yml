@@ -44,7 +44,7 @@ services:
       RAG_DUAL_JOB: ${RAG_DUAL_JOB:-0}
       LLM_PROVIDER: ollama
       LLM_BASE_URL: http://host.docker.internal:11434
-      LLM_MODEL: qwen3:4b
+      LLM_MODEL: ${LLM_MODEL:-qwen3:8b}   # 2026-11-23 사용자 결정 — 집 PC(RTX 4070 Ti 12GB)는 운영 기준 8B를 GPU에 다 올린다. 회사 PC(6GB)에서는 .env에 LLM_MODEL=qwen3:4b
       FOLLOWUP_TIMEOUT: "12"          # 운영 기준 5초(INT-06). 6GB GPU 개발 환경에서만 완화
       MAX_CONCURRENT_INTERVIEWS: "2"  # 운영 기준 GPU당 5건(INT-08)
       UPLOAD_DIR: /data/uploads
