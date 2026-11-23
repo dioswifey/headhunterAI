@@ -43,7 +43,10 @@ def _vec(b64):
 
 def read_jsonl(path):
     meta, rows = {}, []
-    with open(path, encoding="utf-8") as f:
+    # 2026-11-24: `.gz`도 그대로 받는다 — 배포 사본(`questionbank/vectorDB/_export/`)이 gzip이라
+    # 다른 PC에서 풀지 않고 바로 적재할 수 있게.
+    opener = __import__("gzip").open if path.endswith(".gz") else open
+    with opener(path, "rt", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
