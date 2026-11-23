@@ -72,7 +72,9 @@ class QuestionGenerator(BaseModel):
     # 입력 (start)
     application_id: int
     job_id: int
-    role_code: Literal["ai_ax", "backend", "data_sci"]  # 직무 추가 시 확장
+    # 2026-11-23(0단계 1): 공고가 있는 직무 7개 전부(`job_posting_regen.ROLE_CODES`와 같은 집합).
+    # 전에는 3개만 적혀 있어 공고 12~15(frontend·mobile·devops·data_eng)가 타입 주석과 어긋났다.
+    role_code: Literal["ai_ax", "backend", "data_eng", "data_sci", "devops", "frontend", "mobile"]
     role_name: str = ""
     company_name: str = ""
     company_intro: str = ""

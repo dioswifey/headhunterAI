@@ -657,6 +657,42 @@ def t_company_head():
     check("Q14 F12 state 없이 부르면 기존 동작(전부 회사명)",
           "헤드헌터랩_경기" in QG.fill_company("{회사}에서 A를 맡는다면?", job))
     check("Q14 F12 버린 수가 기록된다", st["company_dropped"] == 8 - len(named), st)
+    # ⓑ(2026-11-23): 상한·하한을 세트 전체(A17 + 이력서 + 백업 층)로 맞춘다
+    n = "헤드헌터랩_경기"
+    drafts = [{"text": f"{n}에서 A를 맡는다면 무엇을 확인하시겠습니까?"} for _ in range(6)]
+    rep = QG.normalize_company_mentions(drafts, job)
+    check(f"Q14ⓑ 세트 전체 회사명 {QG.COMPANY_NAME_MAX}개로 줄인다", rep["used"] == QG.COMPANY_NAME_MAX, rep)
+    check("Q14ⓑ 줄인 문항은 '이 직무에서'로 남는다",
+          all(("이 직무에서" in d["text"]) for d in drafts if n not in d["text"]), drafts[-1])
+    check("Q14ⓑ 앞 문항이 회사명을 유지한다(뒤에서부터 뺀다)", n in drafts[0]["text"], drafts[0])
+    # 이력서·백업 층 문장도 대상이다(A17이 아니어도 센다)
+    mixed = [{"text": f"{n}에서 A를 맡는다면?"}, {"text": f"{n}의 비슷한 업무에 적용한다면?"},
+             {"text": f"이력서의 B를 {n}에서 다시 한다면?"}, {"text": f"{n}에 입사해 C를 맡는다면?"},
+             {"text": "이 직무에서 D를 맡는다면?"}]
+    rep2 = QG.normalize_company_mentions(mixed, job)
+    check("Q14ⓑ 이력서·백업 문장도 상한에 포함된다", rep2["used"] == QG.COMPANY_NAME_MAX and rep2["dropped"] == 1, rep2)
+    # 하한: 전부 '이 직무에서'로 바뀐 세트는 A17 원문(company_slot)으로 되살린다
+    low = [{"text": "이 직무에서 A를 맡는다면?", "company_slot": "{회사}에서 A를 맡는다면?"},
+           {"text": "이 직무에서 B를 맡는다면?", "company_slot": "{회사}에서 B를 맡는다면?"},
+           {"text": "이 직무에서 C를 맡는다면?"}]
+    rep3 = QG.normalize_company_mentions(low, job)
+    check(f"Q14ⓑ 하한 {QG.COMPANY_NAME_MIN}문항은 회사명을 되살린다",
+          rep3["used"] == QG.COMPANY_NAME_MIN and rep3["restored"] == QG.COMPANY_NAME_MIN, rep3)
+    check("Q14ⓑ 되살릴 원문이 없으면 그대로(억지로 넣지 않는다)",
+          QG.normalize_company_mentions([{"text": "이 직무에서 A를 맡는다면?"}], job)["used"] == 0)
+    check("Q14ⓑ 회사명이 비면 아무것도 하지 않는다",
+          QG.normalize_company_mentions([{"text": f"{n}에서 A?"}] * 6, {})["used"] == 0)
+    check("Q14ⓑ generate가 normalize를 부른다",
+          "normalize_company_mentions(drafts" in inspect.getsource(QG.generate))
+    # ⓑ-1 조각 쪽 감점(제외 아님) — 관리 문서는 뒤로, 통과 판정은 그대로
+    from app.agents import internal_search as IS
+    hits = [{"id": "a", "sim": 0.70, "metadata": {"doc_id": "MSK-23", "doc_type": "approval"}},
+            {"id": "b", "sim": 0.69, "metadata": {"doc_id": "MSK-08", "doc_type": "project"}}]
+    ranked = IS._rerank(list(hits))
+    check("Q15ⓑ 관리 문서(approval)는 재순위에서 뒤로", [h["id"] for h in ranked] == ["b", "a"], ranked)
+    check("Q15ⓑ 감점 폭이 하한(MIN_SIM)보다 작다 — 통과 판정을 뒤집지 않는다",
+          max(IS.DEMOTED_TYPES.values()) < 0.05 and all(h["sim"] >= IS.MIN_SIM for h in ranked))
+    check("Q15ⓑ 감점은 하드 필터가 아니다(조각이 버려지지 않는다)", len(ranked) == 2)
 
 
 # ---------------- Q6 A6·A7은 A17을 다시 쓰지 않는다 ----------------

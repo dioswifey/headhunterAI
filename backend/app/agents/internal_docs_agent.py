@@ -44,11 +44,20 @@ DOCS_DIR = os.getenv("INTERNAL_DOCS_DIR",
 # 청킹 (6.13.3)
 TARGET, MAX_LEN, OVERLAP = 1000, 1500, 150
 
-# dept 값이 9종으로 흩어져 있다(6.13.1 실측) → 5개로 정규화
+# dept 값이 9종으로 흩어져 있다(6.13.1 실측) → 정규화
+# 2026-11-23 사용자 승인(0단계 1): **제품 직무 7개를 전부 담는다.** 전에는 5개(ai_ax·backend·data_sci·consult·sales)뿐이라
+# `data_eng·devops·frontend·mobile` 공고(12~15)는 조각·질문에 `dept_<직무>` 키가 아예 없어 관문 1(직무 일치,
+# `internal_question_agent.search_questions`)을 **구조적으로 통과할 수 없었다**(실측: 그 4직무 질문 태그 0개,
+# `eval_runs/coverage_2026-11-23/role_map.json`). 문서에 태그를 달기 전에 이 표가 먼저 있어야 한다.
+# consult·sales는 지원 직무가 아니지만 조직 축으로 계속 쓴다(문서 dept 값에 750·796조각).
 DEPT_MAP = {"AIAX": "ai_ax", "AI_AX": "ai_ax", "BE": "backend", "BACKEND": "backend",
             "DATA": "data_sci", "DA": "data_sci", "CNS": "consult", "CONSULT": "consult",
-            "CONSULTING": "consult", "SALES": "sales"}
-DEPTS = ("ai_ax", "backend", "data_sci", "consult", "sales")
+            "CONSULTING": "consult", "SALES": "sales",
+            "DE": "data_eng", "DATAENG": "data_eng", "DATA_ENG": "data_eng",
+            "DEVOPS": "devops", "SRE": "devops", "INFRA": "devops",
+            "FE": "frontend", "FRONTEND": "frontend",
+            "MOBILE": "mobile", "APP": "mobile"}
+DEPTS = ("ai_ax", "backend", "data_sci", "consult", "sales", "data_eng", "devops", "frontend", "mobile")
 
 META_RE = re.compile(r"<!--\s*meta:\s*(.*?)-->", re.S)
 FORBID_RE = re.compile(r"<!--\s*forbid:\s*(.*?)-->", re.S)

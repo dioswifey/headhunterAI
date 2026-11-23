@@ -388,7 +388,10 @@ def _meta_of(cand, chunk, q_cat, model):
         "lang": "ko", "gen_model": model, "embed_model": config.EMBED_MODEL,
         "spec": SPEC, "updated_at": int(time.time()),
     }
-    for d in ("ai_ax", "backend", "data_sci", "consult", "sales"):
+    # 2026-11-23(0단계 1): 직무 목록을 적재 쪽 한 곳에서 가져온다 — 전에 5개를 여기에 또 적어 둬서,
+    # `internal_docs_agent.DEPTS`에 직무를 더해도 **질문 메타에는 그 플래그가 안 실렸다**(관문 1이 계속 실패).
+    from .internal_docs_agent import DEPTS as _DEPTS
+    for d in _DEPTS:
         meta[f"dept_{d}"] = bool(m.get(f"dept_{d}"))
     return meta
 

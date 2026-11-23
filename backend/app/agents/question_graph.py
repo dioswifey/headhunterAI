@@ -787,7 +787,50 @@ def _distinct_topics(cands, n, seen_topics):
 # 회사 이름은 **세트당 이만큼만** 쓰고, 나머지는 회사 이름 없이 직무 맥락으로 돌린다(F1은 유지 — "이 직무에서"로
 # 공고·직무 맥락은 남는다). 문두 표현도 돌려 쓴다.
 COMPANY_NAME_MAX = 3
+# 2026-11-23 리드 승인(ⓑ): 상한을 **세트 전체 공용**으로 넓힌다 — 전에는 A17 질문(`_internal_draft`)만 셌고
+# 이력서 템플릿·합성 문항과 백업 층(Redis·DB) 다시 쓰기는 회사 이름을 제한 없이 넣었다(실측: 한 세트 8문항 중
+# 6개가 회사 이름으로 시작). 동시에 **하한 2**를 둔다 — 상한만 있으면 A17 문항이 전부 '이 직무에서'로 바뀌어
+# 공고·회사 맥락(F1)이 세트에서 완전히 사라질 수 있다.
+COMPANY_NAME_MIN = 2
 _COMPANY_HEADS = ("{회사}에서", "{회사}에 입사해", "{회사}의 이 직무에서")
+
+
+def strip_company(text, name):
+    """문장에서 회사 이름을 '이 직무'로 바꾼다(F12 상한 초과분 정리 · `fill_company`의 내림 분기와 같은 치환)."""
+    t, n = (text or ""), (name or "").strip()
+    if not n or n not in t:
+        return t
+    for suf, rep in (("에서", "이 직무에서"), ("의", "이 직무의"), ("에", "이 직무에"), ("은", "이 직무는"),
+                     ("는", "이 직무는"), ("이", "이 직무가"), ("가", "이 직무가")):
+        t = t.replace(n + suf, rep)
+    return t.replace(n, "이 직무")
+
+
+def normalize_company_mentions(drafts, job):
+    """세트 전체에서 회사 이름을 쓰는 문항 수를 `COMPANY_NAME_MIN`~`COMPANY_NAME_MAX`로 맞춘다(모델 호출 0회).
+
+    초과하면 **뒤쪽 문항부터** 이름을 '이 직무'로 바꾸고, 모자라면 A17 문항 중 상한 때문에 이름을 뺐던 것
+    (`company_slot`)을 되살린다. 질문 내용은 바꾸지 않는다 — 회사 이름 자리만 다룬다.
+    반환: {used, dropped, restored} (측정용).
+    """
+    name = ((job or {}).get("company_name") or "").strip()
+    rep = {"used": 0, "dropped": 0, "restored": 0}
+    if not name or not drafts:
+        return rep
+    has = [i for i, d in enumerate(drafts) if name in (d.get("text") or "")]
+    for i in reversed(has[COMPANY_NAME_MAX:]):            # 초과분: 뒤에서부터 뺀다(앞 문항이 맥락을 유지)
+        drafts[i]["text"] = strip_company(drafts[i]["text"], name)
+        rep["dropped"] += 1
+    if len(has) < COMPANY_NAME_MIN:                       # 모자라면 뺐던 A17 문항을 되살린다
+        for d in drafts:
+            if len(has) + rep["restored"] >= COMPANY_NAME_MIN:
+                break
+            slot = d.get("company_slot")
+            if slot and name not in (d.get("text") or ""):
+                d["text"] = fill_company(slot, job)       # state 없이 = 그대로 회사 이름으로
+                rep["restored"] += 1
+    rep["used"] = sum(1 for d in drafts if name in (d.get("text") or ""))
+    return rep
 
 
 def fill_company(text, job, state=None):
@@ -821,7 +864,10 @@ def _internal_draft(b, cat, job=None, state=None):
     12명이 실패했다(QO-13). 조각 출처(`doc_refs`)·근거 문구(`company_facts`)를 붙여 7-B 관문 대상으로 남긴다.
     회사 자리(`{회사}`)만 지원 회사 이름으로 바꾼다."""
     text = fill_company(b["text"], job, state)       # F12(2026-11-23): 회사 이름은 세트당 상한까지만
+    # 상한 때문에 이름을 뺀 문항은 원문(`{회사}` 자리 그대로)을 들고 있는다 —
+    # 세트 전체 집계에서 하한(COMPANY_NAME_MIN)에 못 미치면 `normalize_company_mentions`가 되살린다.
     return {"category": cat, "eval_items": Q.EVAL_ITEMS[cat], "text": text, "orig": text,
+            "company_slot": b["text"] if "{회사}" in (b.get("text") or "") else "",
             **_bank_fields(b), "intent": b.get("intent") or b.get("subcategory") or "",
             "company_facts": list(b.get("company_facts") or []), "doc_refs": list(b.get("doc_refs") or []),
             "iq_source": True}
@@ -937,13 +983,19 @@ def generate(s: GenState) -> GenState:
     mode = {(True, True): "dual", (True, False): "redis_only", (False, True): "chroma_only", (False, False): "safe"}[(redis_ok, chroma_ok)]
     total_iq = sum(n_iq.values())
     # 사내문서 출처 문항 = A17 질문 + 조각 근거가 남은 문항(이 둘은 겹치지 않는다 — A17 문항은 다시 쓰지 않으므로)
+    # ⓑ(2026-11-23): 회사 이름 상한·하한을 **세트 전체**로 맞춘다(A17·이력서·백업 층 전부 포함, 모델 호출 0회)
+    comp_rep = normalize_company_mentions(drafts, s["job"])
     dual = {"mode": mode, "redis": redis_ok, "chroma": chroma_ok, "job_rag": rag_by["job"],
             "company_rag": rag_by["company"], "internal_q": dict(n_iq), "internal_q_total": total_iq,
             "resume_iq_ref": n_iq_resume,
-            "internal_total": total_iq + n_rag + n_iq_resume, "questions": len(drafts)}
+            "internal_total": total_iq + n_rag + n_iq_resume, "questions": len(drafts),
+            "company_mentions": comp_rep}
     return {"drafts": drafts, "dual_report": dual,
             "log": s["log"] + [f"generate: {len(drafts)}문항" + (f" · 사내문서 질문 {total_iq}" if total_iq else "")
-                               + (f" · 사내문서 근거 {n_rag}" if n_rag else "") + f" · RAG {mode}"]}
+                               + (f" · 사내문서 근거 {n_rag}" if n_rag else "") + f" · RAG {mode}"
+                               + f" · 회사명 {comp_rep['used']}문항"
+                               + (f"(뺀 것 {comp_rep['dropped']})" if comp_rep["dropped"] else "")
+                               + (f"(되살림 {comp_rep['restored']})" if comp_rep["restored"] else "")]}
 
 
 PHIL_SCHEMA = {"type": "object", "properties": {

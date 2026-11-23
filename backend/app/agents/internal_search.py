@@ -28,12 +28,26 @@ ALLOWED_STATUS = ("active", "done", "resolved")
 # 재순위 가산점 (하드 필터 아님)
 PREFERRED_TYPES = {"jd": 0.04, "talent": 0.04, "project": 0.04,
                    "incident": 0.03, "open_challenge": 0.03, "tech_card": 0.02}
+# 재순위 **감점** (2026-11-23 리드 승인 — '관리 문서 제외'가 아니라 '감점'). 위 가산점과 같은 구조이고 부호만 반대다.
+# 왜: 기업 문항의 근거 조각이 회계·결재·예산·공지 같은 관리 문서에서 오면 제품·프로젝트 맥락이 없어 질문이
+# 추상적으로 뭉개진다(F13 사용자 지적). 질문 쪽은 `question_graph.DEMOTED_TYPES`가 같은 일을 하고 있었고,
+# **조각 쪽(A14 근거 검색)에는 그 장치가 없었다** → 같은 키·같은 폭으로 맞춘다.
+# **통과 판정은 뒤집지 않는다**: 유사도 하한(MIN_SIM)은 `_ranked`에서 재순위 **전**에 걸리므로(:80) 감점은
+# 순서(= `_assemble`의 TOP_N 선택)에만 영향한다. 폭도 가산점보다 작게(0.03/0.01) 둔다.
+DEMOTED_TYPES = {
+    "approval": 0.03, "approval_authority": 0.03, "settlement": 0.03, "closing": 0.03, "budget": 0.03,
+    "costing": 0.03, "revenue": 0.03, "receivable": 0.03, "foreign_tx": 0.03, "notice": 0.03,
+    "manpower_request": 0.03,
+    "bid_process": 0.01, "bid_decision": 0.01, "pricing_model": 0.01, "proposal_guide": 0.01,
+    "contract_guide": 0.01, "sales_plan": 0.01, "planning": 0.01, "asset_registry": 0.01,
+    "decision_guide": 0.01, "discovery_guide": 0.01,
+}
 
 CODE_RE = re.compile(r"```.*?```", re.S)
 
 
 def _rerank(hits, role_code=None, level_band=None, q_cat=None):
-    """점수 = sim + dept 일치 + doc_type 우선순위 + q_cat 일치 + ct_band 일치 − 같은 문서 중복."""
+    """점수 = sim + dept 일치 + doc_type 우선순위 − doc_type 감점 + q_cat 일치 + ct_band 일치 − 같은 문서 중복."""
     seen = {}
     out = []
     for h in hits:
@@ -42,6 +56,7 @@ def _rerank(hits, role_code=None, level_band=None, q_cat=None):
         if role_code and m.get(f"dept_{role_code}"):
             score += 0.05
         score += PREFERRED_TYPES.get(m.get("doc_type", ""), 0.0)
+        score -= DEMOTED_TYPES.get(m.get("doc_type", ""), 0.0)   # 관리 문서는 뒤로(2026-11-23, 통과 판정은 안 바뀐다)
         if q_cat and q_cat in internal_qcat.qcat_of(m):
             score += 0.05                     # 하드 필터 아님(6.13.6 ③) — 거르기는 _ranked가 한다
         if level_band and m.get("ct_band") == level_band:
