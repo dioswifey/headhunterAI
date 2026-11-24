@@ -6,7 +6,7 @@ name: ai-interview-project
 services:
   db:
     image: postgres:16
-    container_name: AI-Interview-project          # PostgreSQL 컨테이너
+    container_name: headhunterAI-db          # PostgreSQL 컨테이너
     environment:
       POSTGRES_DB: headhunter
       POSTGRES_USER: headhunter
@@ -24,7 +24,7 @@ services:
 
   api:
     build: ./backend
-    container_name: AI-Interview-project-api
+    container_name: headhunterAI-api
     depends_on:
       db:
         condition: service_healthy
@@ -112,7 +112,7 @@ services:
 
   redis:
     image: redis:8.2.1                # Query Engine(벡터 검색) 내장
-    container_name: AI-Interview-project-redis
+    container_name: headhunterAI-redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "127.0.0.1:6379:6379"         # 호스트에서만 접근(방화벽 열지 않음)
@@ -128,7 +128,7 @@ services:
   # 기본 CPU. 첫 기동 때 모델(약 3GB)을 speech_models 볼륨에 내려받는다. 호스트 8090은 열지 않는다(api만 내부망으로 부름)
   speech:
     build: ./backend/speech
-    container_name: AI-Interview-project-speech
+    container_name: headhunterAI-speech
     environment:
       SPEECH_DEVICE: ${SPEECH_DEVICE:-cpu}
       SPEECH_TOKEN: ${SPEECH_TOKEN:-}
@@ -153,7 +153,7 @@ services:
 
   runner:
     build: ./backend/runner
-    container_name: AI-Interview-project-runner
+    container_name: headhunterAI-runner
     network_mode: none                # COD-05: 네트워크 차단
     volumes:
       - sandbox:/sandbox

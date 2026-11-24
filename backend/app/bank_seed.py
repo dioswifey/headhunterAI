@@ -10,10 +10,10 @@ SQL 파일은 'INSERT … SELECT FROM jsonb_to_recordset(…) WHERE NOT EXISTS(�
 몇 번 실행해도 중복이 생기지 않고, 이미 있는 행은 건드리지 않는다(id는 받는 DB가 새로 매김).
 Redis도 없는 문서만 넣는다(있는 문서는 그대로 → 로컬에서 새로 번역한 내용을 덮어쓰지 않음).
 
-    docker exec AI-Interview-project-api python -m app.bank_seed export --out /tmp/seed   # 로컬 DB·Redis → 파일
-    docker cp AI-Interview-project-api:/tmp/seed/. backend/db/seed/
-    docker exec AI-Interview-project-api python -m app.bank_seed apply                    # 파일 → DB·Redis (기동 때 자동)
-    docker exec AI-Interview-project-api python -m app.bank_seed status
+    docker exec headhunterAI-api python -m app.bank_seed export --out /tmp/seed   # 로컬 DB·Redis → 파일
+    docker cp headhunterAI-api:/tmp/seed/. backend/db/seed/
+    docker exec headhunterAI-api python -m app.bank_seed apply                    # 파일 → DB·Redis (기동 때 자동)
+    docker exec headhunterAI-api python -m app.bank_seed status
 """
 import argparse
 import base64

@@ -2,12 +2,12 @@
 전체 단계 순서는 LangGraph app.agents.job_posting_graph(그래프 3).
 
 실행(컨테이너 안, 이 파일을 먼저 복사):
-    docker cp backend/tools/. AI-Interview-project-api:/srv/tools/
-    docker exec -w /srv AI-Interview-project-api python -m tools.regenerate_jobs selftest            # 모델·DB 없이 시험
-    docker exec -w /srv AI-Interview-project-api python -m tools.regenerate_jobs ingest [--raw DIR] [--dry-run]
-    docker exec -w /srv AI-Interview-project-api python -m tools.regenerate_jobs regenerate --out /tmp/regen --k 8
+    docker cp backend/tools/. headhunterAI-api:/srv/tools/
+    docker exec -w /srv headhunterAI-api python -m tools.regenerate_jobs selftest            # 모델·DB 없이 시험
+    docker exec -w /srv headhunterAI-api python -m tools.regenerate_jobs ingest [--raw DIR] [--dry-run]
+    docker exec -w /srv headhunterAI-api python -m tools.regenerate_jobs regenerate --out /tmp/regen --k 8
     (보통은 그래프 한 번: python -m app.agents.job_posting_graph run --out /tmp/regen)
-    docker cp AI-Interview-project-api:/tmp/regen/. documents/03_QA_doc/eval_runs/
+    docker cp headhunterAI-api:/tmp/regen/. documents/03_QA_doc/eval_runs/
 """
 import argparse
 import datetime as dt

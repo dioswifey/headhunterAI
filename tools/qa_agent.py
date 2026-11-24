@@ -28,7 +28,7 @@ QA = os.environ.get("QA_DOC_DIR") or os.path.join(ROOT, "documents", "03_QA_doc"
 TC_FILE = os.path.join(QA, "headhunterAI_테스트케이스.xlsx")
 PLAN_FILE = os.path.join(QA, "headhunterAI_QA_테스트계획서.xlsx")
 QA_MD = os.path.join(QA, "QA.md")
-API = "AI-Interview-project-api"
+API = "headhunterAI-api"
 TODAY = dt.date.today().isoformat()
 KST = dt.timezone(dt.timedelta(hours=9))
 

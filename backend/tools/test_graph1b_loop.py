@@ -1,8 +1,8 @@
 """그래프 1-B 면접 루프 + 꼬리질문 판단 ②③ 단위 검사 (2026-11-13) — 모델·DB·Redis 없이 돈다(가짜 db·llm·redis).
 
 langgraph가 필요하다. 호스트에 없으면 api 컨테이너의 임시 사본에서 돌린다(서버 코드·재시작과 무관):
-    docker exec AI-Interview-project-api rm -rf /tmp/g1b && docker cp backend/. AI-Interview-project-api:/tmp/g1b
-    docker exec -w /tmp/g1b AI-Interview-project-api python -m tools.test_graph1b_loop
+    docker exec headhunterAI-api rm -rf /tmp/g1b && docker cp backend/. headhunterAI-api:/tmp/g1b
+    docker exec -w /tmp/g1b headhunterAI-api python -m tools.test_graph1b_loop
 (Git Bash면 MSYS_NO_PATHCONV=1)
 
   J1 keyword_groups·keyword_hits (동의어 |, 대소문자·띄어쓰기 무시)

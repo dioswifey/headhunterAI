@@ -2,7 +2,7 @@
 -- 앱 DB(headhunter)와 다른 DB `sqlbank`, 권한이 거의 없는 역할 `sqlbank_exec`.
 -- 생성 모델이 만든 SQL은 이 DB의 `work` 스키마에서, 트랜잭션 안에서만 실행하고 항상 ROLLBACK 한다(sqlbank.py).
 -- 적용(최초 1회, 수퍼유저):
---   docker exec -i AI-Interview-project psql -U headhunter -d headhunter < backend/db/sqlbank_init.sql
+--   docker exec -i headhunterAI-db psql -U headhunter -d headhunter < backend/db/sqlbank_init.sql
 --   (이 파일은 \connect를 쓰므로 psql로 실행)
 SELECT 'CREATE DATABASE sqlbank' WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'sqlbank')\gexec
 DO $$ BEGIN

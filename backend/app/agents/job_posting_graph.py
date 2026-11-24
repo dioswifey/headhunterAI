@@ -19,7 +19,7 @@
 사내문서 컬렉션은 열지 않는다. 체크포인터 없음(같은 원문으로 다시 돌리면 scan이 변경 0건 → 바로 끝).
 
 실행(컨테이너 안):
-    docker exec -w /srv AI-Interview-project-api python -m app.agents.job_posting_graph run --out /tmp/regen
+    docker exec -w /srv headhunterAI-api python -m app.agents.job_posting_graph run --out /tmp/regen
     ... run --force        # 새 공고가 없어도 전체 재생성
     ... run --dry-run      # scan만 하고 무엇이 바뀌었는지 출력
 """

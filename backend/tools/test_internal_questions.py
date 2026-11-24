@@ -2,7 +2,7 @@
 모델·DB·Redis·**실제 Chroma 없이** 돈다(가짜 환경은 test_internal_rag_graph.Env를 그대로 쓴다).
 
     cd backend && python -m tools.test_internal_questions
-    docker exec -w /srv AI-Interview-project-api python -m tools.test_internal_questions
+    docker exec -w /srv headhunterAI-api python -m tools.test_internal_questions
 
   I1  q_cat 매핑: public 47종 doc_type 전부 배정 · project는 job·company 양쪽 · 모르는 종류는 company ·
       저장된 q_cat 메타가 doc_type보다 우선 · matches(None)은 항상 참

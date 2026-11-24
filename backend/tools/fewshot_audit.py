@@ -1,8 +1,8 @@
 """few-shot 예문 검증 도구 — 1층(규칙·지표) CLI. 2026-11-20.
 
-    docker exec -w /srv AI-Interview-project-api python -m tools.fewshot_audit registry
-    docker exec -w /srv AI-Interview-project-api python -m tools.fewshot_audit pool --out /tmp/fewshot_pool.json
-    docker exec -w /srv AI-Interview-project-api python -m tools.fewshot_audit trial --variant /tmp/internal_question_new.md --n 10 --out /tmp/trial.json
+    docker exec -w /srv headhunterAI-api python -m tools.fewshot_audit registry
+    docker exec -w /srv headhunterAI-api python -m tools.fewshot_audit pool --out /tmp/fewshot_pool.json
+    docker exec -w /srv headhunterAI-api python -m tools.fewshot_audit trial --variant /tmp/internal_question_new.md --n 10 --out /tmp/trial.json
 
   registry  등록부(`app.agents.fewshot_guard.REGISTRY`)의 예문이 실제 지시문 파일에 있는지 — 모델 호출 0회
   pool      저장된 사내문서 질문 풀 전체: ② 예문 베끼기(내용어 Jaccard + 임베딩 코사인) ③ 예문 핵심어가 근거 조각 없이 새어 들어옴

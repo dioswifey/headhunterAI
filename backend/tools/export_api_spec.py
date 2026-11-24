@@ -1,7 +1,7 @@
 """API 명세 내보내기: FastAPI 앱에서 OpenAPI JSON과 사람이 읽는 MD를 만든다.
 
 실행 (api 컨테이너 안):
-    docker exec AI-Interview-project-api python -m tools.export_api_spec v0.3
+    docker exec headhunterAI-api python -m tools.export_api_spec v0.3
 → /srv/api_spec_out/ 에 생성 → docker cp로 backend/api_spec/ 에 복사
 """
 import json

@@ -1,6 +1,6 @@
 """few-shot 검증 장치 2층 — 로컬 모델 질문 판정의 골든셋 일치도 측정(2026-11-20, 리드 GPU GO).
 
-    docker exec -w /srv AI-Interview-project-api python -m tools.fewshot_judge_eval --out /tmp/l2.json
+    docker exec -w /srv headhunterAI-api python -m tools.fewshot_judge_eval --out /tmp/l2.json
 
 골든셋 = 사용자가 실제로 지적한 문장(탈락) + 사람이 통과로 본 문장·사용자가 직접 고쳐 준 문장(통과) + 현재 풀 표본(통과, Claude 판단).
 판정 프롬프트 = prompts/evaluate/question_judge_l2.md(예문은 골든셋과 겹치지 않게 따로 씀). 모델 호출 = 문장당 1회, llm.chat_json만.

@@ -17,7 +17,7 @@
   그래서 절대값이 아니라 **두 모드의 차이**만 본다.
 
 실행(컨테이너):
-  docker exec AI-Interview-project-api python -m tools.gate_probe --out /tmp/gate_probe.json
+  docker exec headhunterAI-api python -m tools.gate_probe --out /tmp/gate_probe.json
 """
 import argparse
 import json

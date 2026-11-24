@@ -22,9 +22,9 @@ ADLC/followup/corpus_v3_1106n/
 # 실물 어디 있나: ① 각 PC 로컬 questionbank/vectorDB/chroma/
 #                 ② 백업 = Google Drive `headhunterAI_resources/`
 # 다시 만드는 법 (원본이 git에 있으므로 명령 한 번이면 재생성된다):
-#   사내문서  : docker exec AI-Interview-project-api python -m app.agents.internal_docs_agent ingest   (약 8분)
-#   사내문서 질문: docker exec AI-Interview-project-api python -m app.agents.internal_question_agent generate  (약 30분)
-#   공고 참고 : docker exec AI-Interview-project-api python -m app.agents.job_posting_graph run --force --raw /job_posting_resources
+#   사내문서  : docker exec headhunterAI-api python -m app.agents.internal_docs_agent ingest   (약 8분)
+#   사내문서 질문: docker exec headhunterAI-api python -m app.agents.internal_question_agent generate  (약 30분)
+#   공고 참고 : docker exec headhunterAI-api python -m app.agents.job_posting_graph run --force --raw /job_posting_resources
 # 원본(=기준)은 git에 그대로 있다: internal_documents/ · job_posting_resources/ · questionbank/regularDB/
 questionbank/vectorDB/chroma/
 

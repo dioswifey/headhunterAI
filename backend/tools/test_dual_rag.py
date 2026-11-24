@@ -1,7 +1,7 @@
 """Dual RAG(Redis 질문 은행 + Chroma 사내문서) 그래프 1-A 통합 검사 (2026-11-16, ADLC v0.8 6.18) — 모델·DB·Redis·Chroma 없이 돈다.
 
     cd backend && python -m tools.test_dual_rag            # 호스트(langgraph 없으면 가짜 그래프)
-    docker exec -w /srv AI-Interview-project-api python -m tools.test_dual_rag   # 컨테이너(진짜 langgraph)
+    docker exec -w /srv headhunterAI-api python -m tools.test_dual_rag   # 컨테이너(진짜 langgraph)
 
 test_internal_rag_graph의 가짜 환경(Env)을 그대로 쓰고, 그 위에 직무 문항 Dual RAG 응답·Multi-Query 임베딩·장애를 더한다.
   D1 검증 노드 유지: start → extract_keywords → evaluate_trust → retrieve → retrieve_internal → generate

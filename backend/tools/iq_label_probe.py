@@ -13,8 +13,8 @@
   · overlap   base 상위 k와 lab 상위 k가 겹치는 비율
 
 실행(컨테이너):
-  docker exec AI-Interview-project-api python -m tools.iq_label_probe build
-  docker exec AI-Interview-project-api python -m tools.iq_label_probe probe --out /tmp/iq_label.json
+  docker exec headhunterAI-api python -m tools.iq_label_probe build
+  docker exec headhunterAI-api python -m tools.iq_label_probe probe --out /tmp/iq_label.json
 """
 import argparse
 import json

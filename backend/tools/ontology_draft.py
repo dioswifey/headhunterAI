@@ -17,7 +17,7 @@
   5) 어디에도 안 접히는 말(미매핑)을 **사람이 볼 목록**으로 남긴다 — 어휘는 사람이 확정한다.
 
 실행:
-  docker exec AI-Interview-project-api python -m tools.ontology_draft --out /tmp/ontology
+  docker exec headhunterAI-api python -m tools.ontology_draft --out /tmp/ontology
 """
 import argparse
 import collections

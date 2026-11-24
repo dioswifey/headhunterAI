@@ -11,9 +11,9 @@ DB에는 아무것도 쓰지 않는다(eval_rag_questions·eval_reports와 같�
   metabench 사내문서 메타데이터(공개 범위·상태·원본 해시)가 줄이는 검색 시간·임베딩 호출 수를 실측
   excel    (호스트) 위 결과 JSON → documents/03_QA_doc/headhunterAI_가상지원자20_면접시뮬레이션.xlsx
 
-    docker exec -w /srv AI-Interview-project-api python -m tools.sim_applicants gen --resumes /tmp/sim/resumes.json --out /tmp/sim/gen.json
-    docker exec -w /srv AI-Interview-project-api python -m tools.sim_applicants judge --gen /tmp/sim/gen.json --answers /tmp/sim/answers.json --out /tmp/sim/judged.json
-    docker exec -w /srv AI-Interview-project-api python -m tools.sim_applicants evaluate --gen … --answers … --judged … --followup-answers … --out /tmp/sim/eval.json
+    docker exec -w /srv headhunterAI-api python -m tools.sim_applicants gen --resumes /tmp/sim/resumes.json --out /tmp/sim/gen.json
+    docker exec -w /srv headhunterAI-api python -m tools.sim_applicants judge --gen /tmp/sim/gen.json --answers /tmp/sim/answers.json --out /tmp/sim/judged.json
+    docker exec -w /srv headhunterAI-api python -m tools.sim_applicants evaluate --gen … --answers … --judged … --followup-answers … --out /tmp/sim/eval.json
     python backend/tools/sim_applicants.py excel --dir <결과 폴더> --out documents/03_QA_doc/…xlsx
 """
 import argparse

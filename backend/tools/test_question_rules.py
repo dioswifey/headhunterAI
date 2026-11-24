@@ -1,6 +1,6 @@
 """질문·꼬리질문 문장 규칙과 면접 중 우회 경로 회귀 시험 — 2026-11-20 신설. 모델·DB·Redis·Chroma 없이 돈다.
 
-    docker exec -w /srv AI-Interview-project-api python -m tools.test_question_rules
+    docker exec -w /srv headhunterAI-api python -m tools.test_question_rules
     cd backend && python -m tools.test_question_rules
 
 왜 생겼나: 2026-11-19 커밋(a491873)이 넣은 문장 검사 2종(추상 범주·개념 2개)이 정규식 끝의 제어문자 0x08 때문에

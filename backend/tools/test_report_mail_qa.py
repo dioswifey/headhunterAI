@@ -1,7 +1,7 @@
 """리포트 메일 '질문별 분석 + 모범답안' 단위 검사 (2026-11-18) — 모델·DB·Chroma·SMTP 없이 호스트에서 돈다.
 
     cd backend && python -m tools.test_report_mail_qa
-    docker exec -w /srv AI-Interview-project-api python -m tools.test_report_mail_qa
+    docker exec -w /srv headhunterAI-api python -m tools.test_report_mail_qa
 
 가짜 DB 행으로 다음을 확인한다.
   M1 `_questions`: 기본 문항만 읽고 **꼬리질문은 들어오지 않는다**(질의에 parent_id IS NULL)
