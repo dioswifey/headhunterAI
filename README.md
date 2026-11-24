@@ -266,8 +266,18 @@ legal/                   # 개인정보처리방침·이용약관·개인정보 
   정의와 측정 결과는 코드를 판단하는 데 필요하므로 `docs/qa/`에 추려 넣었습니다.
 - 다른 회사 제출 과제물, 팀원 참고 자료.
 
-포함된 사내문서·질문은행·이력서 데이터는 **전부 가상**입니다 — 가상 회사 `헤드헌터랩` 기준으로
-작성된 실험용 코퍼스이고, 파일마다 가상임이 표기돼 있습니다. 실존 인물·기업 정보는 없습니다.
+포함된 사내문서·이력서 데이터는 **전부 가상**입니다 — 가상 회사 `헤드헌터랩` 기준으로 작성된
+실험용 코퍼스이고, 80개 파일 전부에 가상임이 표기돼 있습니다. 실존 인물·기업 정보는 없습니다.
+
+## 제3자 데이터 출처
+
+`questionbank/regularDB/AI_engineer_questions/` 는 **제가 만든 것이 아닙니다.**
+Ayush Bisht ([@ayushbishtdev](https://github.com/ayushbishtdev)) 가 작성한 AI 엔지니어 면접
+질문 데이터셋(7개 직무 × 30문항 = 210문항)이며, 출처는
+[aidevdayindia.org](https://aidevdayindia.org/interview-questions/) 입니다.
+**CC BY 4.0** 으로 배포되는 자료를 질문은행 시드로 사용했고, 원본 라이선스와 저작자 표기는
+해당 폴더의 [`README.md`](questionbank/regularDB/AI_engineer_questions/README.md) 에 그대로
+보존했습니다. 이 저장소의 나머지 코드와 문서는 제가 작성한 것입니다.
 
 ## 만든 사람
 
